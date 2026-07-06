@@ -1,0 +1,26 @@
+@import "tailwindcss";
+
+html, body, #root { height: 100%; }
+
+::-webkit-scrollbar { height: 10px; width: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 5px; }
+::-webkit-scrollbar-thumb:hover { background: #52525b; }
+
+.md-body { font-size: 0.875rem; line-height: 1.55; color: #d4d4d8; }
+.md-body h1, .md-body h2, .md-body h3 { font-weight: 700; color: #fafafa; margin: 0.6em 0 0.3em; }
+.md-body h1 { font-size: 1.25rem; }
+.md-body h2 { font-size: 1.1rem; }
+.md-body h3 { font-size: 1rem; }
+.md-body p { margin: 0.4em 0; }
+.md-body ul, .md-body ol { padding-left: 1.4em; margin: 0.4em 0; }
+.md-body ul { list-style: disc; }
+.md-body ol { list-style: decimal; }
+.md-body code { background: #27272a; padding: 0.1em 0.35em; border-radius: 4px; font-size: 0.8em; }
+.md-body pre { background: #18181b; border: 1px solid #27272a; padding: 0.75em; border-radius: 8px; overflow-x: auto; margin: 0.5em 0; }
+.md-body pre code { background: transparent; padding: 0; }
+.md-body a { color: #818cf8; text-decoration: underline; }
+.md-body blockquote { border-left: 3px solid #3f3f46; padding-left: 0.8em; color: #a1a1aa; margin: 0.4em 0; }
+.md-body hr { border-color: #3f3f46; margin: 0.8em 0; }
+.md-body table { border-collapse: collapse; margin: 0.5em 0; }
+.md-body th, .md-body td { border: 1px solid #3f3f46; padding: 0.3em 0.6em; }
