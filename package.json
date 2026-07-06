@@ -52,11 +52,16 @@
       "allowToChangeInstallationDirectory": true
     },
     "mac": {
-      "target": ["dmg"],
+      "target": [
+        "dmg"
+      ],
       "category": "public.app-category.productivity"
     },
     "directories": {
       "output": "release"
-    }
+    },
+    "asarUnpack": [
+      "vendor/**"
+    ]
   }
 }
