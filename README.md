@@ -73,7 +73,7 @@ docker compose up -d   # → port 5315, data persisted in a named volume
 
 Don't want to touch a terminal? The packaged installer (plus updates and setup support) is a one-time **$19** on Whop:
 
-**→ [https://whop.com/onetime-suite](https://whop.com/onetime-suite)**
+**→ [https://whop.com/benjisaiempire/boardly](https://whop.com/benjisaiempire/boardly)**
 
 The source here is MIT and always will be — the paid version is purely convenience.
 
