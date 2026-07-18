@@ -1,5 +1,9 @@
 # 📋 Boardly
 
+## Demo
+
+VIDEO-PLACEHOLDER
+
 ![MIT License](https://img.shields.io/badge/license-MIT-green.svg) ![Node 20+](https://img.shields.io/badge/node-20%2B-brightgreen) ![Self-hosted](https://img.shields.io/badge/self--hosted-yes-blue)
 
 **The self-hosted Trello replacement. Pay once. Own it forever. No subscription.**
