@@ -21,6 +21,7 @@ function openDb(dataDir) {
     CREATE TABLE IF NOT EXISTS boards (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
       color TEXT NOT NULL DEFAULT '#6366f1',
       emoji TEXT NOT NULL DEFAULT '📋',
       starred INTEGER NOT NULL DEFAULT 0,
@@ -102,6 +103,16 @@ function openDb(dataDir) {
     CREATE INDEX IF NOT EXISTS idx_activity_board ON activity(board_id);
     CREATE INDEX IF NOT EXISTS idx_activity_card ON activity(card_id);
   `);
+
+  // ---- migrations for DBs created before a column existed ----
+  // CREATE TABLE IF NOT EXISTS won't touch an existing table, so add columns here.
+  const addColumn = (table, column, decl) => {
+    const cols = db.prepare(`PRAGMA table_info(${table})`).all();
+    if (!cols.some((c) => c.name === column)) {
+      db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${decl}`);
+    }
+  };
+  addColumn('boards', 'description', "TEXT NOT NULL DEFAULT ''");
 
   return db;
 }

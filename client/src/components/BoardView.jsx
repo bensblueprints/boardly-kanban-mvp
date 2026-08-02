@@ -332,6 +332,20 @@ export default function BoardView({ boardId, onBack }) {
           onChange={(e) => { importBoard(e.target.files[0]); e.target.value = ''; }} />
       </header>
 
+      {/* project description */}
+      <div className="shrink-0 px-4 py-2 border-b border-zinc-800/60 bg-zinc-950/40">
+        <textarea
+          key={board.id + '-desc'}
+          defaultValue={board.description || ''}
+          rows={board.description ? 2 : 1}
+          placeholder="Add a project description — what this board is for…"
+          onBlur={(e) => e.target.value !== (board.description || '') &&
+            api.patch(`/api/boards/${board.id}`, { description: e.target.value }).then(load)}
+          onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) e.target.blur(); }}
+          className="w-full bg-transparent outline-none resize-y text-sm text-zinc-400 placeholder:text-zinc-600 rounded-md px-1.5 py-1 hover:bg-zinc-900/60 focus:bg-zinc-900 focus:text-zinc-200 transition-colors"
+        />
+      </div>
+
       {/* lists */}
       <DragDropContext onDragEnd={onDragEnd}>
         <Droppable droppableId="board" direction="horizontal" type="list">

@@ -62,7 +62,12 @@ async function main() {
     ok('auth: login + session');
 
     // ---- board / lists / cards ----
-    const board = await api('POST', '/api/boards', { name: 'Launch Plan', color: '#f59e0b', emoji: '🚀' });
+    const board = await api('POST', '/api/boards', {
+      name: 'Launch Plan', color: '#f59e0b', emoji: '🚀',
+      description: 'Ship the thing. Owns the launch checklist and the go-live date.'
+    });
+    assert.equal(board.description, 'Ship the thing. Owns the launch checklist and the go-live date.',
+      'board description persists on create');
     assert(board.id && board.emoji === '🚀');
     const todo = await api('POST', `/api/boards/${board.id}/lists`, { name: 'To Do' });
     const doing = await api('POST', `/api/boards/${board.id}/lists`, { name: 'Doing' });

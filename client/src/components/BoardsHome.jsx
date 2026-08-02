@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { KanbanSquare, Plus, Star, Trash2, LogOut, Upload, Layers, StickyNote } from 'lucide-react';
+import { KanbanSquare, Plus, Star, Trash2, LogOut, Upload, Layers, StickyNote, Plug } from 'lucide-react';
 import { api } from '../api.js';
+import McpPanel from './McpPanel.jsx';
 
 const COLORS = ['#6366f1', '#8b5cf6', '#ec4899', '#ef4444', '#f59e0b', '#22c55e', '#14b8a6', '#3b82f6', '#64748b'];
 const EMOJIS = ['📋', '🚀', '🎯', '💼', '🛠️', '🎨', '📦', '🧠', '🔥', '🌱', '🏠', '✍️'];
@@ -13,9 +14,15 @@ export default function BoardsHome({ onOpen, onLogout }) {
   const [color, setColor] = useState(COLORS[0]);
   const [emoji, setEmoji] = useState(EMOJIS[0]);
   const importRef = useRef(null);
+  const [showMcp, setShowMcp] = useState(false);
+  const [mcpRunning, setMcpRunning] = useState(false);
 
   const load = () => api.get('/api/boards').then(setBoards);
   useEffect(() => { load(); }, []);
+
+  // Drives the green dot on the AI button so the header reflects MCP state.
+  const loadMcp = () => api.get('/api/mcp').then((s) => setMcpRunning(s.running)).catch(() => {});
+  useEffect(() => { loadMcp(); }, []);
 
   async function create(e) {
     e.preventDefault();
@@ -67,6 +74,18 @@ export default function BoardsHome({ onOpen, onLogout }) {
             </button>
             <input ref={importRef} type="file" accept=".json,application/json" className="hidden"
               onChange={(e) => { importBoard(e.target.files[0]); e.target.value = ''; }} />
+            <button
+              onClick={() => setShowMcp(true)}
+              className="flex items-center gap-1.5 text-sm text-zinc-400 hover:text-zinc-100 px-3 py-1.5 rounded-lg hover:bg-zinc-800 transition-colors"
+            >
+              <span className="relative flex">
+                <Plug className="w-4 h-4" />
+                {mcpRunning && (
+                  <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                )}
+              </span>
+              AI
+            </button>
             <button
               onClick={onLogout}
               className="flex items-center gap-1.5 text-sm text-zinc-400 hover:text-zinc-100 px-3 py-1.5 rounded-lg hover:bg-zinc-800 transition-colors"
@@ -172,6 +191,12 @@ export default function BoardsHome({ onOpen, onLogout }) {
           <p className="text-zinc-600 text-sm mt-8">No boards yet — create your first one above.</p>
         )}
       </main>
+
+      <AnimatePresence>
+        {showMcp && (
+          <McpPanel onClose={() => { setShowMcp(false); loadMcp(); load(); }} />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

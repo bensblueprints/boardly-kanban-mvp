@@ -5,16 +5,26 @@ const express = require('express');
 const cookieParser = require('cookie-parser');
 const multer = require('multer');
 const { openDb } = require('./db');
+const mcpSettings = require('../mcp/settings.js');
+const { startMcpHttp } = require('../mcp/http.js');
 
 function createApp(opts = {}) {
   const dataDir = opts.dataDir || process.env.DATA_DIR || path.join(__dirname, '..', 'data');
   const adminPassword = opts.adminPassword || process.env.ADMIN_PASSWORD || 'admin';
   const autologinToken = opts.autologinToken || process.env.AUTOLOGIN_TOKEN || null;
+  // Desktop mode passes a large cap: it's a local app writing to your own disk,
+  // so installers and other big files can be attached. A shared/VPS install
+  // keeps a conservative default that can still be raised via MAX_UPLOAD_MB.
+  const maxUploadMb = Number(opts.maxUploadMb || process.env.MAX_UPLOAD_MB || 25);
 
   const db = openDb(dataDir);
   const app = express();
   app.disable('x-powered-by');
-  app.use(express.json({ limit: '25mb' })); // import payloads can embed attachments
+  // Import payloads embed attachments as base64, so this tracks the upload cap
+  // (plus headroom for base64's ~33% overhead) but stays bounded — a JSON body
+  // is buffered in memory, so it must not follow a multi-GB upload cap.
+  const jsonLimitMb = Math.min(Math.ceil(maxUploadMb * 1.4), 256);
+  app.use(express.json({ limit: `${jsonLimitMb}mb` }));
   app.use(cookieParser());
 
   // ---- sessions (in-memory, simple by design) ----
@@ -39,7 +49,7 @@ function createApp(opts = {}) {
       cb(null, `${Date.now()}-${crypto.randomBytes(4).toString('hex')}${ext}`);
     }
   });
-  const upload = multer({ storage, limits: { fileSize: 25 * 1024 * 1024 } });
+  const upload = multer({ storage, limits: { fileSize: maxUploadMb * 1024 * 1024 } });
   app.use('/uploads', express.static(uploadsDir, { maxAge: '7d' }));
 
   // ---- helpers ----
@@ -136,7 +146,10 @@ function createApp(opts = {}) {
   });
 
   app.get('/api/me', (req, res) => {
-    res.json({ authed: !!(req.cookies.sid && sessions.has(req.cookies.sid)) });
+    res.json({
+      authed: !!(req.cookies.sid && sessions.has(req.cookies.sid)),
+      maxUploadMb
+    });
   });
 
   // desktop-mode auto-login
@@ -168,7 +181,9 @@ function createApp(opts = {}) {
     if (!name) return res.status(400).json({ error: 'Board name is required' });
     const color = String(req.body?.color || '#6366f1');
     const emoji = String(req.body?.emoji || '📋');
-    const info = db.prepare('INSERT INTO boards (name, color, emoji) VALUES (?, ?, ?)').run(name, color, emoji);
+    const description = String(req.body?.description || '');
+    const info = db.prepare('INSERT INTO boards (name, description, color, emoji) VALUES (?, ?, ?, ?)')
+      .run(name, description, color, emoji);
     logActivity(info.lastInsertRowid, null, 'board_created', `Created board "${name}"`);
     res.json(q.board.get(info.lastInsertRowid));
   });
@@ -181,8 +196,10 @@ function createApp(opts = {}) {
     const color = req.body.color !== undefined ? String(req.body.color) : board.color;
     const emoji = req.body.emoji !== undefined ? String(req.body.emoji) : board.emoji;
     const starred = req.body.starred !== undefined ? (req.body.starred ? 1 : 0) : board.starred;
-    db.prepare('UPDATE boards SET name = ?, color = ?, emoji = ?, starred = ? WHERE id = ?')
-      .run(name, color, emoji, starred, board.id);
+    const description = req.body.description !== undefined ? String(req.body.description) : board.description;
+    db.prepare('UPDATE boards SET name = ?, description = ?, color = ?, emoji = ?, starred = ? WHERE id = ?')
+      .run(name, description, color, emoji, starred, board.id);
+    if (description !== board.description) logActivity(board.id, null, 'board_description', 'Updated the project description');
     if (name !== board.name) logActivity(board.id, null, 'board_renamed', `Renamed board to "${name}"`);
     res.json(q.board.get(board.id));
   });
@@ -567,7 +584,7 @@ function createApp(opts = {}) {
       app: 'boardly',
       version: 1,
       exported_at: new Date().toISOString(),
-      board: { name: board.name, color: board.color, emoji: board.emoji, starred: board.starred },
+      board: { name: board.name, description: board.description, color: board.color, emoji: board.emoji, starred: board.starred },
       labels: labels.map((lb) => ({ name: lb.name, color: lb.color })),
       lists
     };
@@ -584,8 +601,8 @@ function createApp(opts = {}) {
     const pendingFiles = []; // written after the transaction commits
     const tx = db.transaction(() => {
       const b = data.board;
-      boardId = db.prepare('INSERT INTO boards (name, color, emoji, starred) VALUES (?, ?, ?, ?)')
-        .run(String(b.name || 'Imported board'), String(b.color || '#6366f1'), String(b.emoji || '📋'), b.starred ? 1 : 0)
+      boardId = db.prepare('INSERT INTO boards (name, description, color, emoji, starred) VALUES (?, ?, ?, ?, ?)')
+        .run(String(b.name || 'Imported board'), String(b.description || ''), String(b.color || '#6366f1'), String(b.emoji || '📋'), b.starred ? 1 : 0)
         .lastInsertRowid;
       const labelIds = {};
       for (const lb of data.labels || []) {
@@ -634,6 +651,138 @@ function createApp(opts = {}) {
     tx();
     for (const f of pendingFiles) fs.writeFileSync(path.join(uploadsDir, f.filename), f.buf);
     res.json(q.board.get(boardId));
+  });
+
+  // Turn multer's size rejection into a clear message naming the actual cap,
+  // instead of a bare 500.
+  app.use((err, req, res, next) => {
+    if (err && err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({ error: `File is too large — the limit is ${maxUploadMb} MB` });
+    }
+    if (err) return res.status(500).json({ error: err.message || 'Upload failed' });
+    next();
+  });
+
+  // ================= MCP INTEGRATION =================
+  // Lets an AI client (Claude Code / Claude Desktop) read and write these
+  // boards. Served on its own fixed port so the endpoint URL survives restarts
+  // — see mcp/http.js for why.
+
+  let mcpHandle = null;
+  let mcpError = null;
+
+  async function startMcp(port) {
+    if (mcpHandle) return mcpHandle;
+    const settings = mcpSettings.readSettings(dataDir);
+    const usePort = port || settings.port;
+    const handle = await startMcpHttp({ db, uploadsDir, port: usePort, token: settings.token });
+    mcpHandle = handle;
+    mcpError = null;
+    mcpSettings.writeSettings(dataDir, { ...settings, enabled: true, port: handle.port });
+    return handle;
+  }
+
+  // Close the listener but leave settings alone — used on app quit, so an
+  // enabled integration still autostarts on the next launch.
+  async function shutdownMcp() {
+    if (mcpHandle) {
+      await mcpHandle.close();
+      mcpHandle = null;
+    }
+  }
+
+  // User-initiated stop: also clears `enabled` so it stays off after a restart.
+  async function stopMcp() {
+    await shutdownMcp();
+    const settings = mcpSettings.readSettings(dataDir);
+    mcpSettings.writeSettings(dataDir, { ...settings, enabled: false });
+  }
+
+  function mcpStatus() {
+    const settings = mcpSettings.readSettings(dataDir);
+    return {
+      enabled: settings.enabled,
+      running: !!mcpHandle,
+      port: mcpHandle ? mcpHandle.port : settings.port,
+      url: mcpSettings.endpointUrl(mcpHandle ? mcpHandle.port : settings.port),
+      token: settings.token,
+      error: mcpError,
+      config: { mcpServers: { [mcpSettings.SERVER_KEY]: mcpSettings.clientConfigEntry(settings) } },
+      clients: mcpSettings.clientStatus(settings)
+    };
+  }
+
+  // Called by the desktop/server entrypoints on boot.
+  app.startMcpIfEnabled = async () => {
+    const settings = mcpSettings.readSettings(dataDir);
+    if (!settings.enabled) return null;
+    try {
+      return await startMcp(settings.port);
+    } catch (err) {
+      mcpError = err.message;
+      console.error('MCP autostart failed:', err.message);
+      return null;
+    }
+  };
+  app.stopMcp = stopMcp;
+  app.shutdownMcp = shutdownMcp;
+
+  app.get('/api/mcp', requireAuth, (req, res) => res.json(mcpStatus()));
+
+  app.post('/api/mcp/start', requireAuth, async (req, res) => {
+    const port = req.body?.port !== undefined ? Number(req.body.port) : undefined;
+    if (port !== undefined && (!Number.isInteger(port) || port < 1024 || port > 65535)) {
+      return res.status(400).json({ error: 'Port must be an integer between 1024 and 65535' });
+    }
+    try {
+      await startMcp(port);
+      res.json(mcpStatus());
+    } catch (err) {
+      mcpError = err.message;
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/mcp/stop', requireAuth, async (req, res) => {
+    try {
+      await stopMcp();
+      res.json(mcpStatus());
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Rotating the token invalidates every client — they must be reconnected.
+  app.post('/api/mcp/token', requireAuth, async (req, res) => {
+    const settings = mcpSettings.readSettings(dataDir);
+    const next = mcpSettings.writeSettings(dataDir, {
+      ...settings,
+      token: crypto.randomBytes(24).toString('hex')
+    });
+    const wasRunning = !!mcpHandle;
+    if (wasRunning) {
+      await stopMcp();
+      try {
+        await startMcp(next.port);
+      } catch (err) {
+        mcpError = err.message;
+      }
+    }
+    res.json(mcpStatus());
+  });
+
+  app.post('/api/mcp/connect', requireAuth, (req, res) => {
+    const client = String(req.body?.client || '');
+    try {
+      const settings = mcpSettings.readSettings(dataDir);
+      const result = mcpSettings.connectClient(client, {
+        port: mcpHandle ? mcpHandle.port : settings.port,
+        token: settings.token
+      });
+      res.json({ ...result, status: mcpStatus() });
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
   });
 
   // ================= FRONTEND =================

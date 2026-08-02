@@ -106,6 +106,75 @@ npm test
 
 Covers: board/list/card CRUD, drag-move persistence, checklist progress, label filters, due-date filters, search, comments + activity, attachment byte-fidelity, archive/restore, and a full export→import deep-equal round trip.
 
+## 🤖 AI integration (MCP)
+
+Boardly speaks [Model Context Protocol](https://modelcontextprotocol.io), so an AI client can read and
+write your boards — describe what's going on and let it create the cards. There are two ways in.
+
+### From the desktop app (recommended)
+
+Open **AI** in the header → **Start server**. Boardly serves MCP over HTTP from inside the running app on
+a fixed loopback port (default `8765`), so the endpoint you configure once keeps working across restarts.
+Then hit **Connect** for Claude Code or Claude Desktop and it writes the client config for you (keeping a
+`.boardly-backup` of anything it replaced). Restart the client to pick it up.
+
+- Bound to `127.0.0.1` only — never exposed to the network
+- Every request needs `Authorization: Bearer <token>`; rotate the token any time from the same panel
+- Stays enabled across restarts and autostarts with the app
+
+To wire up any other client by hand:
+
+```json
+{
+  "mcpServers": {
+    "boardly": {
+      "type": "http",
+      "url": "http://127.0.0.1:8765/mcp",
+      "headers": { "Authorization": "Bearer <token from Settings → AI>" }
+    }
+  }
+}
+```
+
+### Standalone (stdio)
+
+`mcp/server.js` is a stdio server for clients that spawn the process themselves. It opens the SQLite DB
+directly, so it works whether or not the app is running (WAL mode makes concurrent access safe).
+
+Data dir resolution: `BOARDLY_DATA_DIR` → `%APPDATA%\boardly\data` (desktop app) → `./data`.
+
+```json
+{
+  "mcpServers": {
+    "boardly": {
+      "command": "node",
+      "args": ["<repo>/mcp/server.js"],
+      "env": { "BOARDLY_DATA_DIR": "C:\\Users\\<you>\\AppData\\Roaming\\boardly\\data" }
+    }
+  }
+}
+```
+
+### Tools
+
+Boards, lists, cards (create/update/move/delete), labels, checklists, comments and attachments —
+including `attach_link`, which attaches a local file path or URL as a small `.url` shortcut so linking a
+200 MB installer costs a couple of hundred bytes.
+
+Both transports share one implementation (`mcp/tools.js`). Tests use throwaway data dirs and never touch
+your real boards:
+
+```bash
+npm run test:mcp        # stdio round trip
+npm run test:mcp-http   # in-app HTTP: auth, token rotation, restart persistence
+npm run test:all        # everything
+```
+
+## Uploads
+
+Attachments are capped at 25 MB by default. The desktop build raises this to 4 GB (it's a local app
+writing to your own disk); override either with `MAX_UPLOAD_MB`.
+
 ## License
 
 MIT © 2026 Ben (bensblueprints)

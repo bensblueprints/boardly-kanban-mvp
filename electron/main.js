@@ -11,11 +11,21 @@ app.whenReady().then(async () => {
   const autologinToken = crypto.randomBytes(24).toString('hex');
 
   const { createApp } = require(path.join(__dirname, '..', 'server', 'app.js'));
-  const server = createApp({ dataDir, autologinToken, adminPassword: process.env.ADMIN_PASSWORD || 'admin' });
+  const server = createApp({
+    dataDir,
+    autologinToken,
+    adminPassword: process.env.ADMIN_PASSWORD || 'admin',
+    // Local app writing to your own disk — allow big attachments (installers,
+    // videos, design files) rather than the conservative shared-server default.
+    maxUploadMb: Number(process.env.MAX_UPLOAD_MB || 4096)
+  });
 
   // listen on port 0 → OS picks a free port (no collisions with a VPS install)
-  const listener = server.listen(0, '127.0.0.1', () => {
+  const listener = server.listen(0, '127.0.0.1', async () => {
     const port = listener.address().port;
+    // MCP (if the user enabled it) binds its own fixed port so the endpoint
+    // URL configured in an AI client keeps working across restarts.
+    await server.startMcpIfEnabled();
     win = new BrowserWindow({
       width: 1440,
       height: 900,
@@ -32,8 +42,9 @@ app.whenReady().then(async () => {
     win.loadURL(`http://127.0.0.1:${port}/auth/auto?token=${autologinToken}`);
   });
 
-  app.on('window-all-closed', () => {
+  app.on('window-all-closed', async () => {
     listener.close();
+    try { await server.shutdownMcp(); } catch {}
     app.quit();
   });
 });
