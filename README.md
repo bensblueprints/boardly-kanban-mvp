@@ -35,6 +35,8 @@ Trello charges **$5/user/month** — a 10-person team pays **$600 every year**, 
 - **Keyboard shortcuts** — `n` new card, `/` search
 - **Export / import** — full-fidelity JSON round trip (including attachment bytes) for backup or moving boards between installs
 - **Archive, don't delete** — cards and lists archive first and can be restored anytime
+- **Talk to your board** — MCP server built in, so Claude (or any MCP client) can read and write your cards
+- **Voice coach** — ask "what do I need to do next" and get a plan you can drop onto the card as a checklist, using a model on your own machine
 - **100% local** — no telemetry, no external calls, no accounts
 
 ## 🚀 Quick start
@@ -161,6 +163,9 @@ Boards, lists, cards (create/update/move/delete), labels, checklists, comments a
 including `attach_link`, which attaches a local file path or URL as a small `.url` shortcut so linking a
 200 MB installer costs a couple of hundred bytes.
 
+`find_cards` and `get_card` let a client search the board and pull one card in full — description,
+checklists, comments, attachments — so it can read before it writes instead of guessing.
+
 Both transports share one implementation (`mcp/tools.js`). Tests use throwaway data dirs and never touch
 your real boards:
 
@@ -168,6 +173,39 @@ your real boards:
 npm run test:mcp        # stdio round trip
 npm run test:mcp-http   # in-app HTTP: auth, token rotation, restart persistence
 npm run test:all        # everything
+```
+
+## 🎙️ Voice coach — "what do I need to do next?"
+
+MCP lets *your* AI client drive Boardly. The coach is the other direction: a panel inside Boardly that
+looks at your board and tells you what to work on next, one thing at a time.
+
+Open a board → **What's next**. Type or hold the mic, ask, and you get back a concrete plan you can push
+onto the card as a real checklist with one click. It reads your answer aloud too.
+
+It talks to any **OpenAI-compatible** server, so point it at whatever you already run:
+
+| Setting | Example | Notes |
+|---|---|---|
+| Model server URL | `http://192.168.1.10:11434/v1` | Ollama, vLLM, LM Studio, llama.cpp — or an OpenAI-compatible cloud endpoint |
+| Model | picked from a live dropdown | falls back to a text box if the server won't list models |
+| Speech-to-text URL | `http://192.168.1.10:8178/v1` | optional; any server exposing `/v1/audio/transcriptions` (e.g. faster-whisper) |
+
+Nothing is configured out of the box and nothing is sent anywhere until you fill these in. Point them at a
+box on your own network and the whole loop — board, model, transcription — stays in your house.
+
+**Why it doesn't hallucinate your board.** A small local model handed a whole board will confidently invent
+a card that doesn't exist. So Boardly picks the card in *code* (most-nearly-done first, finished cards
+excluded) and sends only that one card's brief to the model — description, every checklist with its done
+state, recent comments, attachment names. The card the plan attaches to is therefore always one of yours.
+Output is constrained with `response_format: json_schema`, degrading to `json_object` and then to plain
+text for servers that don't support it.
+
+The **Test** button probes whatever is currently typed in the boxes and tells you what's actually wrong —
+"nothing is listening on host:port", "that hostname doesn't resolve" — instead of `fetch failed`.
+
+```bash
+npm run test:coach      # 21 tests, all against a stub server — no model required
 ```
 
 ## Uploads
