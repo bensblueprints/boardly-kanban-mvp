@@ -15,7 +15,7 @@
     "test:mcp": "node test/mcp.js",
     "test:mcp-http": "node test/mcp-http.js",
     "test:all": "node test/smoke.js && node test/mcp.js && node test/mcp-http.js && node test/coach.js",
-    "dist": "electron-builder --win nsis",
+    "dist": "npm run build && electron-builder --win nsis",
     "test:coach": "node test/coach.js"
   },
   "dependencies": {
