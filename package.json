@@ -1,6 +1,6 @@
 {
   "name": "boardly",
-  "version": "1.3.0",
+  "version": "1.8.0",
   "description": "Self-hosted kanban board. Pay once, own it forever — no Trello per-seat subscription.",
   "author": "Ben (bensblueprints)",
   "license": "MIT",
@@ -14,8 +14,9 @@
     "test": "node test/smoke.js",
     "test:mcp": "node test/mcp.js",
     "test:mcp-http": "node test/mcp-http.js",
-    "test:all": "node test/smoke.js && node test/mcp.js && node test/mcp-http.js",
-    "dist": "electron-builder --win nsis"
+    "test:all": "node test/smoke.js && node test/mcp.js && node test/mcp-http.js && node test/coach.js",
+    "dist": "electron-builder --win nsis",
+    "test:coach": "node test/coach.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

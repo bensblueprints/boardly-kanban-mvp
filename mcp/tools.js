@@ -217,6 +217,52 @@ function createBoardlyServer({ db, uploadsDir }) {
 
   // ---- cards ----
 
+  tool('get_card', 'Get one card in full — description, labels, checklists with every item and its id, comments, attachments and recent activity', {
+    card_id: z.number().int()
+  }, ({ card_id }) => {
+    const card = mustGet(q.card, card_id, 'Card');
+    const checklists = db.prepare('SELECT * FROM checklists WHERE card_id = ? ORDER BY position, id').all(card.id)
+      .map((cl) => ({
+        ...cl,
+        items: db.prepare('SELECT * FROM checklist_items WHERE checklist_id = ? ORDER BY position, id').all(cl.id)
+      }));
+    return {
+      ...card,
+      board_id: boardIdOfCard(card.id),
+      labels: cardLabels(card.id),
+      checklists,
+      comments: db.prepare('SELECT * FROM comments WHERE card_id = ? ORDER BY id DESC').all(card.id),
+      attachments: db.prepare('SELECT * FROM attachments WHERE card_id = ? ORDER BY id DESC').all(card.id)
+        .map((a) => ({ ...a, url: `/uploads/${a.filename}` })),
+      activity: db.prepare('SELECT * FROM activity WHERE card_id = ? ORDER BY id DESC LIMIT 50').all(card.id)
+    };
+  });
+
+  tool('find_cards', 'Search cards across all boards by title (substring, case-insensitive)', {
+    query: z.string().min(1),
+    board_id: z.number().int().optional().describe('Restrict to one board'),
+    limit: z.number().int().min(1).max(200).optional()
+  }, ({ query, board_id, limit }) => {
+    const rows = board_id === undefined
+      ? db.prepare(
+          `SELECT c.*, l.name AS list_name, l.board_id, b.name AS board_name
+           FROM cards c
+           JOIN lists l ON l.id = c.list_id
+           JOIN boards b ON b.id = l.board_id
+           WHERE c.archived = 0 AND c.title LIKE ? COLLATE NOCASE
+           ORDER BY c.id LIMIT ?`
+        ).all(`%${query}%`, limit || 50)
+      : db.prepare(
+          `SELECT c.*, l.name AS list_name, l.board_id, b.name AS board_name
+           FROM cards c
+           JOIN lists l ON l.id = c.list_id
+           JOIN boards b ON b.id = l.board_id
+           WHERE c.archived = 0 AND c.title LIKE ? COLLATE NOCASE AND l.board_id = ?
+           ORDER BY c.id LIMIT ?`
+        ).all(`%${query}%`, board_id, limit || 50);
+    return rows.map((r) => ({ ...r, checklist: checklistProgress(r.id) }));
+  });
+
   tool('create_card', 'Add a card to a list', {
     list_id: z.number().int(),
     title: z.string().min(1),

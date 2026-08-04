@@ -7,6 +7,7 @@ const multer = require('multer');
 const { openDb } = require('./db');
 const mcpSettings = require('../mcp/settings.js');
 const { startMcpHttp } = require('../mcp/http.js');
+const coach = require('./coach.js');
 
 function createApp(opts = {}) {
   const dataDir = opts.dataDir || process.env.DATA_DIR || path.join(__dirname, '..', 'data');
@@ -661,6 +662,130 @@ function createApp(opts = {}) {
     }
     if (err) return res.status(500).json({ error: err.message || 'Upload failed' });
     next();
+  });
+
+  // ================= VOICE COACH =================
+  // Asks a local LLM "what should I do next", grounded in the actual board.
+  // Model + speech-to-text both run on your own hardware.
+
+  const audioUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024 } });
+
+  app.get('/api/coach', requireAuth, (req, res) => {
+    res.json(coach.readSettings(dataDir));
+  });
+
+  app.post('/api/coach/settings', requireAuth, (req, res) => {
+    const allowed = ['chatUrl', 'chatModel', 'sttUrl', 'sttModel', 'apiKey', 'enabled'];
+    const patch = {};
+    for (const k of allowed) if (req.body[k] !== undefined) patch[k] = req.body[k];
+    res.json(coach.writeSettings(dataDir, patch));
+  });
+
+  app.post('/api/coach/probe', requireAuth, async (req, res) => {
+    try {
+      // Probe whatever is in the form right now, not just what's saved — so
+      // "Test" works before you've hit Save.
+      const settings = { ...coach.readSettings(dataDir) };
+      for (const k of ['chatUrl', 'chatModel', 'sttUrl', 'sttModel', 'apiKey']) {
+        if (req.body?.[k] !== undefined) settings[k] = req.body[k];
+      }
+      res.json(await coach.probe(settings));
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Model list for the dropdown, fetched live from the server being configured.
+  app.post('/api/coach/models', requireAuth, async (req, res) => {
+    const settings = coach.readSettings(dataDir);
+    const url = req.body?.url || settings.chatUrl;
+    try {
+      res.json({ models: await coach.listModels(url, req.body?.apiKey ?? settings.apiKey) });
+    } catch (err) {
+      res.status(502).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/coach/transcribe', requireAuth, audioUpload.single('audio'), async (req, res) => {
+    if (!req.file) return res.status(400).json({ error: 'No audio uploaded' });
+    try {
+      const text = await coach.transcribe({
+        settings: coach.readSettings(dataDir),
+        buffer: req.file.buffer,
+        filename: req.file.originalname || 'speech.webm',
+        mime: req.file.mimetype
+      });
+      res.json({ text });
+    } catch (err) {
+      res.status(502).json({ error: err.message });
+    }
+  });
+
+  // Ask the coach what to do next. Returns the chosen card plus concrete steps.
+  app.post('/api/coach/next', requireAuth, async (req, res) => {
+    const settings = coach.readSettings(dataDir);
+    const boardId = req.body?.board_id ? Number(req.body.board_id) : undefined;
+    const question = String(req.body?.question || 'What should I work on next?');
+    const history = Array.isArray(req.body?.history) ? req.body.history.slice(-6) : [];
+
+    try {
+      const context = coach.buildContext(db, { boardId });
+      const chosen = coach.pickCard(context);
+      if (!chosen) {
+        return res.json({ plan: null, say: 'Nothing outstanding on this board — everything is ticked off.' });
+      }
+
+      // Only the chosen card goes to the model. A small local model handed 60
+      // similar objects starts mirroring them instead of reasoning.
+      const messages = [
+        { role: 'system', content: coach.SYSTEM_PROMPT },
+        ...history.filter((m) => m && typeof m.content === 'string' && ['user', 'assistant'].includes(m.role))
+          .map((m) => ({ role: m.role, content: String(m.content).slice(0, 2000) })),
+        {
+          role: 'user',
+          // The full card — description, checklist, comments, attachments — so
+          // the model works from what's actually written on it rather than
+          // guessing from the title.
+          content: coach.renderCardBrief(coach.buildCardBrief(db, chosen.card_id), question)
+        }
+      ];
+      const raw = await coach.chat({ settings, messages, json: true, schema: coach.PLAN_SCHEMA });
+      const plan = coach.normalisePlan(coach.extractJson(raw));
+      if (!plan) {
+        // The model answered but not in the shape we asked for — surface what it
+        // said rather than pretending it failed entirely.
+        return res.json({ plan: null, raw, say: String(raw || '').slice(0, 400) });
+      }
+      // card_id comes from our own pick, so it can never be a hallucinated id.
+      res.json({
+        plan: {
+          card_id: chosen.card_id,
+          card_title: chosen.title,
+          why: plan.why,
+          steps: plan.steps,
+          say: plan.say
+        }
+      });
+    } catch (err) {
+      res.status(502).json({ error: err.message });
+    }
+  });
+
+  // Write the coach's steps onto the card as a real checklist.
+  app.post('/api/coach/apply', requireAuth, (req, res) => {
+    const cardId = Number(req.body?.card_id);
+    const steps = Array.isArray(req.body?.steps) ? req.body.steps.map(String).filter(Boolean) : [];
+    const title = String(req.body?.title || 'Next up').slice(0, 80);
+    const card = q.card.get(cardId);
+    if (!card) return res.status(404).json({ error: 'Card not found' });
+    if (!steps.length) return res.status(400).json({ error: 'No steps to add' });
+
+    const pos = db.prepare('SELECT COALESCE(MAX(position) + 1, 0) AS p FROM checklists WHERE card_id = ?').get(card.id).p;
+    const info = db.prepare('INSERT INTO checklists (card_id, title, position) VALUES (?, ?, ?)').run(card.id, title, pos);
+    const add = db.prepare('INSERT INTO checklist_items (checklist_id, text, position) VALUES (?, ?, ?)');
+    steps.forEach((s, i) => add.run(info.lastInsertRowid, s.slice(0, 500), i));
+    logActivity(boardIdOfCard(card.id), card.id, 'checklist_added', `Coach added "${title}"`);
+    res.json({ ok: true, checklist_id: info.lastInsertRowid, count: steps.length });
   });
 
   // ================= MCP INTEGRATION =================

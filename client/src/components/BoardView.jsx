@@ -3,10 +3,11 @@ import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   ArrowLeft, Plus, Star, Search, Filter, Download, Upload, Archive,
-  History, X, Clock, MessageSquare, Paperclip, CheckSquare, AlignLeft, RotateCcw
+  History, X, Clock, MessageSquare, Paperclip, CheckSquare, AlignLeft, RotateCcw, Sparkles
 } from 'lucide-react';
 import { api } from '../api.js';
 import CardModal from './CardModal.jsx';
+import CoachPanel from './CoachPanel.jsx';
 
 function dueState(due) {
   if (!due) return null;
@@ -115,6 +116,7 @@ export default function BoardView({ boardId, onBack }) {
   const [dueFilter, setDueFilter] = useState(null);
   const [filterOpen, setFilterOpen] = useState(false);
   const [panel, setPanel] = useState(null); // 'activity' | 'archived' | null
+  const [showCoach, setShowCoach] = useState(false);
   const [activity, setActivity] = useState([]);
   const [archived, setArchived] = useState({ lists: [], cards: [] });
   const [addingList, setAddingList] = useState(false);
@@ -245,7 +247,8 @@ export default function BoardView({ boardId, onBack }) {
   if (!board) return <div className="h-full flex items-center justify-center text-zinc-600">Loading…</div>;
 
   return (
-    <div className="h-full flex flex-col" style={{ background: `linear-gradient(180deg, ${board.color}22, transparent 240px)` }}>
+    <div className="h-full flex">
+    <div className="flex-1 min-w-0 flex flex-col" style={{ background: `linear-gradient(180deg, ${board.color}22, transparent 240px)` }}>
       {/* header */}
       <header className="shrink-0 px-4 py-3 flex items-center gap-2 flex-wrap border-b border-zinc-800/60 bg-zinc-950/70 backdrop-blur">
         <button onClick={onBack} className="p-2 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-zinc-100" title="All boards">
@@ -263,6 +266,15 @@ export default function BoardView({ boardId, onBack }) {
         <button onClick={() => api.patch(`/api/boards/${board.id}`, { starred: !board.starred }).then(load)}
           className="p-2 rounded-lg hover:bg-zinc-800" title="Star board">
           <Star className={`w-4 h-4 ${board.starred ? 'text-amber-400 fill-amber-400' : 'text-zinc-500'}`} />
+        </button>
+        <button
+          onClick={() => setShowCoach((v) => !v)}
+          title="Ask what to work on next"
+          className={`flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg border transition-colors ${
+            showCoach ? 'border-indigo-500/60 text-indigo-300 bg-indigo-500/10' : 'border-zinc-800 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800'
+          }`}
+        >
+          <Sparkles className="w-4 h-4" /> What's next
         </button>
 
         <div className="flex-1" />
@@ -491,6 +503,14 @@ export default function BoardView({ boardId, onBack }) {
           />
         )}
       </AnimatePresence>
+    </div>
+
+    {/* voice coach, docked right */}
+    <AnimatePresence>
+      {showCoach && (
+        <CoachPanel boardId={board.id} onClose={() => setShowCoach(false)} onApplied={load} />
+      )}
+    </AnimatePresence>
     </div>
   );
 }
