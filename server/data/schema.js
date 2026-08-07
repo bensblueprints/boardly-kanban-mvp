@@ -191,6 +191,17 @@ function ddl(dialect) {
       v ${int} NOT NULL DEFAULT 0
     );
 
+    -- Public read-only board links. Cloud-side only: they never sync.
+    CREATE TABLE IF NOT EXISTS share_links (
+      id ${pk},
+      uid TEXT NOT NULL UNIQUE,
+      board_id ${int} NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
+      token TEXT NOT NULL UNIQUE,
+      label TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (${now}),
+      revoked_at TEXT DEFAULT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_lists_board ON lists(board_id);
     CREATE INDEX IF NOT EXISTS idx_cards_list ON cards(list_id);
     CREATE INDEX IF NOT EXISTS idx_labels_board ON labels(board_id);
@@ -314,6 +325,10 @@ async function migrate(store) {
   // Ownership. Desktop rows all belong to the single local user; the backfill
   // below assigns them once, on first upgrade.
   await addColumn(store, 'boards', 'owner_id', `${int} NOT NULL DEFAULT 0`);
+
+  // Hosted attachment blobs. Default ON while registration is free — when
+  // billing lands this becomes the paid storage add-on switch.
+  await addColumn(store, 'users', 'storage_enabled', `${int} NOT NULL DEFAULT 1`);
 
   // Sync bookkeeping on every syncable table.
   for (const table of SYNCABLE) {

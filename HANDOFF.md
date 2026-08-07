@@ -71,9 +71,37 @@ id per request; the tools scope every entry-point lookup by the denormalised
 `owner_id`, so the desktop stdio/HTTP paths return identical results (the local
 user owns everything locally). `test/mcp-cloud.js` (8/8) covers auth, scoping,
 scope enforcement and revocation, and passes against real Postgres along with
-the other pg suites. **All Phase 1 tasks (#1–#8) are now complete.** The
-production stack on vmi3218770 runs pre-sync/pre-MCP code until the parent
-commits and redeploys (`git pull && up -d --build` in /root/boardly).
+the other pg suites. **All Phase 1 tasks (#1–#8) are now complete.**
+
+**Update 2026-08-07 (6):** the two deferred cloud features are done.
+
+- **Hosted attachment blobs in sync.** `GET/POST /api/sync/blob/:uid`
+  (Bearer/cookie, owner-scoped via the attachment row, bytes under DATA_DIR on
+  the `boardly-data` volume). After the metadata rounds, the desktop client
+  uploads blobs the cloud lacks and downloads ones it's missing; state is
+  tracked in `sync-blobs.json` and failures (storage off, over the cap, network)
+  count as *pending* and retry silently — blobs never flip sync to offline.
+  Gated by `users.storage_enabled` (additive migration, **default 1** while
+  registration is free; it becomes the paid add-on switch when billing lands).
+  The cloud upload cap (`MAX_UPLOAD_MB`, 25MB default) is enforced on blob push
+  (413) and pre-checked client-side via `/api/me`. SyncPanel shows a one-line
+  pending count. `test/blobs.js` (5/5): full round trip via a second desktop,
+  the 403 gate with metadata still flowing, the cap.
+- **Public read-only share links.** New `share_links` table (uid, board_id,
+  32-hex token, label, created_at, revoked_at). Owner-scoped
+  `GET/POST /api/boards/:id/share`, `DELETE /api/share/:id`; public
+  `GET /api/share/:token` (no auth; revoked/unknown/malformed → 404).
+  Safe-fields contract: board name/description/color/emoji, label names+colors,
+  non-archived lists/cards with title/description/due_date/labels/checklists.
+  Never exposed: ids/uids, timestamps, comments, attachment names or bytes,
+  activity, owner identity. Frontend: public `#/share/:token` view (bypasses
+  auth entirely) + a Share panel on the board header (cloud mode only — links
+  don't sync and desktop has no UI for them). `test/share.js` (4/4).
+
+Validated on real Postgres (fresh throwaway container, torn down after):
+store 21/21, accounts 10/10, smoke 13/13, sync 10/10, blobs 5/5, share 4/4,
+mcp-cloud 8/8. The production stack runs the older build until the parent
+commits and redeploys.
 
 ---
 

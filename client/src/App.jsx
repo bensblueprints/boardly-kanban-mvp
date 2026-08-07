@@ -5,6 +5,16 @@ import { api } from './api.js';
 import BoardsHome from './components/BoardsHome.jsx';
 import BoardView from './components/BoardView.jsx';
 import AuthScreen from './components/AuthScreen.jsx';
+import ShareView from './components/ShareView.jsx';
+
+const parseBoardHash = () => {
+  const m = location.hash.match(/^#\/board\/(\d+)/);
+  return m ? Number(m[1]) : null;
+};
+const parseShareHash = () => {
+  const m = location.hash.match(/^#\/share\/([a-f0-9]{32})/);
+  return m ? m[1] : null;
+};
 
 // Desktop/self-host sign-in: the single local password. Cloud mode gets
 // AuthScreen (real accounts) instead — see below.
@@ -70,10 +80,8 @@ function Login({ onLogin }) {
 
 export default function App() {
   const [me, setMe] = useState(null); // { authed, mode, user, maxUploadMb }
-  const [boardId, setBoardId] = useState(() => {
-    const m = location.hash.match(/^#\/board\/(\d+)/);
-    return m ? Number(m[1]) : null;
-  });
+  const [boardId, setBoardId] = useState(parseBoardHash);
+  const [shareToken, setShareToken] = useState(parseShareHash);
 
   const refresh = () => api.get('/api/me').then(setMe).catch(() => setMe({ authed: false, mode: 'desktop' }));
   useEffect(() => { refresh(); }, []);
@@ -90,8 +98,8 @@ export default function App() {
 
   useEffect(() => {
     const onHash = () => {
-      const m = location.hash.match(/^#\/board\/(\d+)/);
-      setBoardId(m ? Number(m[1]) : null);
+      setBoardId(parseBoardHash());
+      setShareToken(parseShareHash());
     };
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
@@ -102,6 +110,9 @@ export default function App() {
   }
 
   const logout = () => api.post('/api/logout').then(refresh);
+
+  // Public share links bypass the whole auth flow.
+  if (shareToken) return <ShareView token={shareToken} />;
 
   if (me === null) return <div className="h-full flex items-center justify-center text-zinc-600">Loading…</div>;
   if (!me.authed) {

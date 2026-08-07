@@ -3,11 +3,12 @@ import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   ArrowLeft, Plus, Star, Search, Filter, Download, Upload, Archive,
-  History, X, Clock, MessageSquare, Paperclip, CheckSquare, AlignLeft, RotateCcw, Sparkles
+  History, X, Clock, MessageSquare, Paperclip, CheckSquare, AlignLeft, RotateCcw, Sparkles, Share2
 } from 'lucide-react';
 import { api } from '../api.js';
 import CardModal from './CardModal.jsx';
 import CoachPanel from './CoachPanel.jsx';
+import SharePanel from './SharePanel.jsx';
 
 function dueState(due) {
   if (!due) return null;
@@ -117,6 +118,7 @@ export default function BoardView({ boardId, onBack, mode }) {
   const [filterOpen, setFilterOpen] = useState(false);
   const [panel, setPanel] = useState(null); // 'activity' | 'archived' | null
   const [showCoach, setShowCoach] = useState(false);
+  const [showShare, setShowShare] = useState(false);
   const [activity, setActivity] = useState([]);
   const [archived, setArchived] = useState({ lists: [], cards: [] });
   const [addingList, setAddingList] = useState(false);
@@ -267,6 +269,15 @@ export default function BoardView({ boardId, onBack, mode }) {
           className="p-2 rounded-lg hover:bg-zinc-800" title="Star board">
           <Star className={`w-4 h-4 ${board.starred ? 'text-amber-400 fill-amber-400' : 'text-zinc-500'}`} />
         </button>
+        {mode === 'cloud' && (
+          <button
+            onClick={() => setShowShare(true)}
+            title="Share a read-only link"
+            className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg border border-zinc-800 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition-colors"
+          >
+            <Share2 className="w-4 h-4" /> Share
+          </button>
+        )}
         {mode !== 'cloud' && (
           <button
             onClick={() => setShowCoach((v) => !v)}
@@ -511,6 +522,13 @@ export default function BoardView({ boardId, onBack, mode }) {
     <AnimatePresence>
       {showCoach && (
         <CoachPanel boardId={board.id} onClose={() => setShowCoach(false)} onApplied={load} />
+      )}
+    </AnimatePresence>
+
+    {/* share links (cloud mode) */}
+    <AnimatePresence>
+      {showShare && (
+        <SharePanel boardId={board.id} onClose={() => setShowShare(false)} />
       )}
     </AnimatePresence>
     </div>

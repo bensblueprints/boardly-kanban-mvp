@@ -156,6 +156,12 @@ export default function SyncPanel({ status, onClose, onChanged }) {
                   <Unplug className="w-4 h-4" /> Disconnect
                 </button>
               </div>
+              {status.pendingBlobs > 0 && (
+                <p className="text-xs text-amber-400/90">
+                  {status.pendingBlobs} file{status.pendingBlobs === 1 ? '' : 's'} pending —
+                  attachment bytes move when hosted storage allows it; they stay safe locally either way.
+                </p>
+              )}
               <p className="text-xs text-zinc-600">
                 Changes sync both ways every 30 seconds. Without a connection everything stays local — nothing is lost.
               </p>

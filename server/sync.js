@@ -149,14 +149,19 @@ const INTERVAL_MS = 30 * 1000;
 
 function createSyncClient({ store, dataDir }) {
   const settingsPath = path.join(dataDir, 'sync.json');
+  const blobStatePath = path.join(dataDir, 'sync-blobs.json');
+  const uploadsDir = path.join(dataDir, 'uploads');
   let cfg = null;
   try {
     const saved = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
     if (saved && saved.url && saved.token) cfg = saved;
   } catch {}
+  // uid → true for attachments whose bytes are on both sides already.
+  let blobDone = {};
+  try { blobDone = JSON.parse(fs.readFileSync(blobStatePath, 'utf8')); } catch {}
   let timer = null;
   let syncing = false;
-  const state = { state: 'idle', lastSyncAt: null, lastError: null };
+  const state = { state: 'idle', lastSyncAt: null, lastError: null, pendingBlobs: 0 };
 
   const ownerId = () => store.localUser.id;
 
@@ -171,7 +176,8 @@ function createSyncClient({ store, dataDir }) {
       url: cfg ? cfg.url : '',
       state: cfg ? state.state : 'idle',
       lastSyncAt: state.lastSyncAt,
-      lastError: state.lastError
+      lastError: state.lastError,
+      pendingBlobs: state.pendingBlobs
     };
   }
 
@@ -188,6 +194,20 @@ function createSyncClient({ store, dataDir }) {
     const json = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(json.error || `Sync request failed (${res.status})`);
     return json;
+  }
+
+  // Raw-bodied variant for blob up/downloads. Never throws on 4xx — those
+  // are steady states (storage disabled, blob missing), not sync failures.
+  async function blobReq(method, p, buf) {
+    return fetch(cfg.url + p, {
+      method,
+      headers: {
+        authorization: `Bearer ${cfg.token}`,
+        ...(buf !== undefined ? { 'content-type': 'application/octet-stream' } : {})
+      },
+      body: buf,
+      signal: AbortSignal.timeout(60000)
+    });
   }
 
   async function getCursor(k) {
@@ -253,6 +273,46 @@ function createSyncClient({ store, dataDir }) {
     await setCursor('pull_cursor', body.rev);
   }
 
+  /* Blob exchange, after the metadata rounds: for every attachment row we
+     know about, whichever side has the bytes shares them. Anything that
+     can't move (storage disabled on the account, over the upload cap, blob
+     missing on both sides) counts as pending and is retried next sync —
+     blobs never flip the sync status to offline. */
+  async function syncBlobs() {
+    const rows = await store.all('SELECT uid, filename FROM attachments WHERE owner_id = ?', [ownerId()]);
+    let pending = 0;
+    let changed = false;
+    for (const a of rows) {
+      const local = path.join(uploadsDir, a.filename);
+      const have = fs.existsSync(local);
+      if (blobDone[a.uid] && have) continue;
+      try {
+        if (have) {
+          const size = fs.statSync(local).size;
+          const capMb = Number(cfg.maxUploadMb) || 25;
+          if (size > capMb * 1024 * 1024) { pending++; continue; }
+          const res = await blobReq('POST', `/api/sync/blob/${a.uid}`, fs.readFileSync(local));
+          if (res.ok) { blobDone[a.uid] = true; changed = true; }
+          else pending++; // 403 storage off, 413 over cap, 404 metadata not there yet
+        } else {
+          const res = await blobReq('GET', `/api/sync/blob/${a.uid}`);
+          if (res.ok) {
+            fs.mkdirSync(uploadsDir, { recursive: true });
+            fs.writeFileSync(local, Buffer.from(await res.arrayBuffer()));
+            blobDone[a.uid] = true; changed = true;
+          } else pending++;
+        }
+      } catch {
+        pending++; // network blip — next interval retries
+      }
+    }
+    // Forget uids whose rows are gone, then persist.
+    const live = new Set(rows.map((r) => r.uid));
+    blobDone = Object.fromEntries(Object.entries(blobDone).filter(([uid]) => live.has(uid)));
+    if (changed) fs.writeFileSync(blobStatePath, JSON.stringify(blobDone));
+    state.pendingBlobs = pending;
+  }
+
   async function syncNow() {
     if (!cfg || syncing) return status();
     syncing = true;
@@ -260,6 +320,7 @@ function createSyncClient({ store, dataDir }) {
     try {
       await push();
       await pull();
+      await syncBlobs();
       state.state = 'idle';
       state.lastError = null;
       state.lastSyncAt = new Date().toISOString();
@@ -308,6 +369,9 @@ function createSyncClient({ store, dataDir }) {
           name: trial.name,
           platform: trial.platform
         });
+        // The blob uploader pre-checks against the server's upload cap.
+        const me = await api('GET', '/api/me');
+        trial.maxUploadMb = Number(me.maxUploadMb) || 25;
       } catch (err) {
         cfg = null;
         throw err;
@@ -321,6 +385,9 @@ function createSyncClient({ store, dataDir }) {
       stop();
       cfg = null;
       try { fs.unlinkSync(settingsPath); } catch {}
+      try { fs.unlinkSync(blobStatePath); } catch {}
+      blobDone = {};
+      state.pendingBlobs = 0;
       // A reconnect starts from a full pull rather than trusting stale cursors.
       await setCursor('pull_cursor', -1);
       await setCursor('push_cursor', -1);

@@ -412,6 +412,48 @@ async function createApp(opts = {}) {
       res.json({ ok: true, rev });
     }));
 
+    // ---- attachment blobs ----
+    // Metadata syncs through push/pull like any other row; the bytes move
+    // through these two, addressed by the attachment's uid. Gated per user by
+    // storage_enabled — with the flag off the metadata keeps flowing and the
+    // desktop simply keeps the blobs pending (today's behaviour).
+    // Blobs live under DATA_DIR (the boardly-data volume).
+
+    app.get('/api/sync/blob/:uid', requireAuth, h(async (req, res) => {
+      const row = await store.one('SELECT * FROM attachments WHERE uid = ? AND owner_id = ?', [req.params.uid, req.user.id]);
+      if (!row) return res.status(404).json({ error: 'Not found' });
+      if (!req.user.storage_enabled) {
+        return res.status(403).json({ error: 'Hosted storage is not enabled on this account' });
+      }
+      res.sendFile(path.join(uploadsDir, row.filename));
+    }));
+
+    app.post('/api/sync/blob/:uid', requireAuth, h(async (req, res) => {
+      const row = await store.one('SELECT id, filename FROM attachments WHERE uid = ? AND owner_id = ?', [req.params.uid, req.user.id]);
+      if (!row) return res.status(404).json({ error: 'Not found' });
+      if (!req.user.storage_enabled) {
+        return res.status(403).json({ error: 'Hosted storage is not enabled on this account' });
+      }
+      // Raw octet stream, bounded by the same cap as multipart uploads.
+      const limit = maxUploadMb * 1024 * 1024;
+      const chunks = [];
+      let size = 0;
+      let tooBig = false;
+      await new Promise((resolve, reject) => {
+        req.on('data', (chunk) => {
+          if (tooBig) return;
+          size += chunk.length;
+          if (size > limit) { tooBig = true; return; }
+          chunks.push(chunk);
+        });
+        req.on('end', resolve);
+        req.on('error', reject);
+      });
+      if (tooBig) return res.status(413).json({ error: `File is too large — the limit is ${maxUploadMb} MB` });
+      fs.writeFileSync(path.join(uploadsDir, row.filename), Buffer.concat(chunks));
+      res.json({ ok: true, size });
+    }));
+
     // ================= CLOUD MCP =================
     // The same tools the desktop serves on 127.0.0.1, mounted on the main app
     // for agents that don't have Boardly installed. Auth is an API token with
@@ -469,6 +511,85 @@ async function createApp(opts = {}) {
     });
     app.get('/mcp', mcpMethodNotAllowed);
     app.delete('/mcp', mcpMethodNotAllowed);
+
+    // ================= SHARE LINKS (cloud only) =================
+    // Public read-only links to a board. They are a cloud-side concept and do
+    // not sync — the desktop keeps no share UI.
+
+    app.get('/api/boards/:id/share', requireAuth, h(async (req, res) => {
+      const board = await store.one(q.board, [req.params.id, req.user.id]);
+      if (!board) return res.status(404).json({ error: 'Board not found' });
+      res.json(await store.all(
+        'SELECT id, token, label, created_at FROM share_links WHERE board_id = ? AND revoked_at IS NULL ORDER BY id DESC',
+        [board.id]
+      ));
+    }));
+
+    app.post('/api/boards/:id/share', requireAuth, h(async (req, res) => {
+      const board = await store.one(q.board, [req.params.id, req.user.id]);
+      if (!board) return res.status(404).json({ error: 'Board not found' });
+      const row = await store.one(
+        'INSERT INTO share_links (uid, board_id, token, label) VALUES (?, ?, ?, ?) RETURNING id, token, label, created_at',
+        [crypto.randomUUID(), board.id, crypto.randomBytes(16).toString('hex'),
+         String(req.body?.label || '').slice(0, 80)]
+      );
+      res.json(row);
+    }));
+
+    app.delete('/api/share/:id', requireAuth, h(async (req, res) => {
+      const row = await store.one(
+        `SELECT sl.id FROM share_links sl JOIN boards b ON b.id = sl.board_id
+         WHERE sl.id = ? AND b.owner_id = ? AND sl.revoked_at IS NULL`,
+        [req.params.id, req.user.id]
+      );
+      if (!row) return res.status(404).json({ error: 'Share link not found' });
+      await store.run('UPDATE share_links SET revoked_at = {{now}} WHERE id = ?', [row.id]);
+      res.json({ ok: true });
+    }));
+
+    /* The public read. No auth, no cookies — anyone with the unguessable
+       token. Safe-fields contract: board name/description/color/emoji, label
+       names+colors, non-archived lists and cards (title, description, due
+       date, per-card labels, checklists with items). Deliberately NOT
+       exposed: integer ids and uids, timestamps, comments (private
+       discussion), attachments (names leak info; bytes stay put), activity
+       history, and anything about the owner (no email, no name). */
+    app.get('/api/share/:token', h(async (req, res) => {
+      if (!/^[a-f0-9]{32}$/.test(String(req.params.token))) {
+        return res.status(404).json({ error: 'Not found' });
+      }
+      const link = await store.one('SELECT * FROM share_links WHERE token = ? AND revoked_at IS NULL', [req.params.token]);
+      if (!link) return res.status(404).json({ error: 'Not found' });
+      const board = await store.one('SELECT * FROM boards WHERE id = ?', [link.board_id]);
+      if (!board) return res.status(404).json({ error: 'Not found' });
+      const labels = await store.all('SELECT name, color FROM labels WHERE board_id = ? ORDER BY id', [board.id]);
+      const lists = [];
+      for (const l of await store.all('SELECT * FROM lists WHERE board_id = ? AND archived = 0 ORDER BY position, id', [board.id])) {
+        const cards = [];
+        for (const c of await store.all('SELECT * FROM cards WHERE list_id = ? AND archived = 0 ORDER BY position, id', [l.id])) {
+          const checklists = [];
+          for (const cl of await store.all('SELECT * FROM checklists WHERE card_id = ? ORDER BY position, id', [c.id])) {
+            checklists.push({
+              title: cl.title,
+              items: await store.all('SELECT text, done FROM checklist_items WHERE checklist_id = ? ORDER BY position, id', [cl.id])
+            });
+          }
+          cards.push({
+            title: c.title,
+            description: c.description,
+            due_date: c.due_date,
+            labels: (await cardLabels(c.id)).map((lb) => ({ name: lb.name, color: lb.color })),
+            checklists
+          });
+        }
+        lists.push({ name: l.name, cards });
+      }
+      res.json({
+        board: { name: board.name, description: board.description, color: board.color, emoji: board.emoji },
+        labels,
+        lists
+      });
+    }));
   }
 
   // ================= BOARDS =================
