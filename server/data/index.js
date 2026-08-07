@@ -11,7 +11,12 @@ const { createPgStore } = require('./pg.js');
 const { migrate, ensureLocalUser } = require('./schema.js');
 
 async function openStore(opts = {}) {
-  const url = opts.databaseUrl || process.env.DATABASE_URL || null;
+  // Explicit null means "SQLite even if the environment says Postgres" —
+  // the sync test runs a desktop client next to a cloud server in one
+  // process, with DATABASE_URL set for the cloud side only.
+  const url = opts.databaseUrl === undefined
+    ? (process.env.DATABASE_URL || null)
+    : opts.databaseUrl;
 
   let store;
   if (url) {

@@ -62,7 +62,18 @@ Deploy layout on vmi3218770:
   Boardly marketing page through Cloudflare (the app is reachable at
   http://147.93.138.155:5315 until then). See the report for the exact record.
 
-Remaining: #4 sync engine, #5 cloud MCP mount.
+**Update 2026-08-07 (5):** task #5 done — **cloud MCP is live in the codebase**.
+The streamable-HTTP endpoint is mounted on the cloud app at `/mcp` (cloud mode
+only), stateless per request like `mcp/http.js`, authed by
+`Authorization: Bearer <API token>` with the `mcp` scope enforced (403 without
+it). `createBoardlyServer({ db, uploadsDir, ownerId })` takes the token user's
+id per request; the tools scope every entry-point lookup by the denormalised
+`owner_id`, so the desktop stdio/HTTP paths return identical results (the local
+user owns everything locally). `test/mcp-cloud.js` (8/8) covers auth, scoping,
+scope enforcement and revocation, and passes against real Postgres along with
+the other pg suites. **All Phase 1 tasks (#1–#8) are now complete.** The
+production stack on vmi3218770 runs pre-sync/pre-MCP code until the parent
+commits and redeploys (`git pull && up -d --build` in /root/boardly).
 
 ---
 
@@ -193,20 +204,36 @@ server (see gotchas).
    `sid` cookie or `Authorization: Bearer`, and stamps `last_used_at`. Token `scope`
    is recorded but not yet enforced.
 
-4. **Sync engine** (task #4) — push/pull with a `rev` cursor, LWW per record, uid-based
-   reference resolution. Desktop sync client + sign-in/paste-token UI + status indicator.
-   Attachment blobs excluded unless the storage add-on is active.
+4. ~~**Sync engine**~~ **(done 2026-08-07)** — `server/sync.js` holds the wire format
+   and the desktop client; the cloud exposes `POST /api/sync/hello` (device check-in),
+   `GET /api/sync/pull?since=N`, `POST /api/sync/push`. Desktop UI: Sync button +
+   status dot in the boards header, `SyncPanel.jsx` connect/status/disconnect.
+   `test/sync.js` (10/10) runs a real desktop↔cloud conversation and also passes
+   against real Postgres.
 
-   Unresolved design detail: tombstones. The plan is `AFTER DELETE` triggers writing to
-   `sync_tombstones` so no SELECT needs a `deleted_at IS NULL` filter and cascade deletes are
-   covered. **SQLite gotcha:** cascade deletes only fire triggers when `recursive_triggers`
-   is ON, but turning it on makes an `AFTER INSERT` trigger that updates its own table
-   re-fire. The intended fix is a `WHEN NEW.rev IS OLD.rev` guard so the chain terminates.
-   Needs dedicated tests.
+   Decisions taken (the "unresolved" ones):
+   - **LWW tie-break: cloud wins.** Strictly newer `updated_at` wins; an exact
+     same-second tie keeps the cloud's row. The clock is second-resolution TEXT,
+     so same-second cross-device edits to the same record lose the client's edit.
+   - **Tombstones via `AFTER DELETE` triggers** on every syncable table, both
+     engines (plpgsql function on pg). The recursive_triggers re-fire hazard
+     never materialised: rev stamping lives in app code, not triggers, so the
+     only triggers are delete→tombstone inserts and the chain terminates by
+     construction (no WHEN guard needed). SQLite gets `recursive_triggers = ON`
+     for cascade coverage; verified: deleting a board tombstones the whole subtree.
+   - **owner_id is denormalised onto every syncable row** (stamped at insert,
+     backfilled by migration). The trigger can then record the owner even after
+     the parent rows are gone, and pull needs no join chains.
+   - **Desktop rev semantics:** locally-written rows get local revs (≥ 1),
+     legacy pre-sync rows sit at 0, cloud-applied rows at -1 — so
+     `rev > push_cursor` (from -1) is exactly "written here".
+   - Attachment *metadata* syncs; blobs stay local (storage add-on later).
+   - Cursors live in `sync_state` (`pull_cursor`/`push_cursor`); devices
+     register via `/api/sync/hello`.
 
-5. **Cloud MCP** (task #5) — mount MCP on the main app at `/mcp`, authed by API token →
-   user, all tools scoped to that user's boards. **This is the piece that removes the desktop
-   install requirement for agents.**
+5. ~~**Cloud MCP**~~ **(done 2026-08-07)** — mounted at `/mcp` on the cloud app,
+   Bearer-token authed (`mcp` scope enforced), tools scoped to the token's user
+   via per-request `ownerId`. Agents no longer need the desktop install.
 
 6. **Auth/account UI** — **done 2026-08-07, scoped**: sign in, register, validation
    states, and the account area (user info, logout, API tokens create/show-once/

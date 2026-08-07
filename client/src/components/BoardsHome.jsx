@@ -1,9 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { KanbanSquare, Plus, Star, Trash2, LogOut, Upload, Layers, StickyNote, Plug, User } from 'lucide-react';
+import { KanbanSquare, Plus, Star, Trash2, LogOut, Upload, Layers, StickyNote, Plug, User, Cloud } from 'lucide-react';
 import { api } from '../api.js';
 import McpPanel from './McpPanel.jsx';
 import AccountPanel from './AccountPanel.jsx';
+import SyncPanel from './SyncPanel.jsx';
 
 const COLORS = ['#6366f1', '#8b5cf6', '#ec4899', '#ef4444', '#f59e0b', '#22c55e', '#14b8a6', '#3b82f6', '#64748b'];
 const EMOJIS = ['📋', '🚀', '🎯', '💼', '🛠️', '🎨', '📦', '🧠', '🔥', '🌱', '🏠', '✍️'];
@@ -18,6 +19,8 @@ export default function BoardsHome({ onOpen, onLogout, mode, user }) {
   const [showMcp, setShowMcp] = useState(false);
   const [mcpRunning, setMcpRunning] = useState(false);
   const [showAccount, setShowAccount] = useState(false);
+  const [showSync, setShowSync] = useState(false);
+  const [syncStatus, setSyncStatus] = useState(null);
 
   const load = () => api.get('/api/boards').then(setBoards);
   useEffect(() => { load(); }, []);
@@ -26,6 +29,10 @@ export default function BoardsHome({ onOpen, onLogout, mode, user }) {
   // The MCP server manager is desktop-only, so cloud mode skips it entirely.
   const loadMcp = () => api.get('/api/mcp').then((s) => setMcpRunning(s.running)).catch(() => {});
   useEffect(() => { if (mode !== 'cloud') loadMcp(); }, []);
+
+  // Cloud sync is the desktop's optional uplink; the dot mirrors its state.
+  const loadSync = () => api.get('/api/sync').then(setSyncStatus).catch(() => {});
+  useEffect(() => { if (mode !== 'cloud') loadSync(); }, []);
 
   async function create(e) {
     e.preventDefault();
@@ -77,6 +84,24 @@ export default function BoardsHome({ onOpen, onLogout, mode, user }) {
             </button>
             <input ref={importRef} type="file" accept=".json,application/json" className="hidden"
               onChange={(e) => { importBoard(e.target.files[0]); e.target.value = ''; }} />
+            {mode !== 'cloud' && (
+              <button
+                onClick={() => setShowSync(true)}
+                className="flex items-center gap-1.5 text-sm text-zinc-400 hover:text-zinc-100 px-3 py-1.5 rounded-lg hover:bg-zinc-800 transition-colors"
+              >
+                <span className="relative flex">
+                  <Cloud className="w-4 h-4" />
+                  {syncStatus?.configured && (
+                    <span className={`absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full ${
+                      syncStatus.state === 'offline' ? 'bg-amber-400'
+                        : syncStatus.state === 'syncing' ? 'bg-indigo-400 animate-pulse'
+                        : 'bg-emerald-400'
+                    }`} />
+                  )}
+                </span>
+                Sync
+              </button>
+            )}
             {mode !== 'cloud' && (
               <button
                 onClick={() => setShowMcp(true)}
@@ -211,6 +236,13 @@ export default function BoardsHome({ onOpen, onLogout, mode, user }) {
         )}
         {showAccount && (
           <AccountPanel user={user} onClose={() => setShowAccount(false)} onLogout={onLogout} />
+        )}
+        {showSync && (
+          <SyncPanel
+            status={syncStatus}
+            onClose={() => { setShowSync(false); loadSync(); }}
+            onChanged={() => { loadSync(); load(); }}
+          />
         )}
       </AnimatePresence>
     </div>

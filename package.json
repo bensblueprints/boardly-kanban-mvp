@@ -14,9 +14,11 @@
     "test": "node test/smoke.js",
     "test:store": "node test/store.js",
     "test:accounts": "node test/accounts.js",
+    "test:sync": "node test/sync.js",
     "test:mcp": "node test/mcp.js",
+    "test:mcp-cloud": "node test/mcp-cloud.js",
     "test:mcp-http": "node test/mcp-http.js",
-    "test:all": "node test/smoke.js && node test/store.js && node test/accounts.js && node test/mcp.js && node test/mcp-http.js && node test/coach.js",
+    "test:all": "node test/smoke.js && node test/store.js && node test/accounts.js && node test/sync.js && node test/mcp.js && node test/mcp-cloud.js && node test/mcp-http.js && node test/coach.js",
     "dist": "npm run build && electron-builder --win nsis",
     "test:coach": "node test/coach.js"
   },

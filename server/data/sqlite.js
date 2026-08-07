@@ -34,6 +34,10 @@ function createSqliteStore({ dataDir }) {
   const db = new Database(path.join(dataDir, 'app.db'), nativeBinding ? { nativeBinding } : {});
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
+  // Cascade deletes must fire the tombstone triggers (see schema.js). Safe
+  // here because no trigger updates its own table — the only triggers are
+  // AFTER DELETE inserts into sync_tombstones, which has no triggers.
+  db.pragma('recursive_triggers = ON');
 
   const cache = new Map();
   function stmt(sql) {

@@ -5,6 +5,9 @@ const express = require('express');
 const cookieParser = require('cookie-parser');
 const multer = require('multer');
 const { openStore } = require('./data/index.js');
+const { createSyncClient, collectChanges, applyRow, deleteByUid, SYNC_ORDER } = require('./sync.js');
+const { StreamableHTTPServerTransport } = require('@modelcontextprotocol/sdk/server/streamableHttp.js');
+const { createBoardlyServer } = require('../mcp/tools.js');
 const mcpSettings = require('../mcp/settings.js');
 const { startMcpHttp } = require('../mcp/http.js');
 const coach = require('./coach.js');
@@ -24,6 +27,7 @@ async function createApp(opts = {}) {
   const store = await openStore({ dataDir, databaseUrl: opts.databaseUrl, mode: opts.mode });
 
   const app = express();
+  app.locals.store = store;
   app.disable('x-powered-by');
   // Import payloads embed attachments as base64, so this tracks the upload cap
   // (plus headroom for base64's ~33% overhead) but stays bounded — a JSON body
@@ -69,22 +73,26 @@ async function createApp(opts = {}) {
   // Either credential authenticates a request: the web app's session cookie,
   // or a Bearer API token (desktop sync and cloud MCP). A Bearer token is
   // checked first; an invalid one simply falls through to the cookie check.
-  async function resolveUser(req) {
+  async function resolveToken(req) {
     const header = req.get('authorization') || '';
-    if (header.startsWith('Bearer ')) {
-      const token = header.slice(7).trim();
-      if (token) {
-        const row = await store.one(
-          `SELECT u.*, t.id AS token_id FROM api_tokens t JOIN users u ON u.id = t.user_id
-           WHERE t.token_hash = ? AND t.revoked_at IS NULL`,
-          [crypto.createHash('sha256').update(token).digest('hex')]
-        );
-        if (row) {
-          await store.run('UPDATE api_tokens SET last_used_at = {{now}} WHERE id = ?', [row.token_id]);
-          return row;
-        }
-      }
+    if (!header.startsWith('Bearer ')) return null;
+    const token = header.slice(7).trim();
+    if (!token) return null;
+    const row = await store.one(
+      `SELECT u.*, t.id AS token_id, t.scope AS token_scope
+       FROM api_tokens t JOIN users u ON u.id = t.user_id
+       WHERE t.token_hash = ? AND t.revoked_at IS NULL`,
+      [crypto.createHash('sha256').update(token).digest('hex')]
+    );
+    if (row) {
+      await store.run('UPDATE api_tokens SET last_used_at = {{now}} WHERE id = ?', [row.token_id]);
     }
+    return row;
+  }
+
+  async function resolveUser(req) {
+    const tokenUser = await resolveToken(req);
+    if (tokenUser) return tokenUser;
     const sid = req.cookies.sid;
     if (!sid) return null;
     return store.one(
@@ -340,6 +348,129 @@ async function createApp(opts = {}) {
     }));
   }
 
+  // ================= SYNC (cloud only) =================
+  // The hub side of desktop↔cloud sync. Pull streams every change above a
+  // rev cursor; push applies client changes last-write-wins (strictly newer
+  // updated_at wins, the cloud keeps its row on ties). Rows are keyed by uid
+  // and references travel as uids — client integer ids are never read.
+  // See server/sync.js for the wire format.
+
+  if (store.mode === 'cloud') {
+    // Device check-in: registers the device on first sync, refreshes
+    // last_sync_at after. Doubles as the credential test when connecting.
+    app.post('/api/sync/hello', requireAuth, h(async (req, res) => {
+      const uid = String(req.body?.device_uid || '');
+      if (!/^[0-9a-f-]{36}$/i.test(uid)) return res.status(400).json({ error: 'device_uid required' });
+      await store.run(
+        `INSERT OR IGNORE INTO devices (uid, user_id, name, platform, last_sync_at)
+         VALUES (?, ?, ?, ?, {{now}})`,
+        [uid, req.user.id, String(req.body?.name || 'Device').slice(0, 80),
+         String(req.body?.platform || '').slice(0, 80)]
+      );
+      await store.run('UPDATE devices SET last_sync_at = {{now}} WHERE uid = ? AND user_id = ?', [uid, req.user.id]);
+      res.json({ ok: true });
+    }));
+
+    app.get('/api/sync/pull', requireAuth, h(async (req, res) => {
+      const since = Math.max(0, Number(req.query.since) || 0);
+      const payload = await store.tx(async (t) => {
+        // Read the high-water mark first and bound every query by it, so a
+        // write landing mid-pull can't leak half a change into this snapshot.
+        const rev = (await t.one("SELECT v FROM sync_state WHERE k = 'rev'")).v;
+        const changes = {};
+        for (const table of SYNC_ORDER) {
+          changes[table] = await collectChanges(t, table, req.user.id, since, rev);
+        }
+        const tombstones = await t.all(
+          `SELECT tbl, uid, rev, deleted_at FROM sync_tombstones
+           WHERE owner_id = ? AND rev > ? AND rev <= ? ORDER BY rev`,
+          [req.user.id, since, rev]
+        );
+        return { rev, changes, tombstones };
+      });
+      res.json(payload);
+    }));
+
+    app.post('/api/sync/push', requireAuth, h(async (req, res) => {
+      const changes = req.body?.changes || {};
+      const tombstones = Array.isArray(req.body?.tombstones) ? req.body.tombstones : [];
+      await store.tx(async (t) => {
+        // Parents first — a child whose parent uid doesn't resolve is dropped.
+        for (const table of SYNC_ORDER) {
+          for (const row of Array.isArray(changes[table]) ? changes[table] : []) {
+            await applyRow(t, table, row, req.user.id, { serverSide: true, nextRev });
+          }
+        }
+        // Deletes children-first; each delete fires the tombstone trigger.
+        for (const table of [...SYNC_ORDER].reverse()) {
+          for (const ts of tombstones.filter((x) => x && x.tbl === table)) {
+            await deleteByUid(t, table, ts.uid, req.user.id);
+          }
+        }
+      });
+      const rev = (await store.one("SELECT v FROM sync_state WHERE k = 'rev'")).v;
+      res.json({ ok: true, rev });
+    }));
+
+    // ================= CLOUD MCP =================
+    // The same tools the desktop serves on 127.0.0.1, mounted on the main app
+    // for agents that don't have Boardly installed. Auth is an API token with
+    // the `mcp` scope; every tool call runs as that token's user (ownerId is
+    // passed per request, and the tools scope every lookup by it).
+    // Stateless, like mcp/http.js: a fresh server+transport per request.
+
+    const mcpUnauthorized = (res) => res.status(401).json({
+      jsonrpc: '2.0',
+      error: { code: -32001, message: 'Unauthorized — send Authorization: Bearer <API token> (Account → API tokens)' },
+      id: null
+    });
+
+    const requireMcpToken = h(async (req, res, next) => {
+      const user = await resolveToken(req);
+      if (!user) return mcpUnauthorized(res);
+      const scopes = String(user.token_scope || '').split(',').map((s) => s.trim());
+      if (!scopes.includes('mcp')) {
+        return res.status(403).json({
+          jsonrpc: '2.0',
+          error: { code: -32001, message: 'This API token does not have the mcp scope' },
+          id: null
+        });
+      }
+      req.user = user;
+      next();
+    });
+
+    app.post('/mcp', requireMcpToken, h(async (req, res) => {
+      const server = createBoardlyServer({ db: store, uploadsDir, ownerId: req.user.id });
+      const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+      res.on('close', () => {
+        transport.close().catch(() => {});
+        server.close().catch(() => {});
+      });
+      try {
+        await server.connect(transport);
+        await transport.handleRequest(req, res, req.body);
+      } catch (err) {
+        if (!res.headersSent) {
+          res.status(500).json({
+            jsonrpc: '2.0',
+            error: { code: -32603, message: err.message || 'Internal error' },
+            id: null
+          });
+        }
+      }
+    }));
+
+    // Stateless mode has no server-initiated stream and no session to terminate.
+    const mcpMethodNotAllowed = (req, res) => res.status(405).json({
+      jsonrpc: '2.0',
+      error: { code: -32000, message: 'Method not allowed — this endpoint is stateless, use POST' },
+      id: null
+    });
+    app.get('/mcp', mcpMethodNotAllowed);
+    app.delete('/mcp', mcpMethodNotAllowed);
+  }
+
   // ================= BOARDS =================
 
   app.get('/api/boards', requireAuth, h(async (req, res) => {
@@ -479,9 +610,9 @@ async function createApp(opts = {}) {
     if (!name) return res.status(400).json({ error: 'List name is required' });
     const pos = (await store.one('SELECT COALESCE(MAX(position) + 1, 0) AS p FROM lists WHERE board_id = ?', [board.id])).p;
     const list = await store.one(
-      `INSERT INTO lists (board_id, name, position, uid, updated_at, rev)
-       VALUES (?, ?, ?, ?, {{now}}, ?) RETURNING *`,
-      [board.id, name, pos, crypto.randomUUID(), await nextRev()]
+      `INSERT INTO lists (board_id, name, position, uid, owner_id, updated_at, rev)
+       VALUES (?, ?, ?, ?, ?, {{now}}, ?) RETURNING *`,
+      [board.id, name, pos, crypto.randomUUID(), req.user.id, await nextRev()]
     );
     await logActivity(board.id, null, 'list_created', `Added list "${name}"`);
     res.json({ ...list, cards: [] });
@@ -528,10 +659,10 @@ async function createApp(opts = {}) {
     if (!title) return res.status(400).json({ error: 'Card title is required' });
     const pos = (await store.one('SELECT COALESCE(MAX(position) + 1, 0) AS p FROM cards WHERE list_id = ? AND archived = 0', [list.id])).p;
     const card = await store.one(
-      `INSERT INTO cards (list_id, title, description, due_date, position, uid, updated_at, rev)
-       VALUES (?, ?, ?, ?, ?, ?, {{now}}, ?) RETURNING *`,
+      `INSERT INTO cards (list_id, title, description, due_date, position, uid, owner_id, updated_at, rev)
+       VALUES (?, ?, ?, ?, ?, ?, ?, {{now}}, ?) RETURNING *`,
       [list.id, title, String(req.body?.description || ''), req.body?.due_date || null, pos,
-       crypto.randomUUID(), await nextRev()]
+       crypto.randomUUID(), req.user.id, await nextRev()]
     );
     await logActivity(list.board_id, card.id, 'card_created', `Added "${title}" to ${list.name}`);
     res.json(await cardSummary(card));
@@ -621,9 +752,9 @@ async function createApp(opts = {}) {
     if (!name) return res.status(400).json({ error: 'Label name is required' });
     const color = String(req.body?.color || '#22c55e');
     const label = await store.one(
-      `INSERT INTO labels (board_id, name, color, uid, updated_at, rev)
-       VALUES (?, ?, ?, ?, {{now}}, ?) RETURNING *`,
-      [board.id, name, color, crypto.randomUUID(), await nextRev()]
+      `INSERT INTO labels (board_id, name, color, uid, owner_id, updated_at, rev)
+       VALUES (?, ?, ?, ?, ?, {{now}}, ?) RETURNING *`,
+      [board.id, name, color, crypto.randomUUID(), req.user.id, await nextRev()]
     );
     res.json(label);
   }));
@@ -651,9 +782,9 @@ async function createApp(opts = {}) {
     const label = await store.one(q.label, [req.params.labelId, req.user.id]);
     if (!card || !label) return res.status(404).json({ error: 'Not found' });
     await store.run(
-      `INSERT OR IGNORE INTO card_labels (card_id, label_id, uid, updated_at, rev)
-       VALUES (?, ?, ?, {{now}}, ?)`,
-      [card.id, label.id, crypto.randomUUID(), await nextRev()]
+      `INSERT OR IGNORE INTO card_labels (card_id, label_id, uid, owner_id, updated_at, rev)
+       VALUES (?, ?, ?, ?, {{now}}, ?)`,
+      [card.id, label.id, crypto.randomUUID(), req.user.id, await nextRev()]
     );
     await logActivity(label.board_id, card.id, 'label_added', `Added label "${label.name}" to "${card.title}"`);
     res.json({ ok: true, labels: await cardLabels(card.id) });
@@ -674,9 +805,9 @@ async function createApp(opts = {}) {
     const title = String(req.body?.title || 'Checklist').trim() || 'Checklist';
     const pos = (await store.one('SELECT COALESCE(MAX(position) + 1, 0) AS p FROM checklists WHERE card_id = ?', [card.id])).p;
     const row = await store.one(
-      `INSERT INTO checklists (card_id, title, position, uid, updated_at, rev)
-       VALUES (?, ?, ?, ?, {{now}}, ?) RETURNING id`,
-      [card.id, title, pos, crypto.randomUUID(), await nextRev()]
+      `INSERT INTO checklists (card_id, title, position, uid, owner_id, updated_at, rev)
+       VALUES (?, ?, ?, ?, ?, {{now}}, ?) RETURNING id`,
+      [card.id, title, pos, crypto.randomUUID(), req.user.id, await nextRev()]
     );
     await logActivity(await boardIdOfCard(card.id), card.id, 'checklist_added', `Added checklist "${title}"`);
     res.json({ id: row.id, card_id: card.id, title, position: pos, items: [] });
@@ -705,9 +836,9 @@ async function createApp(opts = {}) {
     if (!text) return res.status(400).json({ error: 'Item text is required' });
     const pos = (await store.one('SELECT COALESCE(MAX(position) + 1, 0) AS p FROM checklist_items WHERE checklist_id = ?', [cl.id])).p;
     const item = await store.one(
-      `INSERT INTO checklist_items (checklist_id, text, position, uid, updated_at, rev)
-       VALUES (?, ?, ?, ?, {{now}}, ?) RETURNING *`,
-      [cl.id, text, pos, crypto.randomUUID(), await nextRev()]
+      `INSERT INTO checklist_items (checklist_id, text, position, uid, owner_id, updated_at, rev)
+       VALUES (?, ?, ?, ?, ?, {{now}}, ?) RETURNING *`,
+      [cl.id, text, pos, crypto.randomUUID(), req.user.id, await nextRev()]
     );
     res.json(item);
   }));
@@ -753,9 +884,9 @@ async function createApp(opts = {}) {
     if (!body) return res.status(400).json({ error: 'Comment body is required' });
     const author = String(req.body?.author || 'Admin').trim() || 'Admin';
     const comment = await store.one(
-      `INSERT INTO comments (card_id, author, body, uid, updated_at, rev)
-       VALUES (?, ?, ?, ?, {{now}}, ?) RETURNING *`,
-      [card.id, author, body, crypto.randomUUID(), await nextRev()]
+      `INSERT INTO comments (card_id, author, body, uid, owner_id, updated_at, rev)
+       VALUES (?, ?, ?, ?, ?, {{now}}, ?) RETURNING *`,
+      [card.id, author, body, crypto.randomUUID(), req.user.id, await nextRev()]
     );
     await logActivity(await boardIdOfCard(card.id), card.id, 'comment_added', `Commented on "${card.title}"`);
     res.json(comment);
@@ -783,10 +914,10 @@ async function createApp(opts = {}) {
     }
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
     const row = await store.one(
-      `INSERT INTO attachments (card_id, filename, original_name, size, mime, uid, updated_at, rev)
-       VALUES (?, ?, ?, ?, ?, ?, {{now}}, ?) RETURNING *`,
+      `INSERT INTO attachments (card_id, filename, original_name, size, mime, uid, owner_id, updated_at, rev)
+       VALUES (?, ?, ?, ?, ?, ?, ?, {{now}}, ?) RETURNING *`,
       [card.id, req.file.filename, req.file.originalname, req.file.size, req.file.mimetype,
-       crypto.randomUUID(), await nextRev()]
+       crypto.randomUUID(), req.user.id, await nextRev()]
     );
     await logActivity(await boardIdOfCard(card.id), card.id, 'attachment_added', `Attached ${req.file.originalname}`);
     res.json({ ...row, url: `/uploads/${row.filename}` });
@@ -876,53 +1007,53 @@ async function createApp(opts = {}) {
       const labelIds = {};
       for (const lb of data.labels || []) {
         labelIds[lb.name] = (await t.one(
-          `INSERT INTO labels (board_id, name, color, uid, updated_at, rev)
-           VALUES (?, ?, ?, ?, {{now}}, ?) RETURNING id`,
-          [boardId, String(lb.name), String(lb.color || '#22c55e'), crypto.randomUUID(), await nextRev(t)]
+          `INSERT INTO labels (board_id, name, color, uid, owner_id, updated_at, rev)
+           VALUES (?, ?, ?, ?, ?, {{now}}, ?) RETURNING id`,
+          [boardId, String(lb.name), String(lb.color || '#22c55e'), crypto.randomUUID(), req.user.id, await nextRev(t)]
         )).id;
       }
       for (const l of data.lists) {
         const listId = (await t.one(
-          `INSERT INTO lists (board_id, name, position, archived, uid, updated_at, rev)
-           VALUES (?, ?, ?, ?, ?, {{now}}, ?) RETURNING id`,
+          `INSERT INTO lists (board_id, name, position, archived, uid, owner_id, updated_at, rev)
+           VALUES (?, ?, ?, ?, ?, ?, {{now}}, ?) RETURNING id`,
           [boardId, String(l.name), Number(l.position) || 0, l.archived ? 1 : 0,
-           crypto.randomUUID(), await nextRev(t)]
+           crypto.randomUUID(), req.user.id, await nextRev(t)]
         )).id;
         for (const c of l.cards || []) {
           const cardId = (await t.one(
-            `INSERT INTO cards (list_id, title, description, position, due_date, archived, uid, updated_at, rev)
-             VALUES (?, ?, ?, ?, ?, ?, ?, {{now}}, ?) RETURNING id`,
+            `INSERT INTO cards (list_id, title, description, position, due_date, archived, uid, owner_id, updated_at, rev)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, {{now}}, ?) RETURNING id`,
             [listId, String(c.title), String(c.description || ''), Number(c.position) || 0,
-             c.due_date || null, c.archived ? 1 : 0, crypto.randomUUID(), await nextRev(t)]
+             c.due_date || null, c.archived ? 1 : 0, crypto.randomUUID(), req.user.id, await nextRev(t)]
           )).id;
           for (const name of c.labels || []) {
             if (labelIds[name]) {
               await t.run(
-                'INSERT OR IGNORE INTO card_labels (card_id, label_id, uid, updated_at, rev) VALUES (?, ?, ?, {{now}}, ?)',
-                [cardId, labelIds[name], crypto.randomUUID(), await nextRev(t)]
+                'INSERT OR IGNORE INTO card_labels (card_id, label_id, uid, owner_id, updated_at, rev) VALUES (?, ?, ?, ?, {{now}}, ?)',
+                [cardId, labelIds[name], crypto.randomUUID(), req.user.id, await nextRev(t)]
               );
             }
           }
           for (const [cli, cl] of (c.checklists || []).entries()) {
             const clId = (await t.one(
-              `INSERT INTO checklists (card_id, title, position, uid, updated_at, rev)
-               VALUES (?, ?, ?, ?, {{now}}, ?) RETURNING id`,
-              [cardId, String(cl.title || 'Checklist'), cli, crypto.randomUUID(), await nextRev(t)]
+              `INSERT INTO checklists (card_id, title, position, uid, owner_id, updated_at, rev)
+               VALUES (?, ?, ?, ?, ?, {{now}}, ?) RETURNING id`,
+              [cardId, String(cl.title || 'Checklist'), cli, crypto.randomUUID(), req.user.id, await nextRev(t)]
             )).id;
             for (const [ii, it] of (cl.items || []).entries()) {
               await t.run(
-                `INSERT INTO checklist_items (checklist_id, text, done, position, uid, updated_at, rev)
-                 VALUES (?, ?, ?, ?, ?, {{now}}, ?)`,
-                [clId, String(it.text), it.done ? 1 : 0, ii, crypto.randomUUID(), await nextRev(t)]
+                `INSERT INTO checklist_items (checklist_id, text, done, position, uid, owner_id, updated_at, rev)
+                 VALUES (?, ?, ?, ?, ?, ?, {{now}}, ?)`,
+                [clId, String(it.text), it.done ? 1 : 0, ii, crypto.randomUUID(), req.user.id, await nextRev(t)]
               );
             }
           }
           for (const cm of c.comments || []) {
             await t.run(
-              `INSERT INTO comments (card_id, author, body, created_at, uid, updated_at, rev)
-               VALUES (?, ?, ?, ?, ?, {{now}}, ?)`,
+              `INSERT INTO comments (card_id, author, body, created_at, uid, owner_id, updated_at, rev)
+               VALUES (?, ?, ?, ?, ?, ?, {{now}}, ?)`,
               [cardId, String(cm.author || 'Admin'), String(cm.body), cm.created_at || new Date().toISOString(),
-               crypto.randomUUID(), await nextRev(t)]
+               crypto.randomUUID(), req.user.id, await nextRev(t)]
             );
           }
           for (const a of c.attachments || []) {
@@ -931,10 +1062,10 @@ async function createApp(opts = {}) {
             const filename = `${Date.now()}-${crypto.randomBytes(4).toString('hex')}${ext}`;
             const buf = Buffer.from(a.data, 'base64');
             await t.run(
-              `INSERT INTO attachments (card_id, filename, original_name, size, mime, uid, updated_at, rev)
-               VALUES (?, ?, ?, ?, ?, ?, {{now}}, ?)`,
+              `INSERT INTO attachments (card_id, filename, original_name, size, mime, uid, owner_id, updated_at, rev)
+               VALUES (?, ?, ?, ?, ?, ?, ?, {{now}}, ?)`,
               [cardId, filename, String(a.original_name || filename), buf.length, String(a.mime || 'application/octet-stream'),
-               crypto.randomUUID(), await nextRev(t)]
+               crypto.randomUUID(), req.user.id, await nextRev(t)]
             );
             pendingFiles.push({ filename, buf });
           }
@@ -1080,14 +1211,14 @@ async function createApp(opts = {}) {
 
       const pos = (await store.one('SELECT COALESCE(MAX(position) + 1, 0) AS p FROM checklists WHERE card_id = ?', [card.id])).p;
       const row = await store.one(
-        `INSERT INTO checklists (card_id, title, position, uid, updated_at, rev)
-         VALUES (?, ?, ?, ?, {{now}}, ?) RETURNING id`,
-        [card.id, title, pos, crypto.randomUUID(), await nextRev()]
+        `INSERT INTO checklists (card_id, title, position, uid, owner_id, updated_at, rev)
+         VALUES (?, ?, ?, ?, ?, {{now}}, ?) RETURNING id`,
+        [card.id, title, pos, crypto.randomUUID(), req.user.id, await nextRev()]
       );
       for (let i = 0; i < steps.length; i++) {
         await store.run(
-          'INSERT INTO checklist_items (checklist_id, text, position, uid, updated_at, rev) VALUES (?, ?, ?, ?, {{now}}, ?)',
-          [row.id, steps[i].slice(0, 500), i, crypto.randomUUID(), await nextRev()]);
+          'INSERT INTO checklist_items (checklist_id, text, position, uid, owner_id, updated_at, rev) VALUES (?, ?, ?, ?, ?, {{now}}, ?)',
+          [row.id, steps[i].slice(0, 500), i, crypto.randomUUID(), req.user.id, await nextRev()]);
       }
       await logActivity(await boardIdOfCard(card.id), card.id, 'checklist_added', `Coach added "${title}"`);
       res.json({ ok: true, checklist_id: row.id, count: steps.length });
@@ -1277,11 +1408,44 @@ async function createApp(opts = {}) {
       }
     });
 
+    // ================= CLOUD SYNC (desktop client) =================
+    // Optional: connect this install to Boardly Cloud with a server URL + API
+    // token. Fully offline-capable — sync failures only flip a status flag.
+
+    const sync = createSyncClient({ store, dataDir });
+
+    app.get('/api/sync', requireAuth, (req, res) => res.json(sync.status()));
+
+    app.post('/api/sync/connect', requireAuth, h(async (req, res) => {
+      try {
+        res.json(await sync.connect(req.body?.url, req.body?.token));
+      } catch (err) {
+        res.status(400).json({ error: err.message });
+      }
+    }));
+
+    app.post('/api/sync/disconnect', requireAuth, h(async (req, res) => {
+      res.json(await sync.disconnect());
+    }));
+
+    app.post('/api/sync/now', requireAuth, h(async (req, res) => {
+      res.json(await sync.syncNow());
+    }));
+
+    app.stopSync = sync.stop;
+
+    // A configured install syncs on boot and every interval after.
+    if (sync.configured()) {
+      sync.start();
+      sync.syncNow().catch(() => {});
+    }
+
   } else {
-    // Cloud mode: no local MCP listener to manage.
+    // Cloud mode: no local MCP listener or sync client to manage.
     app.startMcpIfEnabled = async () => null;
     app.stopMcp = async () => {};
     app.shutdownMcp = async () => {};
+    app.stopSync = () => {};
   }
 
   // ================= FRONTEND =================

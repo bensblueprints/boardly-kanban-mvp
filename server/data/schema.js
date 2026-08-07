@@ -229,6 +229,80 @@ async function addColumn(store, table, column, decl) {
   return true;
 }
 
+// Ownership is denormalised onto every syncable row. Scoping still *derives*
+// through the board (the board is the only place it can change hands), but
+// carrying owner_id on each row makes two hot paths trivially correct:
+// sync pull ("my rows with rev > N") needs no join chain, and a delete
+// trigger can record the owner in its tombstone even though the parent rows
+// are already gone by the time the cascade reaches it.
+async function backfillOwners(store) {
+  await store.run(`UPDATE lists SET owner_id = COALESCE(
+    (SELECT b.owner_id FROM boards b WHERE b.id = lists.board_id), 0) WHERE owner_id = 0`);
+  await store.run(`UPDATE labels SET owner_id = COALESCE(
+    (SELECT b.owner_id FROM boards b WHERE b.id = labels.board_id), 0) WHERE owner_id = 0`);
+  await store.run(`UPDATE cards SET owner_id = COALESCE(
+    (SELECT b.owner_id FROM lists l JOIN boards b ON b.id = l.board_id
+     WHERE l.id = cards.list_id), 0) WHERE owner_id = 0`);
+  for (const table of ['checklists', 'comments', 'attachments']) {
+    await store.run(`UPDATE ${table} SET owner_id = COALESCE(
+      (SELECT b.owner_id FROM cards c JOIN lists l ON l.id = c.list_id JOIN boards b ON b.id = l.board_id
+       WHERE c.id = ${table}.card_id), 0) WHERE owner_id = 0`);
+  }
+  await store.run(`UPDATE checklist_items SET owner_id = COALESCE(
+    (SELECT b.owner_id FROM checklists cl JOIN cards c ON c.id = cl.card_id
+     JOIN lists l ON l.id = c.list_id JOIN boards b ON b.id = l.board_id
+     WHERE cl.id = checklist_items.checklist_id), 0) WHERE owner_id = 0`);
+  await store.run(`UPDATE card_labels SET owner_id = COALESCE(
+    (SELECT b.owner_id FROM cards c JOIN lists l ON l.id = c.list_id JOIN boards b ON b.id = l.board_id
+     WHERE c.id = card_labels.card_id), 0) WHERE owner_id = 0`);
+}
+
+// ---- tombstone triggers ----------------------------------------------------
+// A deleted row can't announce its own deletion, and a board delete cascades
+// through every child table — so deletes are recorded by AFTER DELETE
+// triggers, and no SELECT anywhere needs a deleted_at filter.
+//
+// The handoff's SQLite gotcha: cascades only fire triggers with
+// recursive_triggers ON (set in sqlite.js). The documented re-fire hazard
+// came from the idea of rev-stamping AFTER INSERT/UPDATE triggers — we stamp
+// rev in app code instead, so the only triggers are these delete ones, which
+// insert into a table that has no triggers of its own. The chain terminates
+// by construction; no WHEN guard is needed.
+async function createTombstoneTriggers(store) {
+  if (store.dialect === 'pg') {
+    await store.exec(`
+      CREATE OR REPLACE FUNCTION boardly_tombstone() RETURNS trigger AS $body$
+      BEGIN
+        UPDATE sync_state SET v = v + 1 WHERE k = 'rev';
+        INSERT INTO sync_tombstones (tbl, uid, owner_id, rev, deleted_at)
+        VALUES (TG_TABLE_NAME, OLD.uid, OLD.owner_id,
+                (SELECT v FROM sync_state WHERE k = 'rev'), {{now}});
+        RETURN OLD;
+      END;
+      $body$ LANGUAGE plpgsql
+    `);
+    for (const table of SYNCABLE) {
+      await store.exec(`DROP TRIGGER IF EXISTS boardly_tomb_${table} ON ${table}`);
+      await store.exec(
+        `CREATE TRIGGER boardly_tomb_${table} AFTER DELETE ON ${table}
+         FOR EACH ROW EXECUTE FUNCTION boardly_tombstone()`
+      );
+    }
+    return;
+  }
+  for (const table of SYNCABLE) {
+    await store.exec(`
+      CREATE TRIGGER IF NOT EXISTS boardly_tomb_${table} AFTER DELETE ON ${table}
+      BEGIN
+        UPDATE sync_state SET v = v + 1 WHERE k = 'rev';
+        INSERT INTO sync_tombstones (tbl, uid, owner_id, rev, deleted_at)
+        VALUES ('${table}', OLD.uid, OLD.owner_id,
+                (SELECT v FROM sync_state WHERE k = 'rev'), {{now}});
+      END
+    `);
+  }
+}
+
 async function migrate(store) {
   await store.exec(ddl(store.dialect));
 
@@ -246,6 +320,7 @@ async function migrate(store) {
     await addColumn(store, table, 'uid', 'TEXT');
     await addColumn(store, table, 'updated_at', "TEXT NOT NULL DEFAULT ''");
     await addColumn(store, table, 'rev', `${int} NOT NULL DEFAULT 0`);
+    await addColumn(store, table, 'owner_id', `${int} NOT NULL DEFAULT 0`);
   }
 
   // A unique index rather than a UNIQUE column constraint, because ALTER TABLE
@@ -275,6 +350,21 @@ async function migrate(store) {
     }
   }
 
+  await backfillOwners(store);
+
+  // The LWW clock needs a real value on every row; rows that predate the
+  // sync columns inherit their created_at (or the migration time when the
+  // table never had one).
+  for (const table of SYNCABLE) {
+    await store.run(
+      table === 'labels' || table === 'card_labels' || table === 'checklists' || table === 'checklist_items'
+        ? `UPDATE ${table} SET updated_at = {{now}} WHERE updated_at = ''`
+        : `UPDATE ${table} SET updated_at = created_at WHERE updated_at = ''`
+    );
+  }
+
+  await createTombstoneTriggers(store);
+
   return store;
 }
 
@@ -288,9 +378,12 @@ async function ensureLocalUser(store) {
      VALUES (?, ?, '', ?, 'local', 1) RETURNING *`,
     [crypto.randomUUID(), 'local@boardly.app', 'You']
   );
-  // Adopt any boards created before accounts existed.
+  // Adopt any boards created before accounts existed, then re-run the owner
+  // backfill so child rows pick up the adoption too (migrate() ran before the
+  // local user existed).
   await store.run('UPDATE boards SET owner_id = ? WHERE owner_id = 0', [row.id]);
+  await backfillOwners(store);
   return row;
 }
 
-module.exports = { migrate, ensureLocalUser, SYNCABLE };
+module.exports = { migrate, ensureLocalUser, backfillOwners, SYNCABLE };
