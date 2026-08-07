@@ -1,0 +1,35 @@
+# Cloud image for boardly.onetimesuite.com — multi-tenant Postgres mode.
+#
+# better-sqlite3 lives in optionalDependencies precisely so this image can
+# skip it: with DATABASE_URL set, Boardly never touches SQLite (the sqlite
+# driver require()s better-sqlite3 lazily, only when no DATABASE_URL exists),
+# so the native module never enters the container. The self-host SQLite image
+# stays in ./Dockerfile.
+
+FROM node:20-alpine AS build
+WORKDIR /app
+# The Electron binary is dead weight for a vite build — skip the download.
+ENV ELECTRON_SKIP_BINARY_DOWNLOAD=1
+COPY package*.json ./
+COPY scripts ./scripts
+RUN npm ci
+COPY . .
+RUN npm run build
+
+FROM node:20-alpine
+WORKDIR /app
+ENV NODE_ENV=production
+COPY package*.json ./
+COPY scripts ./scripts
+# --omit=optional drops better-sqlite3; scripts/setup-native.js (postinstall)
+# no-ops when the binding isn't there.
+RUN npm ci --omit=dev --omit=optional
+COPY server ./server
+COPY mcp ./mcp
+COPY --from=build /app/dist ./dist
+ENV PORT=5315
+ENV DATA_DIR=/data
+# Hosted attachment blobs (metadata syncs; blobs stay on this volume).
+VOLUME /data
+EXPOSE 5315
+CMD ["node", "server/index.js"]

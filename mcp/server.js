@@ -12,13 +12,13 @@
 
 const path = require('path');
 const { StdioServerTransport } = require('@modelcontextprotocol/sdk/server/stdio.js');
-const { openDb } = require('../server/db.js');
+const { openStore } = require('../server/data/index.js');
 const { createBoardlyServer, resolveDataDir } = require('./tools.js');
 
 async function main() {
   const dataDir = resolveDataDir();
-  const db = openDb(dataDir);
-  const server = createBoardlyServer({ db, uploadsDir: path.join(dataDir, 'uploads') });
+  const store = await openStore({ dataDir });
+  const server = createBoardlyServer({ db: store, uploadsDir: path.join(dataDir, 'uploads') });
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error(`Boardly MCP server running (data: ${dataDir})`);

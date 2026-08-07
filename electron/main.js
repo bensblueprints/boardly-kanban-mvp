@@ -11,7 +11,7 @@ app.whenReady().then(async () => {
   const autologinToken = crypto.randomBytes(24).toString('hex');
 
   const { createApp } = require(path.join(__dirname, '..', 'server', 'app.js'));
-  const server = createApp({
+  const server = await createApp({
     dataDir,
     autologinToken,
     adminPassword: process.env.ADMIN_PASSWORD || 'admin',

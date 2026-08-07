@@ -55,7 +55,7 @@ async function main() {
   await new Promise((r) => throwaway.close(r));
   const closedUrl = `http://127.0.0.1:${closedPort}/v1`;
 
-  const app = createApp({ dataDir, adminPassword: 'admin' });
+  const app = await createApp({ dataDir, adminPassword: 'admin' });
   const listener = app.listen(0, '127.0.0.1');
   await new Promise((r) => listener.once('listening', r));
   const base = `http://127.0.0.1:${listener.address().port}`;

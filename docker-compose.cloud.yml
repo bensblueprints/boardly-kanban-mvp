@@ -1,0 +1,45 @@
+# Cloud deployment for boardly.onetimesuite.com: the multi-tenant web app
+# backed by Postgres. Self-hosters (single-user SQLite) use docker-compose.yml.
+#
+#   POSTGRES_PASSWORD=... docker compose -f docker-compose.cloud.yml up -d
+#
+# Registration is open in cloud mode — there is no ADMIN_PASSWORD here on
+# purpose; accounts live in Postgres.
+services:
+  boardly:
+    build:
+      context: .
+      dockerfile: Dockerfile.cloud
+    ports:
+      - "${BOARDLY_PORT:-5315}:5315"
+    environment:
+      - PORT=5315
+      - DATA_DIR=/data
+      - DATABASE_URL=postgres://boardly:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@db:5432/boardly
+      # - DATABASE_SSL=1    # only for a Postgres outside this compose network
+      # - MAX_UPLOAD_MB=25  # hosted-attachment cap (blobs stay on the volume)
+    volumes:
+      - boardly-data:/data
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=boardly
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      - POSTGRES_DB=boardly
+    volumes:
+      - boardly-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U boardly -d boardly"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+volumes:
+  boardly-data:
+  boardly-pg:

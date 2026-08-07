@@ -4,9 +4,13 @@
 //
 // Every write mirrors server/app.js (activity log, positions, cascades) so the
 // Boardly UI stays consistent whichever path made the change.
+//
+// `db` is the async store from server/data (one interface over SQLite and
+// Postgres), so every handler below is async.
 
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
 const { z } = require('zod');
 
@@ -30,53 +34,69 @@ function createBoardlyServer({ db, uploadsDir }) {
   // ---- helpers (mirrors server/app.js) ----
 
   const q = {
-    board: db.prepare('SELECT * FROM boards WHERE id = ?'),
-    list: db.prepare('SELECT * FROM lists WHERE id = ?'),
-    card: db.prepare('SELECT * FROM cards WHERE id = ?'),
-    label: db.prepare('SELECT * FROM labels WHERE id = ?')
+    board: 'SELECT * FROM boards WHERE id = ?',
+    list: 'SELECT * FROM lists WHERE id = ?',
+    card: 'SELECT * FROM cards WHERE id = ?',
+    label: 'SELECT * FROM labels WHERE id = ?'
   };
 
-  function logActivity(boardId, cardId, action, detail = '') {
-    db.prepare('INSERT INTO activity (board_id, card_id, action, detail) VALUES (?, ?, ?, ?)')
-      .run(boardId, cardId, action, detail);
+  async function logActivity(boardId, cardId, action, detail = '') {
+    await db.run('INSERT INTO activity (board_id, card_id, action, detail) VALUES (?, ?, ?, ?)',
+      [boardId, cardId, action, detail]);
   }
 
-  function boardIdOfCard(cardId) {
-    const row = db.prepare(
-      'SELECT l.board_id AS bid FROM cards c JOIN lists l ON l.id = c.list_id WHERE c.id = ?'
-    ).get(cardId);
+  // Sync bookkeeping, mirroring server/app.js: new rows get a UUID, an
+  // updated_at stamp, and a rev from the store-wide counter. Boards also get
+  // an owner — the implicit local user on the desktop; cloud MCP (a later
+  // task) will pass the token's user instead.
+  const ownerId = db.localUser ? db.localUser.id : 0;
+
+  async function nextRev(s = db) {
+    return (await s.one("UPDATE sync_state SET v = v + 1 WHERE k = 'rev' RETURNING v")).v;
+  }
+
+  async function boardIdOfCard(cardId) {
+    const row = await db.one(
+      'SELECT l.board_id AS bid FROM cards c JOIN lists l ON l.id = c.list_id WHERE c.id = ?',
+      [cardId]
+    );
     return row ? row.bid : null;
   }
 
-  function cardLabels(cardId) {
-    return db.prepare(
+  async function cardLabels(cardId) {
+    return db.all(
       `SELECT lb.* FROM labels lb JOIN card_labels cl ON cl.label_id = lb.id
-       WHERE cl.card_id = ? ORDER BY lb.id`
-    ).all(cardId);
+       WHERE cl.card_id = ? ORDER BY lb.id`,
+      [cardId]
+    );
   }
 
-  function checklistProgress(cardId) {
-    const row = db.prepare(
+  async function checklistProgress(cardId) {
+    const row = await db.one(
       `SELECT COUNT(*) AS total, COALESCE(SUM(done), 0) AS done
        FROM checklist_items ci JOIN checklists c ON c.id = ci.checklist_id
-       WHERE c.card_id = ?`
-    ).get(cardId);
+       WHERE c.card_id = ?`,
+      [cardId]
+    );
     return { total: row.total, done: row.done };
   }
 
-  function cardSummary(card) {
+  async function cardSummary(card) {
     return {
       ...card,
-      labels: cardLabels(card.id),
-      checklist: checklistProgress(card.id),
+      labels: await cardLabels(card.id),
+      checklist: await checklistProgress(card.id),
       has_description: card.description.trim().length > 0
     };
   }
 
-  function renumberList(listId) {
-    const cards = db.prepare('SELECT id FROM cards WHERE list_id = ? AND archived = 0 ORDER BY position, id').all(listId);
-    const upd = db.prepare('UPDATE cards SET position = ? WHERE id = ?');
-    cards.forEach((c, i) => upd.run(i, c.id));
+  // `s` lets a transaction pass its scoped store; plain calls use the pool.
+  async function renumberList(listId, s = db) {
+    const cards = await s.all('SELECT id FROM cards WHERE list_id = ? AND archived = 0 ORDER BY position, id', [listId]);
+    for (let i = 0; i < cards.length; i++) {
+      await s.run('UPDATE cards SET position = ?, updated_at = {{now}}, rev = ? WHERE id = ?',
+        [i, await nextRev(s), cards[i].id]);
+    }
   }
 
   function ok(data) {
@@ -90,45 +110,49 @@ function createBoardlyServer({ db, uploadsDir }) {
   function tool(name, description, schema, handler) {
     server.registerTool(name, { description, inputSchema: schema }, async (args) => {
       try {
-        return ok(handler(args));
+        return ok(await handler(args));
       } catch (err) {
         return fail(err.message || String(err));
       }
     });
   }
 
-  function mustGet(stmt, id, what) {
-    const row = stmt.get(id);
+  async function mustGet(sql, id, what) {
+    const row = await db.one(sql, [id]);
     if (!row) throw new Error(`${what} not found`);
     return row;
   }
 
   // ---- boards ----
 
-  tool('list_boards', 'List all boards with list/card counts', {}, () => {
-    return db.prepare('SELECT * FROM boards ORDER BY starred DESC, id DESC').all().map((b) => {
-      const counts = db.prepare(
+  tool('list_boards', 'List all boards with list/card counts', {}, async () => {
+    const boards = [];
+    for (const b of await db.all('SELECT * FROM boards ORDER BY starred DESC, id DESC')) {
+      const counts = await db.one(
         `SELECT
-          (SELECT COUNT(*) FROM lists WHERE board_id = @id AND archived = 0) AS lists,
+          (SELECT COUNT(*) FROM lists WHERE board_id = ? AND archived = 0) AS lists,
           (SELECT COUNT(*) FROM cards c JOIN lists l ON l.id = c.list_id
-            WHERE l.board_id = @id AND c.archived = 0 AND l.archived = 0) AS cards`
-      ).get({ id: b.id });
-      return { ...b, list_count: counts.lists, card_count: counts.cards };
-    });
+            WHERE l.board_id = ? AND c.archived = 0 AND l.archived = 0) AS cards`,
+        [b.id, b.id]
+      );
+      boards.push({ ...b, list_count: counts.lists, card_count: counts.cards });
+    }
+    return boards;
   });
 
   tool('get_board', 'Get a board with its (non-archived) lists, cards and labels', {
     board_id: z.number().int().describe('Board ID')
-  }, ({ board_id }) => {
-    const board = mustGet(q.board, board_id, 'Board');
-    const lists = db.prepare('SELECT * FROM lists WHERE board_id = ? AND archived = 0 ORDER BY position, id')
-      .all(board.id)
-      .map((l) => ({
-        ...l,
-        cards: db.prepare('SELECT * FROM cards WHERE list_id = ? AND archived = 0 ORDER BY position, id')
-          .all(l.id).map(cardSummary)
-      }));
-    const labels = db.prepare('SELECT * FROM labels WHERE board_id = ? ORDER BY id').all(board.id);
+  }, async ({ board_id }) => {
+    const board = await mustGet(q.board, board_id, 'Board');
+    const lists = [];
+    for (const l of await db.all('SELECT * FROM lists WHERE board_id = ? AND archived = 0 ORDER BY position, id', [board.id])) {
+      const cards = [];
+      for (const c of await db.all('SELECT * FROM cards WHERE list_id = ? AND archived = 0 ORDER BY position, id', [l.id])) {
+        cards.push(await cardSummary(c));
+      }
+      lists.push({ ...l, cards });
+    }
+    const labels = await db.all('SELECT * FROM labels WHERE board_id = ? ORDER BY id', [board.id]);
     return { ...board, lists, labels };
   });
 
@@ -137,11 +161,15 @@ function createBoardlyServer({ db, uploadsDir }) {
     description: z.string().optional().describe('Project description — what this board is for'),
     color: z.string().optional().describe('Hex color, e.g. #6366f1'),
     emoji: z.string().optional().describe('Board emoji, e.g. 📋')
-  }, ({ name, description, color, emoji }) => {
-    const info = db.prepare('INSERT INTO boards (name, description, color, emoji) VALUES (?, ?, ?, ?)')
-      .run(name.trim(), description || '', color || '#6366f1', emoji || '📋');
-    logActivity(info.lastInsertRowid, null, 'board_created', `Created board "${name.trim()}"`);
-    return q.board.get(info.lastInsertRowid);
+  }, async ({ name, description, color, emoji }) => {
+    const board = await db.one(
+      `INSERT INTO boards (name, description, color, emoji, owner_id, uid, updated_at, rev)
+       VALUES (?, ?, ?, ?, ?, ?, {{now}}, ?) RETURNING *`,
+      [name.trim(), description || '', color || '#6366f1', emoji || '📋',
+       ownerId, crypto.randomUUID(), await nextRev()]
+    );
+    await logActivity(board.id, null, 'board_created', `Created board "${name.trim()}"`);
+    return board;
   });
 
   tool('update_board', 'Update a board (rename, set the project description, recolor, star/unstar)', {
@@ -151,32 +179,34 @@ function createBoardlyServer({ db, uploadsDir }) {
     color: z.string().optional(),
     emoji: z.string().optional(),
     starred: z.boolean().optional()
-  }, ({ board_id, name, description, color, emoji, starred }) => {
-    const board = mustGet(q.board, board_id, 'Board');
+  }, async ({ board_id, name, description, color, emoji, starred }) => {
+    const board = await mustGet(q.board, board_id, 'Board');
     const newName = name !== undefined ? name.trim() : board.name;
     if (!newName) throw new Error('Board name is required');
     const newDesc = description !== undefined ? description : board.description;
-    db.prepare('UPDATE boards SET name = ?, description = ?, color = ?, emoji = ?, starred = ? WHERE id = ?')
-      .run(newName,
+    await db.run('UPDATE boards SET name = ?, description = ?, color = ?, emoji = ?, starred = ?, updated_at = {{now}}, rev = ? WHERE id = ?',
+      [newName,
         newDesc,
         color !== undefined ? color : board.color,
         emoji !== undefined ? emoji : board.emoji,
         starred !== undefined ? (starred ? 1 : 0) : board.starred,
-        board.id);
-    if (newName !== board.name) logActivity(board.id, null, 'board_renamed', `Renamed board to "${newName}"`);
-    if (newDesc !== board.description) logActivity(board.id, null, 'board_description', 'Updated the project description');
-    return q.board.get(board.id);
+        await nextRev(),
+        board.id]);
+    if (newName !== board.name) await logActivity(board.id, null, 'board_renamed', `Renamed board to "${newName}"`);
+    if (newDesc !== board.description) await logActivity(board.id, null, 'board_description', 'Updated the project description');
+    return db.one(q.board, [board.id]);
   });
 
   tool('delete_board', 'Delete a board and everything on it (lists, cards, attachments)', {
     board_id: z.number().int()
-  }, ({ board_id }) => {
-    const board = mustGet(q.board, board_id, 'Board');
-    const files = db.prepare(
+  }, async ({ board_id }) => {
+    const board = await mustGet(q.board, board_id, 'Board');
+    const files = await db.all(
       `SELECT a.filename FROM attachments a JOIN cards c ON c.id = a.card_id
-       JOIN lists l ON l.id = c.list_id WHERE l.board_id = ?`
-    ).all(board.id);
-    db.prepare('DELETE FROM boards WHERE id = ?').run(board.id);
+       JOIN lists l ON l.id = c.list_id WHERE l.board_id = ?`,
+      [board.id]
+    );
+    await db.run('DELETE FROM boards WHERE id = ?', [board.id]);
     for (const f of files) {
       try { fs.unlinkSync(path.join(uploadsDir, f.filename)); } catch {}
     }
@@ -188,53 +218,60 @@ function createBoardlyServer({ db, uploadsDir }) {
   tool('create_list', 'Add a list (column) to a board', {
     board_id: z.number().int(),
     name: z.string().min(1).describe('List name')
-  }, ({ board_id, name }) => {
-    const board = mustGet(q.board, board_id, 'Board');
-    const pos = db.prepare('SELECT COALESCE(MAX(position) + 1, 0) AS p FROM lists WHERE board_id = ?').get(board.id).p;
-    const info = db.prepare('INSERT INTO lists (board_id, name, position) VALUES (?, ?, ?)').run(board.id, name.trim(), pos);
-    logActivity(board.id, null, 'list_created', `Added list "${name.trim()}"`);
-    return { ...q.list.get(info.lastInsertRowid), cards: [] };
+  }, async ({ board_id, name }) => {
+    const board = await mustGet(q.board, board_id, 'Board');
+    const pos = (await db.one('SELECT COALESCE(MAX(position) + 1, 0) AS p FROM lists WHERE board_id = ?', [board.id])).p;
+    const list = await db.one(
+      `INSERT INTO lists (board_id, name, position, uid, updated_at, rev)
+       VALUES (?, ?, ?, ?, {{now}}, ?) RETURNING *`,
+      [board.id, name.trim(), pos, crypto.randomUUID(), await nextRev()]
+    );
+    await logActivity(board.id, null, 'list_created', `Added list "${name.trim()}"`);
+    return { ...list, cards: [] };
   });
 
   tool('update_list', 'Rename or archive/restore a list', {
     list_id: z.number().int(),
     name: z.string().min(1).optional(),
     archived: z.boolean().optional()
-  }, ({ list_id, name, archived }) => {
-    const list = mustGet(q.list, list_id, 'List');
+  }, async ({ list_id, name, archived }) => {
+    const list = await mustGet(q.list, list_id, 'List');
     const newName = name !== undefined ? name.trim() : list.name;
     if (!newName) throw new Error('List name is required');
     const newArchived = archived !== undefined ? (archived ? 1 : 0) : list.archived;
-    db.prepare('UPDATE lists SET name = ?, archived = ? WHERE id = ?').run(newName, newArchived, list.id);
+    await db.run('UPDATE lists SET name = ?, archived = ?, updated_at = {{now}}, rev = ? WHERE id = ?',
+      [newName, newArchived, await nextRev(), list.id]);
     if (newArchived !== list.archived) {
-      logActivity(list.board_id, null, newArchived ? 'list_archived' : 'list_restored',
+      await logActivity(list.board_id, null, newArchived ? 'list_archived' : 'list_restored',
         `${newArchived ? 'Archived' : 'Restored'} list "${newName}"`);
     } else if (newName !== list.name) {
-      logActivity(list.board_id, null, 'list_renamed', `Renamed list "${list.name}" to "${newName}"`);
+      await logActivity(list.board_id, null, 'list_renamed', `Renamed list "${list.name}" to "${newName}"`);
     }
-    return q.list.get(list.id);
+    return db.one(q.list, [list.id]);
   });
 
   // ---- cards ----
 
   tool('get_card', 'Get one card in full — description, labels, checklists with every item and its id, comments, attachments and recent activity', {
     card_id: z.number().int()
-  }, ({ card_id }) => {
-    const card = mustGet(q.card, card_id, 'Card');
-    const checklists = db.prepare('SELECT * FROM checklists WHERE card_id = ? ORDER BY position, id').all(card.id)
-      .map((cl) => ({
+  }, async ({ card_id }) => {
+    const card = await mustGet(q.card, card_id, 'Card');
+    const checklists = [];
+    for (const cl of await db.all('SELECT * FROM checklists WHERE card_id = ? ORDER BY position, id', [card.id])) {
+      checklists.push({
         ...cl,
-        items: db.prepare('SELECT * FROM checklist_items WHERE checklist_id = ? ORDER BY position, id').all(cl.id)
-      }));
+        items: await db.all('SELECT * FROM checklist_items WHERE checklist_id = ? ORDER BY position, id', [cl.id])
+      });
+    }
     return {
       ...card,
-      board_id: boardIdOfCard(card.id),
-      labels: cardLabels(card.id),
+      board_id: await boardIdOfCard(card.id),
+      labels: await cardLabels(card.id),
       checklists,
-      comments: db.prepare('SELECT * FROM comments WHERE card_id = ? ORDER BY id DESC').all(card.id),
-      attachments: db.prepare('SELECT * FROM attachments WHERE card_id = ? ORDER BY id DESC').all(card.id)
+      comments: await db.all('SELECT * FROM comments WHERE card_id = ? ORDER BY id DESC', [card.id]),
+      attachments: (await db.all('SELECT * FROM attachments WHERE card_id = ? ORDER BY id DESC', [card.id]))
         .map((a) => ({ ...a, url: `/uploads/${a.filename}` })),
-      activity: db.prepare('SELECT * FROM activity WHERE card_id = ? ORDER BY id DESC LIMIT 50').all(card.id)
+      activity: await db.all('SELECT * FROM activity WHERE card_id = ? ORDER BY id DESC LIMIT 50', [card.id])
     };
   });
 
@@ -242,25 +279,29 @@ function createBoardlyServer({ db, uploadsDir }) {
     query: z.string().min(1),
     board_id: z.number().int().optional().describe('Restrict to one board'),
     limit: z.number().int().min(1).max(200).optional()
-  }, ({ query, board_id, limit }) => {
+  }, async ({ query, board_id, limit }) => {
     const rows = board_id === undefined
-      ? db.prepare(
+      ? await db.all(
           `SELECT c.*, l.name AS list_name, l.board_id, b.name AS board_name
            FROM cards c
            JOIN lists l ON l.id = c.list_id
            JOIN boards b ON b.id = l.board_id
-           WHERE c.archived = 0 AND c.title LIKE ? COLLATE NOCASE
-           ORDER BY c.id LIMIT ?`
-        ).all(`%${query}%`, limit || 50)
-      : db.prepare(
+           WHERE c.archived = 0 AND c.title {{ilike}} ?
+           ORDER BY c.id LIMIT ?`,
+          [`%${query}%`, limit || 50]
+        )
+      : await db.all(
           `SELECT c.*, l.name AS list_name, l.board_id, b.name AS board_name
            FROM cards c
            JOIN lists l ON l.id = c.list_id
            JOIN boards b ON b.id = l.board_id
-           WHERE c.archived = 0 AND c.title LIKE ? COLLATE NOCASE AND l.board_id = ?
-           ORDER BY c.id LIMIT ?`
-        ).all(`%${query}%`, board_id, limit || 50);
-    return rows.map((r) => ({ ...r, checklist: checklistProgress(r.id) }));
+           WHERE c.archived = 0 AND c.title {{ilike}} ? AND l.board_id = ?
+           ORDER BY c.id LIMIT ?`,
+          [`%${query}%`, board_id, limit || 50]
+        );
+    const out = [];
+    for (const r of rows) out.push({ ...r, checklist: await checklistProgress(r.id) });
+    return out;
   });
 
   tool('create_card', 'Add a card to a list', {
@@ -268,13 +309,17 @@ function createBoardlyServer({ db, uploadsDir }) {
     title: z.string().min(1),
     description: z.string().optional(),
     due_date: z.string().optional().describe('ISO date/datetime, e.g. 2026-08-15')
-  }, ({ list_id, title, description, due_date }) => {
-    const list = mustGet(q.list, list_id, 'List');
-    const pos = db.prepare('SELECT COALESCE(MAX(position) + 1, 0) AS p FROM cards WHERE list_id = ? AND archived = 0').get(list.id).p;
-    const info = db.prepare('INSERT INTO cards (list_id, title, description, due_date, position) VALUES (?, ?, ?, ?, ?)')
-      .run(list.id, title.trim(), description || '', due_date || null, pos);
-    logActivity(list.board_id, info.lastInsertRowid, 'card_created', `Added "${title.trim()}" to ${list.name}`);
-    return cardSummary(q.card.get(info.lastInsertRowid));
+  }, async ({ list_id, title, description, due_date }) => {
+    const list = await mustGet(q.list, list_id, 'List');
+    const pos = (await db.one('SELECT COALESCE(MAX(position) + 1, 0) AS p FROM cards WHERE list_id = ? AND archived = 0', [list.id])).p;
+    const card = await db.one(
+      `INSERT INTO cards (list_id, title, description, due_date, position, uid, updated_at, rev)
+       VALUES (?, ?, ?, ?, ?, ?, {{now}}, ?) RETURNING *`,
+      [list.id, title.trim(), description || '', due_date || null, pos,
+       crypto.randomUUID(), await nextRev()]
+    );
+    await logActivity(list.board_id, card.id, 'card_created', `Added "${title.trim()}" to ${list.name}`);
+    return cardSummary(card);
   });
 
   tool('update_card', 'Update a card (title, description, due date, archive/restore)', {
@@ -283,67 +328,70 @@ function createBoardlyServer({ db, uploadsDir }) {
     description: z.string().optional(),
     due_date: z.string().nullable().optional().describe('ISO date, or null to clear'),
     archived: z.boolean().optional()
-  }, ({ card_id, title, description, due_date, archived }) => {
-    const card = mustGet(q.card, card_id, 'Card');
-    const boardId = boardIdOfCard(card.id);
+  }, async ({ card_id, title, description, due_date, archived }) => {
+    const card = await mustGet(q.card, card_id, 'Card');
+    const boardId = await boardIdOfCard(card.id);
     const newTitle = title !== undefined ? title.trim() : card.title;
     if (!newTitle) throw new Error('Card title is required');
     const newDesc = description !== undefined ? description : card.description;
     const newDue = due_date !== undefined ? (due_date || null) : card.due_date;
     const newArchived = archived !== undefined ? (archived ? 1 : 0) : card.archived;
-    db.prepare('UPDATE cards SET title = ?, description = ?, due_date = ?, archived = ? WHERE id = ?')
-      .run(newTitle, newDesc, newDue, newArchived, card.id);
+    await db.run('UPDATE cards SET title = ?, description = ?, due_date = ?, archived = ?, updated_at = {{now}}, rev = ? WHERE id = ?',
+      [newTitle, newDesc, newDue, newArchived, await nextRev(), card.id]);
     if (newArchived !== card.archived) {
-      logActivity(boardId, card.id, newArchived ? 'card_archived' : 'card_restored',
+      await logActivity(boardId, card.id, newArchived ? 'card_archived' : 'card_restored',
         `${newArchived ? 'Archived' : 'Restored'} "${newTitle}"`);
-      renumberList(card.list_id);
+      await renumberList(card.list_id);
     } else {
-      if (newTitle !== card.title) logActivity(boardId, card.id, 'card_renamed', `Renamed to "${newTitle}"`);
-      if (newDesc !== card.description) logActivity(boardId, card.id, 'card_description', 'Updated the description');
-      if (newDue !== card.due_date) logActivity(boardId, card.id, 'card_due', newDue ? `Set due date to ${newDue}` : 'Removed the due date');
+      if (newTitle !== card.title) await logActivity(boardId, card.id, 'card_renamed', `Renamed to "${newTitle}"`);
+      if (newDesc !== card.description) await logActivity(boardId, card.id, 'card_description', 'Updated the description');
+      if (newDue !== card.due_date) await logActivity(boardId, card.id, 'card_due', newDue ? `Set due date to ${newDue}` : 'Removed the due date');
     }
-    return cardSummary(q.card.get(card.id));
+    return cardSummary(await db.one(q.card, [card.id]));
   });
 
   tool('move_card', 'Move a card to another list (or reorder within its list)', {
     card_id: z.number().int(),
     list_id: z.number().int().describe('Target list ID'),
     position: z.number().int().min(0).optional().describe('Index in the target list (default 0)')
-  }, ({ card_id, list_id, position }) => {
-    const card = mustGet(q.card, card_id, 'Card');
-    const toList = mustGet(q.list, list_id, 'Target list');
-    const fromList = mustGet(q.list, card.list_id, 'Source list');
+  }, async ({ card_id, list_id, position }) => {
+    const card = await mustGet(q.card, card_id, 'Card');
+    const toList = await mustGet(q.list, list_id, 'Target list');
+    const fromList = await mustGet(q.list, card.list_id, 'Source list');
     const index = Math.max(0, position || 0);
 
-    const tx = db.transaction(() => {
-      const targetCards = db.prepare(
-        'SELECT id FROM cards WHERE list_id = ? AND archived = 0 AND id != ? ORDER BY position, id'
-      ).all(toList.id, card.id).map((c) => c.id);
+    await db.tx(async (t) => {
+      const targetCards = (await t.all(
+        'SELECT id FROM cards WHERE list_id = ? AND archived = 0 AND id != ? ORDER BY position, id',
+        [toList.id, card.id]
+      )).map((c) => c.id);
       targetCards.splice(Math.min(index, targetCards.length), 0, card.id);
-      db.prepare('UPDATE cards SET list_id = ? WHERE id = ?').run(toList.id, card.id);
-      const upd = db.prepare('UPDATE cards SET position = ? WHERE id = ?');
-      targetCards.forEach((id, i) => upd.run(i, id));
-      if (fromList.id !== toList.id) renumberList(fromList.id);
+      await t.run('UPDATE cards SET list_id = ?, updated_at = {{now}}, rev = ? WHERE id = ?',
+        [toList.id, await nextRev(t), card.id]);
+      for (let i = 0; i < targetCards.length; i++) {
+        await t.run('UPDATE cards SET position = ?, updated_at = {{now}}, rev = ? WHERE id = ?',
+          [i, await nextRev(t), targetCards[i]]);
+      }
+      if (fromList.id !== toList.id) await renumberList(fromList.id, t);
     });
-    tx();
 
     if (fromList.id !== toList.id) {
-      logActivity(toList.board_id, card.id, 'card_moved', `Moved "${card.title}" from ${fromList.name} to ${toList.name}`);
+      await logActivity(toList.board_id, card.id, 'card_moved', `Moved "${card.title}" from ${fromList.name} to ${toList.name}`);
     }
-    return cardSummary(q.card.get(card.id));
+    return cardSummary(await db.one(q.card, [card.id]));
   });
 
   tool('delete_card', 'Delete a card (and its attachments, checklists, comments)', {
     card_id: z.number().int()
-  }, ({ card_id }) => {
-    const card = mustGet(q.card, card_id, 'Card');
-    const boardId = boardIdOfCard(card.id);
-    const files = db.prepare('SELECT filename FROM attachments WHERE card_id = ?').all(card.id);
-    db.prepare('DELETE FROM cards WHERE id = ?').run(card.id);
+  }, async ({ card_id }) => {
+    const card = await mustGet(q.card, card_id, 'Card');
+    const boardId = await boardIdOfCard(card.id);
+    const files = await db.all('SELECT filename FROM attachments WHERE card_id = ?', [card.id]);
+    await db.run('DELETE FROM cards WHERE id = ?', [card.id]);
     for (const f of files) {
       try { fs.unlinkSync(path.join(uploadsDir, f.filename)); } catch {}
     }
-    logActivity(boardId, null, 'card_deleted', `Deleted "${card.title}"`);
+    await logActivity(boardId, null, 'card_deleted', `Deleted "${card.title}"`);
     return { ok: true, deleted_card: card.title };
   });
 
@@ -353,31 +401,34 @@ function createBoardlyServer({ db, uploadsDir }) {
     board_id: z.number().int(),
     name: z.string().min(1),
     color: z.string().optional().describe('Hex color, e.g. #22c55e')
-  }, ({ board_id, name, color }) => {
-    const board = mustGet(q.board, board_id, 'Board');
-    const info = db.prepare('INSERT INTO labels (board_id, name, color) VALUES (?, ?, ?)')
-      .run(board.id, name.trim(), color || '#22c55e');
-    return q.label.get(info.lastInsertRowid);
+  }, async ({ board_id, name, color }) => {
+    const board = await mustGet(q.board, board_id, 'Board');
+    return db.one(
+      `INSERT INTO labels (board_id, name, color, uid, updated_at, rev)
+       VALUES (?, ?, ?, ?, {{now}}, ?) RETURNING *`,
+      [board.id, name.trim(), color || '#22c55e', crypto.randomUUID(), await nextRev()]
+    );
   });
 
   tool('assign_label', 'Attach a label to a card', {
     card_id: z.number().int(),
     label_id: z.number().int()
-  }, ({ card_id, label_id }) => {
-    const card = mustGet(q.card, card_id, 'Card');
-    const label = mustGet(q.label, label_id, 'Label');
-    db.prepare('INSERT OR IGNORE INTO card_labels (card_id, label_id) VALUES (?, ?)').run(card.id, label.id);
-    logActivity(label.board_id, card.id, 'label_added', `Added label "${label.name}" to "${card.title}"`);
-    return { ok: true, labels: cardLabels(card.id) };
+  }, async ({ card_id, label_id }) => {
+    const card = await mustGet(q.card, card_id, 'Card');
+    const label = await mustGet(q.label, label_id, 'Label');
+    await db.run('INSERT OR IGNORE INTO card_labels (card_id, label_id, uid, updated_at, rev) VALUES (?, ?, ?, {{now}}, ?)',
+      [card.id, label.id, crypto.randomUUID(), await nextRev()]);
+    await logActivity(label.board_id, card.id, 'label_added', `Added label "${label.name}" to "${card.title}"`);
+    return { ok: true, labels: await cardLabels(card.id) };
   });
 
   tool('unassign_label', 'Remove a label from a card', {
     card_id: z.number().int(),
     label_id: z.number().int()
-  }, ({ card_id, label_id }) => {
-    const card = mustGet(q.card, card_id, 'Card');
-    db.prepare('DELETE FROM card_labels WHERE card_id = ? AND label_id = ?').run(card.id, label_id);
-    return { ok: true, labels: cardLabels(card.id) };
+  }, async ({ card_id, label_id }) => {
+    const card = await mustGet(q.card, card_id, 'Card');
+    await db.run('DELETE FROM card_labels WHERE card_id = ? AND label_id = ?', [card.id, label_id]);
+    return { ok: true, labels: await cardLabels(card.id) };
   });
 
   // ---- checklists ----
@@ -385,41 +436,51 @@ function createBoardlyServer({ db, uploadsDir }) {
   tool('add_checklist', 'Add a checklist to a card', {
     card_id: z.number().int(),
     title: z.string().optional().describe('Checklist title (default "Checklist")')
-  }, ({ card_id, title }) => {
-    const card = mustGet(q.card, card_id, 'Card');
+  }, async ({ card_id, title }) => {
+    const card = await mustGet(q.card, card_id, 'Card');
     const clTitle = (title || 'Checklist').trim() || 'Checklist';
-    const pos = db.prepare('SELECT COALESCE(MAX(position) + 1, 0) AS p FROM checklists WHERE card_id = ?').get(card.id).p;
-    const info = db.prepare('INSERT INTO checklists (card_id, title, position) VALUES (?, ?, ?)').run(card.id, clTitle, pos);
-    logActivity(boardIdOfCard(card.id), card.id, 'checklist_added', `Added checklist "${clTitle}"`);
-    return { id: info.lastInsertRowid, card_id: card.id, title: clTitle, position: pos, items: [] };
+    const pos = (await db.one('SELECT COALESCE(MAX(position) + 1, 0) AS p FROM checklists WHERE card_id = ?', [card.id])).p;
+    const row = await db.one(
+      `INSERT INTO checklists (card_id, title, position, uid, updated_at, rev)
+       VALUES (?, ?, ?, ?, {{now}}, ?) RETURNING id`,
+      [card.id, clTitle, pos, crypto.randomUUID(), await nextRev()]
+    );
+    await logActivity(await boardIdOfCard(card.id), card.id, 'checklist_added', `Added checklist "${clTitle}"`);
+    return { id: row.id, card_id: card.id, title: clTitle, position: pos, items: [] };
   });
 
   tool('add_checklist_item', 'Add an item to a checklist', {
     checklist_id: z.number().int(),
     text: z.string().min(1)
-  }, ({ checklist_id, text }) => {
-    const cl = mustGet(db.prepare('SELECT * FROM checklists WHERE id = ?'), checklist_id, 'Checklist');
-    const pos = db.prepare('SELECT COALESCE(MAX(position) + 1, 0) AS p FROM checklist_items WHERE checklist_id = ?').get(cl.id).p;
-    const info = db.prepare('INSERT INTO checklist_items (checklist_id, text, position) VALUES (?, ?, ?)')
-      .run(cl.id, text.trim(), pos);
-    return db.prepare('SELECT * FROM checklist_items WHERE id = ?').get(info.lastInsertRowid);
+  }, async ({ checklist_id, text }) => {
+    const cl = await mustGet('SELECT * FROM checklists WHERE id = ?', checklist_id, 'Checklist');
+    const pos = (await db.one('SELECT COALESCE(MAX(position) + 1, 0) AS p FROM checklist_items WHERE checklist_id = ?', [cl.id])).p;
+    return db.one(
+      `INSERT INTO checklist_items (checklist_id, text, position, uid, updated_at, rev)
+       VALUES (?, ?, ?, ?, {{now}}, ?) RETURNING *`,
+      [cl.id, text.trim(), pos, crypto.randomUUID(), await nextRev()]
+    );
   });
 
   tool('set_checklist_item', 'Update a checklist item (edit text, mark done/undone)', {
     item_id: z.number().int(),
     text: z.string().min(1).optional(),
     done: z.boolean().optional()
-  }, ({ item_id, text, done }) => {
-    const item = mustGet(db.prepare('SELECT * FROM checklist_items WHERE id = ?'), item_id, 'Checklist item');
+  }, async ({ item_id, text, done }) => {
+    const item = await mustGet('SELECT * FROM checklist_items WHERE id = ?', item_id, 'Checklist item');
     const newText = text !== undefined ? text.trim() : item.text;
     if (!newText) throw new Error('Item text is required');
     const newDone = done !== undefined ? (done ? 1 : 0) : item.done;
-    db.prepare('UPDATE checklist_items SET text = ?, done = ? WHERE id = ?').run(newText, newDone, item.id);
-    const cl = db.prepare('SELECT * FROM checklists WHERE id = ?').get(item.checklist_id);
+    await db.run('UPDATE checklist_items SET text = ?, done = ?, updated_at = {{now}}, rev = ? WHERE id = ?',
+      [newText, newDone, await nextRev(), item.id]);
+    const cl = await db.one('SELECT * FROM checklists WHERE id = ?', [item.checklist_id]);
     if (newDone !== item.done && newDone) {
-      logActivity(boardIdOfCard(cl.card_id), cl.card_id, 'item_completed', `Completed "${newText}"`);
+      await logActivity(await boardIdOfCard(cl.card_id), cl.card_id, 'item_completed', `Completed "${newText}"`);
     }
-    return { ...db.prepare('SELECT * FROM checklist_items WHERE id = ?').get(item.id), progress: checklistProgress(cl.card_id) };
+    return {
+      ...await db.one('SELECT * FROM checklist_items WHERE id = ?', [item.id]),
+      progress: await checklistProgress(cl.card_id)
+    };
   });
 
   // ---- attachments ----
@@ -428,8 +489,8 @@ function createBoardlyServer({ db, uploadsDir }) {
     card_id: z.number().int(),
     target: z.string().min(1).describe('A URL (https://…) or an absolute local path (C:\\… or /…)'),
     name: z.string().optional().describe('Display name (defaults to the file/link name)')
-  }, ({ card_id, target, name }) => {
-    const card = mustGet(q.card, card_id, 'Card');
+  }, async ({ card_id, target, name }) => {
+    const card = await mustGet(q.card, card_id, 'Card');
     const isUrl = /^[a-z][a-z0-9+.-]*:\/\//i.test(target);
     // A .url shortcut works for both: Windows resolves file: URLs the same way.
     const href = isUrl ? target : 'file:///' + target.replace(/\\/g, '/').replace(/^\/+/, '');
@@ -440,26 +501,29 @@ function createBoardlyServer({ db, uploadsDir }) {
     const filename = `${Date.now()}-${Math.random().toString(16).slice(2, 10)}.url`;
     const body = `[InternetShortcut]\r\nURL=${href}\r\n`;
     fs.writeFileSync(path.join(uploadsDir, filename), body);
-    const info = db.prepare(
-      'INSERT INTO attachments (card_id, filename, original_name, size, mime) VALUES (?, ?, ?, ?, ?)'
-    ).run(card.id, filename, `${safe}.url`, Buffer.byteLength(body), 'application/internet-shortcut');
-    logActivity(boardIdOfCard(card.id), card.id, 'attachment_added', `Attached ${safe}`);
-    return { ...db.prepare('SELECT * FROM attachments WHERE id = ?').get(info.lastInsertRowid), target: href };
+    const row = await db.one(
+      `INSERT INTO attachments (card_id, filename, original_name, size, mime, uid, updated_at, rev)
+       VALUES (?, ?, ?, ?, ?, ?, {{now}}, ?) RETURNING *`,
+      [card.id, filename, `${safe}.url`, Buffer.byteLength(body), 'application/internet-shortcut',
+       crypto.randomUUID(), await nextRev()]
+    );
+    await logActivity(await boardIdOfCard(card.id), card.id, 'attachment_added', `Attached ${safe}`);
+    return { ...row, target: href };
   });
 
   tool('list_attachments', 'List a card\'s attachments', {
     card_id: z.number().int()
-  }, ({ card_id }) => {
-    const card = mustGet(q.card, card_id, 'Card');
-    return db.prepare('SELECT * FROM attachments WHERE card_id = ? ORDER BY id').all(card.id)
+  }, async ({ card_id }) => {
+    const card = await mustGet(q.card, card_id, 'Card');
+    return (await db.all('SELECT * FROM attachments WHERE card_id = ? ORDER BY id', [card.id]))
       .map((a) => ({ ...a, url: `/uploads/${a.filename}` }));
   });
 
   tool('delete_attachment', 'Remove an attachment from a card', {
     attachment_id: z.number().int()
-  }, ({ attachment_id }) => {
-    const row = mustGet(db.prepare('SELECT * FROM attachments WHERE id = ?'), attachment_id, 'Attachment');
-    db.prepare('DELETE FROM attachments WHERE id = ?').run(row.id);
+  }, async ({ attachment_id }) => {
+    const row = await mustGet('SELECT * FROM attachments WHERE id = ?', attachment_id, 'Attachment');
+    await db.run('DELETE FROM attachments WHERE id = ?', [row.id]);
     try { fs.unlinkSync(path.join(uploadsDir, row.filename)); } catch {}
     return { ok: true, deleted: row.original_name };
   });
@@ -470,13 +534,16 @@ function createBoardlyServer({ db, uploadsDir }) {
     card_id: z.number().int(),
     body: z.string().min(1),
     author: z.string().optional().describe('Comment author (default "Admin")')
-  }, ({ card_id, body, author }) => {
-    const card = mustGet(q.card, card_id, 'Card');
+  }, async ({ card_id, body, author }) => {
+    const card = await mustGet(q.card, card_id, 'Card');
     const name = (author || 'Admin').trim() || 'Admin';
-    const info = db.prepare('INSERT INTO comments (card_id, author, body) VALUES (?, ?, ?)')
-      .run(card.id, name, body.trim());
-    logActivity(boardIdOfCard(card.id), card.id, 'comment_added', `Commented on "${card.title}"`);
-    return db.prepare('SELECT * FROM comments WHERE id = ?').get(info.lastInsertRowid);
+    const comment = await db.one(
+      `INSERT INTO comments (card_id, author, body, uid, updated_at, rev)
+       VALUES (?, ?, ?, ?, {{now}}, ?) RETURNING *`,
+      [card.id, name, body.trim(), crypto.randomUUID(), await nextRev()]
+    );
+    await logActivity(await boardIdOfCard(card.id), card.id, 'comment_added', `Commented on "${card.title}"`);
+    return comment;
   });
 
   return server;

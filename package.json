@@ -12,19 +12,24 @@
     "postinstall": "node scripts/setup-native.js",
     "desktop": "electron .",
     "test": "node test/smoke.js",
+    "test:store": "node test/store.js",
+    "test:accounts": "node test/accounts.js",
     "test:mcp": "node test/mcp.js",
     "test:mcp-http": "node test/mcp-http.js",
-    "test:all": "node test/smoke.js && node test/mcp.js && node test/mcp-http.js && node test/coach.js",
+    "test:all": "node test/smoke.js && node test/store.js && node test/accounts.js && node test/mcp.js && node test/mcp-http.js && node test/coach.js",
     "dist": "npm run build && electron-builder --win nsis",
     "test:coach": "node test/coach.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
-    "better-sqlite3": "^12.2.0",
     "cookie-parser": "^1.4.7",
     "express": "^4.21.2",
     "multer": "^1.4.5-lts.2",
+    "pg": "^8.22.0",
     "zod": "^4.4.3"
+  },
+  "optionalDependencies": {
+    "better-sqlite3": "^12.2.0"
   },
   "devDependencies": {
     "@hello-pangea/dnd": "^17.0.0",

@@ -13,6 +13,7 @@ COPY package*.json ./
 COPY scripts ./scripts
 RUN npm ci --omit=dev
 COPY server ./server
+COPY mcp ./mcp
 COPY --from=build /app/dist ./dist
 ENV PORT=5315
 ENV DATA_DIR=/data

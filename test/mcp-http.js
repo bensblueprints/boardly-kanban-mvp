@@ -42,7 +42,7 @@ async function rpc(url, token, method, params, id) {
 }
 
 async function main() {
-  const app = createApp({ dataDir, adminPassword: 'admin' });
+  const app = await createApp({ dataDir, adminPassword: 'admin' });
   const listener = app.listen(0, '127.0.0.1');
   await new Promise((r) => listener.once('listening', r));
   const base = `http://127.0.0.1:${listener.address().port}`;
@@ -189,7 +189,7 @@ async function main() {
   const settings = JSON.parse(fs.readFileSync(path.join(dataDir, 'mcp.json'), 'utf8'));
   assert.strictEqual(settings.enabled, true, 'quit leaves the integration enabled');
 
-  const app2 = createApp({ dataDir, adminPassword: 'admin' });
+  const app2 = await createApp({ dataDir, adminPassword: 'admin' });
   const handle = await app2.startMcpIfEnabled();
   assert.ok(handle, 'autostarts on next launch when enabled');
   const afterRestart = await rpc(handle.url, settings.token, 'tools/list', {}, 9);

@@ -1,5 +1,9 @@
 // Boardly smoke test — boots the real server on a throwaway data dir and
 // exercises the full API surface end to end. Run with `npm test`.
+//
+// With DATABASE_URL set it runs against real Postgres in cloud mode (real
+// account registration instead of the desktop password flow) — that's the
+// dialect validation path from HANDOFF.md task #8.
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -7,7 +11,8 @@ const assert = require('assert');
 const { createApp } = require('../server/app');
 
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'boardly-smoke-'));
-const app = createApp({ dataDir, adminPassword: 'smoke-pass' });
+const appPromise = createApp({ dataDir, adminPassword: 'smoke-pass' });
+const cloudMode = !!process.env.DATABASE_URL;
 
 let cookie = '';
 let base = '';
@@ -44,6 +49,7 @@ function normalizeExport(e) {
 }
 
 async function main() {
+  const app = await appPromise;
   const listener = await new Promise((resolve) => {
     const l = app.listen(0, '127.0.0.1', () => resolve(l));
   });
@@ -53,13 +59,24 @@ async function main() {
 
   try {
     // ---- auth ----
-    const bad = await api('POST', '/api/login', { password: 'wrong' }, { allowError: true });
-    assert(bad.error, 'wrong password rejected');
-    cookie = '';
-    await api('POST', '/api/login', { password: 'smoke-pass' });
-    const me = await api('GET', '/api/me');
-    assert.equal(me.authed, true);
-    ok('auth: login + session');
+    if (cloudMode) {
+      // Cloud mode: real accounts, not the desktop shared password.
+      const bad = await api('POST', '/api/login', { email: 'smoke@boardly.test', password: 'wrong-password' }, { allowError: true });
+      assert(bad.error, 'wrong password rejected');
+      cookie = '';
+      await api('POST', '/api/register', { email: 'smoke@boardly.test', password: 'smoke-pass-123' });
+      const me = await api('GET', '/api/me');
+      assert.equal(me.authed, true);
+      ok('auth: register + session (cloud mode)');
+    } else {
+      const bad = await api('POST', '/api/login', { password: 'wrong' }, { allowError: true });
+      assert(bad.error, 'wrong password rejected');
+      cookie = '';
+      await api('POST', '/api/login', { password: 'smoke-pass' });
+      const me = await api('GET', '/api/me');
+      assert.equal(me.authed, true);
+      ok('auth: login + session');
+    }
 
     // ---- board / lists / cards ----
     const board = await api('POST', '/api/boards', {
