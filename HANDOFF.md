@@ -25,8 +25,44 @@ Mode gating runs off `/api/me`, which now returns `mode: 'cloud'|'desktop'`; the
 desktop path (auto-login, or the self-host password screen) is byte-for-byte the
 same components as before. Any 401 in cloud mode drops back to the auth screen via
 an `api.onUnauthorized` hook. Devices/sync-status/storage UI deliberately deferred
-to task #4 (the sync engine doesn't exist yet). Remaining: #4 sync engine,
-#5 cloud MCP mount, #7 deploy wiring (DNS/TLS/Dokploy).
+to task #4 (the sync engine doesn't exist yet).
+
+**Update 2026-08-07 (4):** task #7 deploy is done, with two caveats the next
+session must know about:
+
+- **vmi3218770 no longer runs Dokploy** (the server README is stale) — the box
+  had only plain Docker, so the deploy is plain `docker compose` + a Caddy
+  container for TLS instead of a Dokploy app.
+- **The pushed `cloud-sync` branch was missing `server/data/`** — `.gitignore`'s
+  `data/` rule (meant for the runtime data dir) also ignored `server/data/`, so
+  the data layer never got committed and a fresh clone could not boot
+  (`Cannot find module './data/index.js'`). Fixed locally: `.gitignore` now uses
+  `/data/` (root-anchored), and the five `server/data/*.js` files show as
+  untracked, ready to commit. **Commit and push them before any redeploy** — the
+  server's copy at `/root/boardly` had the files tarred in by hand and diverges
+  from the branch until then.
+
+Deploy layout on vmi3218770:
+
+- `/root/boardly` — git clone of the repo, branch `cloud-sync`, plus `.env`
+  (`POSTGRES_PASSWORD`, `BOARDLY_PORT=5315`).
+- Stack: `docker compose -p boardly -f docker-compose.cloud.yml up -d --build`
+  → containers `boardly-boardly-1` + `boardly-db-1` (postgres:16-alpine),
+  volumes `boardly_boardly-data` (uploads) + `boardly_boardly-pg`.
+- TLS: `boardly-caddy` container (caddy:2-alpine, ports 80/443, config
+  `/root/boardly-caddy/Caddyfile`, volumes `boardly-caddy-data/-config`)
+  reverse-proxies `boardly.onetimesuite.com` → `boardly:5315`. It retries
+  Let's Encrypt until DNS points at 147.93.138.155, then serves automatically.
+- Redeploy: `cd /root/boardly && git pull && docker compose -p boardly \
+  -f docker-compose.cloud.yml up -d --build`.
+- Verified live: SPA, register, me, board/list/card, ilike search, token
+  create/Bearer/revoke/401, restart persistence. A throwaway account
+  `boardly-deploy-check@onetimesuite.com` exists (no delete-account endpoint).
+- **DNS is NOT flipped yet** — `boardly.onetimesuite.com` still serves the
+  Boardly marketing page through Cloudflare (the app is reachable at
+  http://147.93.138.155:5315 until then). See the report for the exact record.
+
+Remaining: #4 sync engine, #5 cloud MCP mount.
 
 ---
 
@@ -177,13 +213,10 @@ server (see gotchas).
    list/revoke), motion-designed to the app's standard. Devices, sync status and the
    storage add-on ship with the sync engine (#4).
 
-7. **Deploy** — container half **done 2026-08-07**: `Dockerfile.cloud` (no
-   better-sqlite3 native build — it's an optionalDependency, and the sqlite driver
-   require()s it lazily) + `docker-compose.cloud.yml` (Postgres 16, healthcheck,
-   /data volume, no ADMIN_PASSWORD — registration is open). The original
-   `Dockerfile`/`docker-compose.yml` stay the self-host SQLite path. Remaining:
-   DNS + TLS for `boardly.onetimesuite.com` and wiring into Dokploy (the box runs
-   Dokploy now, not Coolify) with `POSTGRES_PASSWORD` set.
+7. **Deploy** — **done 2026-08-07** (see Update (4) above for layout, caveats and the
+   redeploy command). The only open piece is DNS: `boardly.onetimesuite.com` must be
+   pointed at 147.93.138.155 in Cloudflare, after which Caddy issues TLS and the app
+   is live at https://boardly.onetimesuite.com.
 
 8. ~~**Validate the Postgres path**~~ **(done 2026-08-07)** — ran on vmi3218770 in a
    throwaway dir with uniquely-named `boardly-val-*` containers, torn down after.
