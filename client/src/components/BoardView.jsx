@@ -108,7 +108,7 @@ function AddCard({ listId, onAdded, autoFocus }) {
   );
 }
 
-export default function BoardView({ boardId, onBack }) {
+export default function BoardView({ boardId, onBack, mode }) {
   const [board, setBoard] = useState(null);
   const [openCardId, setOpenCardId] = useState(null);
   const [query, setQuery] = useState('');
@@ -267,15 +267,17 @@ export default function BoardView({ boardId, onBack }) {
           className="p-2 rounded-lg hover:bg-zinc-800" title="Star board">
           <Star className={`w-4 h-4 ${board.starred ? 'text-amber-400 fill-amber-400' : 'text-zinc-500'}`} />
         </button>
-        <button
-          onClick={() => setShowCoach((v) => !v)}
-          title="Ask what to work on next"
-          className={`flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg border transition-colors ${
-            showCoach ? 'border-indigo-500/60 text-indigo-300 bg-indigo-500/10' : 'border-zinc-800 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800'
-          }`}
-        >
-          <Sparkles className="w-4 h-4" /> What's next
-        </button>
+        {mode !== 'cloud' && (
+          <button
+            onClick={() => setShowCoach((v) => !v)}
+            title="Ask what to work on next"
+            className={`flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg border transition-colors ${
+              showCoach ? 'border-indigo-500/60 text-indigo-300 bg-indigo-500/10' : 'border-zinc-800 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800'
+            }`}
+          >
+            <Sparkles className="w-4 h-4" /> What's next
+          </button>
+        )}
 
         <div className="flex-1" />
 

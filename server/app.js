@@ -285,7 +285,10 @@ async function createApp(opts = {}) {
     res.json({
       authed: !!user,
       user: publicUser(user),
-      maxUploadMb
+      maxUploadMb,
+      // Lets the frontend decide between the account screens (cloud) and the
+      // desktop flow — the desktop app must never see a login screen.
+      mode: store.mode
     });
   }));
 

@@ -4,7 +4,10 @@ import { KanbanSquare, Lock } from 'lucide-react';
 import { api } from './api.js';
 import BoardsHome from './components/BoardsHome.jsx';
 import BoardView from './components/BoardView.jsx';
+import AuthScreen from './components/AuthScreen.jsx';
 
+// Desktop/self-host sign-in: the single local password. Cloud mode gets
+// AuthScreen (real accounts) instead — see below.
 function Login({ onLogin }) {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -66,14 +69,23 @@ function Login({ onLogin }) {
 }
 
 export default function App() {
-  const [authed, setAuthed] = useState(null);
+  const [me, setMe] = useState(null); // { authed, mode, user, maxUploadMb }
   const [boardId, setBoardId] = useState(() => {
     const m = location.hash.match(/^#\/board\/(\d+)/);
     return m ? Number(m[1]) : null;
   });
 
+  const refresh = () => api.get('/api/me').then(setMe).catch(() => setMe({ authed: false, mode: 'desktop' }));
+  useEffect(() => { refresh(); }, []);
+
   useEffect(() => {
-    api.get('/api/me').then((r) => setAuthed(r.authed)).catch(() => setAuthed(false));
+    // Any 401 mid-session (expired/revoked) drops back to the auth screen in
+    // cloud mode instead of leaving a dead UI. Desktop sessions don't expire
+    // in practice, and its flow is unchanged either way.
+    api.onUnauthorized = () => {
+      setMe((m) => (m && m.mode === 'cloud' && m.authed ? { ...m, authed: false } : m));
+    };
+    return () => { api.onUnauthorized = null; };
   }, []);
 
   useEffect(() => {
@@ -89,10 +101,16 @@ export default function App() {
     location.hash = id ? `#/board/${id}` : '#/';
   }
 
-  if (authed === null) return <div className="h-full flex items-center justify-center text-zinc-600">Loading…</div>;
-  if (!authed) return <Login onLogin={() => setAuthed(true)} />;
+  const logout = () => api.post('/api/logout').then(refresh);
+
+  if (me === null) return <div className="h-full flex items-center justify-center text-zinc-600">Loading…</div>;
+  if (!me.authed) {
+    return me.mode === 'cloud'
+      ? <AuthScreen onLogin={refresh} />
+      : <Login onLogin={refresh} />;
+  }
 
   return boardId
-    ? <BoardView boardId={boardId} onBack={() => openBoard(null)} />
-    : <BoardsHome onOpen={openBoard} onLogout={() => api.post('/api/logout').then(() => setAuthed(false))} />;
+    ? <BoardView boardId={boardId} onBack={() => openBoard(null)} mode={me.mode} />
+    : <BoardsHome onOpen={openBoard} mode={me.mode} user={me.user} onLogout={logout} />;
 }

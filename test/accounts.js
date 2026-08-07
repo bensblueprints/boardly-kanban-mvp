@@ -66,6 +66,7 @@ async function main() {
     r = await A.api('GET', '/api/me');
     assert.equal(r.json.authed, true);
     assert.equal(r.json.user.id, userA.id);
+    assert.equal(r.json.mode, 'cloud', '/api/me exposes the mode for the frontend');
     ok('register logs in, /api/me reflects the account');
 
     // ---- duplicate email ----

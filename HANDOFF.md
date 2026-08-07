@@ -16,8 +16,17 @@ image skips the native build (`npm ci --omit=dev --omit=optional`), desktop
 torn down completely): store 21/21 (pg variant), accounts 10/10, smoke 13/13
 (cloud mode) — plus a live server boot and a `Dockerfile.cloud` image boot via
 the compose file, both curl-checked (register/me/CRUD/search/due-filters/
-tokens). **Zero dialect bugs found.** Remaining: #4 sync engine, #5 cloud MCP
-mount, #6 auth UI, #7 deploy wiring (DNS/TLS/Dokploy).
+tokens). **Zero dialect bugs found.**
+
+**Update 2026-08-07 (3):** task #6 (scoped) is done — auth + account UI. Cloud mode
+gets a login/register screen (`AuthScreen.jsx`) and an account panel
+(`AccountPanel.jsx`: user info, logout, API token create/show-once/list/revoke).
+Mode gating runs off `/api/me`, which now returns `mode: 'cloud'|'desktop'`; the
+desktop path (auto-login, or the self-host password screen) is byte-for-byte the
+same components as before. Any 401 in cloud mode drops back to the auth screen via
+an `api.onUnauthorized` hook. Devices/sync-status/storage UI deliberately deferred
+to task #4 (the sync engine doesn't exist yet). Remaining: #4 sync engine,
+#5 cloud MCP mount, #7 deploy wiring (DNS/TLS/Dokploy).
 
 ---
 
@@ -163,9 +172,10 @@ server (see gotchas).
    user, all tools scoped to that user's boards. **This is the piece that removes the desktop
    install requirement for agents.**
 
-6. **Auth/account UI** (task #6) — sign in, register, validation states, and an account area
-   for tokens, connected devices, sync status, storage add-on. Motion-designed to the
-   standard of the rest of the app (framer-motion, dark theme).
+6. **Auth/account UI** — **done 2026-08-07, scoped**: sign in, register, validation
+   states, and the account area (user info, logout, API tokens create/show-once/
+   list/revoke), motion-designed to the app's standard. Devices, sync status and the
+   storage add-on ship with the sync engine (#4).
 
 7. **Deploy** — container half **done 2026-08-07**: `Dockerfile.cloud` (no
    better-sqlite3 native build — it's an optionalDependency, and the sqlite driver
