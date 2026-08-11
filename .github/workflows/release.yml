@@ -8,15 +8,15 @@ on:
 permissions:
   contents: write
 
-# Windows + Linux installers. The macOS DMG is handled by mac-build.yml
-# (existing OneTimeSuite workflow, triggers on the same tags + release
-# publication), so macOS is intentionally absent from this matrix.
+# Windows, macOS, and Linux installers on every version tag.
+# (The older mac-build.yml only attaches its DMG on release:published events,
+# which CI-created releases never fire — so this workflow builds the DMG too.)
 jobs:
   build:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest]
+        os: [windows-latest, macos-14, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -32,6 +32,12 @@ jobs:
         if: runner.os == 'Windows'
         run: npm run dist -- --publish never
 
+      - name: macOS installer (DMG, unsigned)
+        if: runner.os == 'macOS'
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npm run dist:mac -- --publish never
+
       - name: Linux installers (AppImage + deb)
         if: runner.os == 'Linux'
         run: |
@@ -44,6 +50,7 @@ jobs:
         with:
           files: |
             release/*.exe
+            release/*.dmg
             release/*.AppImage
             release/*.deb
           generate_release_notes: true
