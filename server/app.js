@@ -5,6 +5,8 @@ const express = require('express');
 const cookieParser = require('cookie-parser');
 const multer = require('multer');
 const { openDb } = require('./db');
+const { createSyncEngine } = require('./sync/engine');
+const { mountSyncRoutes } = require('./sync/routes');
 const mcpSettings = require('../mcp/settings.js');
 const { startMcpHttp } = require('../mcp/http.js');
 const coach = require('./coach.js');
@@ -909,6 +911,19 @@ function createApp(opts = {}) {
       res.status(400).json({ error: err.message });
     }
   });
+
+  // ================= CLOUD SYNC =================
+  // Optional paid add-on: pushes local changes to a sync server and applies
+  // remote ones. Inert until the user pastes a token in Settings.
+
+  const syncEngine = createSyncEngine({ db, uploadsDir });
+  mountSyncRoutes(app, requireAuth, { engine: syncEngine });
+  syncEngine.start();
+  app.syncEngine = syncEngine;
+  app.stopSync = () => syncEngine.stop();
+  // Test hook: lets black-box convergence tests read the raw DB. Not used by
+  // any route or entrypoint.
+  app.db = db;
 
   // ================= FRONTEND =================
 

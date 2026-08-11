@@ -1,6 +1,7 @@
 const path = require('path');
 const fs = require('fs');
 const Database = require('better-sqlite3');
+const { installSyncTracking } = require('./sync/track');
 
 function nativeBindingPath() {
   // Under Electron the Node-ABI binding won't load; use the vendored Electron prebuild.
@@ -113,6 +114,9 @@ function openDb(dataDir) {
     }
   };
   addColumn('boards', 'description', "TEXT NOT NULL DEFAULT ''");
+
+  // uuid / updated_at columns, stamping triggers, tombstones (cloud sync).
+  installSyncTracking(db);
 
   return db;
 }

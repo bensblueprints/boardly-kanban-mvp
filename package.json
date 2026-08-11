@@ -1,8 +1,9 @@
 {
   "name": "boardly",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "description": "Self-hosted kanban board. Pay once, own it forever — no Trello per-seat subscription.",
-  "author": "Ben (bensblueprints)",
+  "author": "Ben (bensblueprints) <ben@onetimesuite.com>",
+  "homepage": "https://boardly.onetimesuite.com",
   "license": "MIT",
   "main": "electron/main.js",
   "scripts": {
@@ -16,7 +17,11 @@
     "test:mcp-http": "node test/mcp-http.js",
     "test:all": "node test/smoke.js && node test/mcp.js && node test/mcp-http.js && node test/coach.js",
     "dist": "npm run build && electron-builder --win nsis",
-    "test:coach": "node test/coach.js"
+    "dist:mac": "npm run build && electron-builder --mac dmg",
+    "dist:linux": "npm run build && electron-builder --linux AppImage deb",
+    "test:coach": "node test/coach.js",
+    "test:convergence": "node test/sync-convergence.js",
+    "test:sync": "node test/sync-tracking.js && node test/sync-engine.js && node sync-server/test/sync-server.test.js && node test/sync-convergence.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
@@ -65,6 +70,13 @@
         "dmg"
       ],
       "category": "public.app-category.productivity"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Utility"
     },
     "directories": {
       "output": "release"
