@@ -30,14 +30,14 @@ jobs:
 
       - name: Windows installer (NSIS)
         if: runner.os == 'Windows'
-        run: npm run dist
+        run: npm run dist -- --publish never
 
       - name: Linux installers (AppImage + deb)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y binutils
-          npm run dist:linux
+          npm run dist:linux -- --publish never
 
       - name: Attach installers to GitHub release
         uses: softprops/action-gh-release@v2
