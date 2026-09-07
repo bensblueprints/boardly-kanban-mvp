@@ -2,10 +2,12 @@ import React, { useEffect, useRef, useState } from 'react';
 import { X, Plus, Send, Square, MessageSquare } from 'lucide-react';
 import { api } from '../api.js';
 import RunActivity from './RunActivity.jsx';
+import GithubConnection from './GithubConnection.jsx';
 
 export default function ProjectChat({ board, task = null, onClose, onUpdated, initialThreadId = null }) {
   const readOnly=board.permissions?.role==='viewer';
   const [funding,setFunding]=useState('');
+  const [context,setContext]=useState(null),[githubOpen,setGithubOpen]=useState(false);
   const [personal,setPersonal]=useState(false),[cloud,setCloud]=useState(false),[mode,setMode]=useState('');
   const [threads, setThreads] = useState([]), [selected, setSelected] = useState('');
   const [conversation, setConversation] = useState(null), [online, setOnline] = useState(false);
@@ -20,12 +22,15 @@ export default function ProjectChat({ board, task = null, onClose, onUpdated, in
     return () => { active = false; };
   }, [board.id, task?.id, initialThreadId]);
   useEffect(() => {
-    let active = true;
+    let active = true,loading=false;
     setConversation(null);
+    setContext(null);
     const load = async () => {
+      if(loading)return;loading=true;
       try {
-        const status = await api.get('/api/chat/status');
+        const [status,projectContext] = await Promise.all([api.get('/api/chat/status'),api.get(`/api/boards/${board.id}/chat/context`)]);
         if (!active) return;
+        setContext(projectContext);if(!projectContext.can_manage_github)setGithubOpen(false);
         setCloud(!!status.cloud);setOnline(status.online);setPersonal(!!status.personal_ai);setFunding(status.funding||'');
         if (selected) {
           const data = await api.get(`/api/chat/threads/${selected}`);
@@ -35,7 +40,8 @@ export default function ProjectChat({ board, task = null, onClose, onUpdated, in
           if (key !== previous.current && data.job?.status === 'completed') onUpdated();
           previous.current = key;
         }
-      } catch (e) { if (active) setError(e.message); }
+      } catch (e) { if (active){setError(e.message);if([401,403,404].includes(e.status)){setContext(null);setGithubOpen(false);}} }
+      finally{loading=false;}
     };
     load(); const timer = setInterval(load, 2000);
     return () => { active = false; clearInterval(timer); };
@@ -59,6 +65,8 @@ export default function ProjectChat({ board, task = null, onClose, onUpdated, in
     <header className="p-4 border-b border-zinc-800 flex gap-3 items-center"><MessageSquare className="text-indigo-300" size={20} /><div className="flex-1 min-w-0"><h2 className="font-semibold">{personal?'AI':'Codex'} · {scopeName}</h2><p className="text-xs text-zinc-500">{task ? `${board.name} · Task #${task.id} · Saved task conversations` : 'Saved project conversations'}</p></div><button aria-label="Close project chat" onClick={onClose}><X size={20} /></button></header>
     <div className="p-3 flex gap-2 border-b border-zinc-800"><select aria-label="Conversation history" value={selected} onChange={e => { setSelected(e.target.value); setError(''); }} className="min-w-0 flex-1 rounded-lg bg-zinc-900 border border-zinc-700 px-2 py-2 text-sm"><option value="">New conversation</option>{threads.map(t => <option key={t.id} value={t.id}>{t.title}</option>)}</select><button aria-label="Start new conversation" onClick={() => { setSelected(''); setConversation(null); setError(''); }} className="p-2 bg-zinc-800 rounded-lg"><Plus size={18} /></button></div>
     <div className={`px-4 py-2 text-xs border-b border-zinc-800 ${online ? 'text-emerald-300' : 'text-amber-300'}`}><span className="mr-2">●</span>{personal?(online?(funding==='owner_subscription'?'Company owner’s subscription connected':'Company owner funds AI usage'):'Ask the company owner to reconnect AI funding'):(online?(cloud?'Cloud agents connected · your computer can be off':'Codex connected'):'Agent worker is offline · requests will wait')}{personal&&board.permissions?.owner!==false&&<button className="ml-3 underline" onClick={()=>window.dispatchEvent(new Event('boardly-account'))}>AI settings</button>}</div>
+    {context&&<div aria-label="Saved GitHub connection" className="px-4 py-3 text-xs border-b border-zinc-800 space-y-1"><p className="text-zinc-300 break-words">{context.github.saved?`GitHub: ${context.github.repository} · ${context.github.branch}`:context.github.status==='restricted'?'GitHub access is managed by the company owner.':'No GitHub connection saved for this project.'}</p>{context.github.saved&&<p className="text-zinc-500">{context.github.inherited?'Inherited from company':'Saved to project'} · Available across this project’s chats{!context.github.allow_agent?' · Agent access paused':''}</p>}{context.can_manage_github&&<button aria-expanded={githubOpen} onClick={()=>setGithubOpen(!githubOpen)} className="text-indigo-300 underline">{githubOpen?'Close GitHub settings':context.github.saved?'GitHub settings':'Connect GitHub'}</button>}</div>}
+    {githubOpen&&context?.can_manage_github?<div className="flex-1 min-h-0 overflow-y-auto p-4"><GithubConnection key={board.id} kind="projects" id={board.id}/></div>:<>
     <div className="flex-1 overflow-y-auto p-4 space-y-4" aria-live="polite">
       {!conversation?.messages?.length && <div className="py-8 text-sm text-zinc-500"><p className="text-zinc-300 mb-2">What should we work on in {scopeName}?</p><p>Ask Codex to review tasks, make changes or investigate a problem. {task ? 'This task has its own saved conversation and shares the project’s files.' : 'Your conversation stays with this project.'}</p></div>}
       {conversation?.messages?.map(m => <React.Fragment key={m.id}><article className={`rounded-xl p-3 ${m.role === 'user' ? 'bg-indigo-500/15 border border-indigo-500/20 ml-6' : 'bg-zinc-900 mr-3'}`}><p className="text-xs text-zinc-500 mb-2">{m.role === 'user' ? 'Member' : 'AI'} · {new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p><div className="text-sm whitespace-pre-wrap break-words leading-relaxed">{m.content}</div></article>{(conversation.runs || (conversation.job ? [conversation.job] : [])).filter(r => r.message_id === m.id).map(run => <RunActivity key={run.id} run={run} online={online} />)}</React.Fragment>)}
@@ -71,5 +79,6 @@ export default function ProjectChat({ board, task = null, onClose, onUpdated, in
       <textarea disabled={readOnly} aria-label="Message Codex" value={input} onChange={e => setInput(e.target.value)} maxLength={30000} rows={3} placeholder={`Ask Codex about ${board.name}…`} className="w-full rounded-xl border border-zinc-700 bg-zinc-900 p-3 text-sm resize-none focus:border-indigo-400 outline-none" onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) send(e); }} />
       <div className="flex justify-between items-center"><span className="text-xs text-zinc-600">Ctrl / ⌘ + Enter to send</span>{running&&!readOnly ? <button type="button" onClick={async () => { try { await api.post(`/api/chat/jobs/${conversation.job.id}/cancel`, {}); setConversation(await api.get(`/api/chat/threads/${selected}`)); } catch (e) { setError(e.message); } }} className="flex items-center gap-2 text-sm px-3 py-2 rounded-lg bg-zinc-800"><Square size={14} /> Stop</button> : <button disabled={!mode || !input.trim() || busy || readOnly || (personal&&!online)} className="flex items-center gap-2 text-sm px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg disabled:opacity-40"><Send size={15} />{busy ? 'Sending…' : mode==='work'?'Start work':mode==='plan'?'Discuss plan':'Ask AI'}</button>}</div>
     </form>
+    </>}
   </aside>;
 }

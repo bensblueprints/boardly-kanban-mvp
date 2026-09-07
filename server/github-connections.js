@@ -74,6 +74,16 @@ function createGithubConnections({ db, key, namespace, request = githubRequest }
     return direct(kind, id);
   }
   const agentList = projectId => { const row = effective(projectId); return row?.allow_agent ? [row] : []; };
+  // Rebuild this from durable settings for every conversation; never put the
+  // encrypted credential or decrypted token in model context or UI summaries.
+  function context(projectId) {
+    const row=effective(projectId), location=hierarchy.scope(projectId);
+    if(!row)return {status:'not_connected',saved:false};
+    return {status:row.allow_agent?'connected':'paused',saved:true,repository:row.repository,branch:row.branch,
+      inherited:!!row.inherited,scope:row.inherited?'company':'project',
+      scope_name:row.inherited?location?.company_name:location?.project_name,
+      allow_agent:!!row.allow_agent,tested_at:row.tested_at,updated_at:row.updated_at};
+  }
   function forJob(projectId, companyId, connectionId) {
     if (hierarchy.scope(projectId)?.company_id !== companyId) throw fail(403, 'Project company changed. Start a fresh Work run.');
     const row = effective(projectId);
@@ -146,7 +156,7 @@ function createGithubConnections({ db, key, namespace, request = githubRequest }
     throw fail(404, 'GitHub action not found');
   }
   const router = express.Router(); router.use(express.json({ limit:'16kb' }));
-  router.get('/api/:kind(companies|projects)/:id/github', (req,res) => res.json({ connection:direct(req.params.kind,req.params.id), effective:req.params.kind === 'projects' ? effective(Number(req.params.id)) : direct(req.params.kind,req.params.id) }));
+  router.get('/api/:kind(companies|projects)/:id/github', (req,res) => res.json({ connection:direct(req.params.kind,req.params.id), effective:req.params.kind === 'projects' ? effective(Number(req.params.id)) : direct(req.params.kind,req.params.id), scope:req.params.kind==='projects'?hierarchy.scope(Number(req.params.id)):{company_name:db.prepare('SELECT name FROM companies WHERE id=?').get(req.params.id)?.name} }));
   router.put('/api/:kind(companies|projects)/:id/github', (req,res) => res.json(save(req.params.kind,req.params.id,req.body)));
   router.delete('/api/:kind(companies|projects)/:id/github', (req,res) => { direct(req.params.kind,req.params.id); db.prepare(`DELETE FROM github_connections WHERE ${field(req.params.kind)}=?`).run(req.params.id); res.json({ok:true}); });
   router.post('/api/:kind(companies|projects)/:id/github/test', async(req,res,next) => { try { const row = req.params.kind === 'projects' ? effective(Number(req.params.id)) : direct(req.params.kind,req.params.id); if (!row) throw fail(404,'Save a GitHub connection first'); res.json(await operate(row,'test',{},()=>{try{req.revalidateMember?.();return true;}catch{return false;}})); } catch(e) { next(e); } });
@@ -162,6 +172,6 @@ function createGithubConnections({ db, key, namespace, request = githubRequest }
     const result = await ssh.execute(server,{command:`export BOARDLY_RELEASE_SHA='${release.sha}'; export BOARDLY_REPOSITORY='${row.repository}'; ${data.command}`,valid:() => { try { return permitted() && ssh.forJob(projectId,companyId,server.id).updated_at === server.updated_at; } catch { return false; } }});
     return { ...result,release,deployed:result.code === 0,verification:data.verification };
   }
-  return { router,save,direct,effective,agentList,forJob,operate,run,redact:input => { let result = input; for (const row of db.prepare('SELECT * FROM github_connections').all()) result = redact(result,{token:decrypt(row)}); return result; } };
+  return { router,save,direct,effective,agentList,context,forJob,operate,run,redact:input => { let result = input; for (const row of db.prepare('SELECT * FROM github_connections').all()) result = redact(result,{token:decrypt(row)}); return result; } };
 }
 module.exports = { createGithubConnections, githubRequest, repositoryName, branchName, filePath };

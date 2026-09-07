@@ -53,7 +53,7 @@ function memberGuard({db,memberships,ownerId,userId}){
    }
    if((match=route.match(/^\/api\/boards\/(\d+)(?:\/(.*))?$/))){
     projectId=Number(match[1]);const suffix=match[2]||'';
-    const read=['','cards','activity','archived','export','files','links','chat/threads'];
+    const read=['','cards','activity','archived','export','files','links','chat/threads','chat/context'];
     const edits=['lists','lists/reorder','labels','files','file-links','links','chat/threads','agent'];
     if(write&&suffix==='agent'&&!req.personalAiAllowed)throw fail(402,'Ask the company owner to connect AI funding');
     if(method==='GET'?!read.includes(suffix):!edits.includes(suffix))throw fail(403,'This setting is managed by the account owner');

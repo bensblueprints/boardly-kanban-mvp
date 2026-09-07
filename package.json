@@ -29,7 +29,7 @@
     "test:companies": "node test/company-email.js && node test/company-imap.js",
     "test:members": "node test/memberships.js && node test/shared-companies.js && node test/member-scopes.js && node test/member-scope-migration.js && node test/member-scope-agents.js && node test/company-chat.js && node test/owner-funding.js && node test/personal-ai.js",
     "test:agents": "node test/swarms.js && node test/ssh-connections.js && node test/ssh-broker.js && node test/cloud-agents.js && node test/tailnet.js && node test/cloud-api-agents.js",
-    "test:github": "node test/github-connections.js && node test/github-broker.js && node test/github-workers.js",
+    "test:github": "node test/github-connections.js && node test/github-chat-persistence.js && node test/github-broker.js && node test/github-workers.js",
     "test:overview": "node test/company-overview.js"
   },
   "dependencies": {

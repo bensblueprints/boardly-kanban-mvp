@@ -1,19 +1,24 @@
-import React,{useEffect,useState} from 'react';
+import React,{useEffect,useRef,useState} from 'react';
 import {Github,CheckCircle2,ExternalLink,LockKeyhole} from 'lucide-react';
 import {api} from '../api.js';
 const button='rounded-lg border border-zinc-700 px-3 py-2 text-sm hover:bg-zinc-800 disabled:opacity-40';
 const input='mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm';
 export default function GithubConnection({kind,id}){
  const [state,setState]=useState(null),[form,setForm]=useState(null),[busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
- const base=`/api/${kind}/${id}/github`,load=()=>api.get(base).then(setState);
- useEffect(()=>{setState(null);setForm(null);setError('');setNotice('');let active=true;api.get(base).then(value=>{if(active)setState(value);}).catch(e=>{if(active)setError(e.message);});return()=>{active=false;};},[base]);
- async function act(fn){setBusy(true);setError('');setNotice('');try{await fn();await load();}catch(e){setError(e.message);}finally{setBusy(false);}}
+ const base=`/api/${kind}/${id}/github`,generation=useRef(0),writing=useRef(false);
+ const load=async()=>{const seq=++generation.current,value=await api.get(base);if(seq===generation.current)setState(value);};
+ useEffect(()=>{setState(null);setForm(null);setError('');setNotice('');let active=true,pending=false;
+  const refresh=async()=>{if(!active||pending||writing.current)return;pending=true;try{await load();}catch(e){if(active)setError(e.message);}finally{pending=false;}};
+  const visible=()=>{if(document.visibilityState==='visible')refresh();};refresh();const timer=setInterval(visible,3000);window.addEventListener('focus',refresh);document.addEventListener('visibilitychange',visible);
+  return()=>{active=false;generation.current++;clearInterval(timer);window.removeEventListener('focus',refresh);document.removeEventListener('visibilitychange',visible);};},[base]);
+ async function act(fn){writing.current=true;generation.current++;setBusy(true);setError('');setNotice('');try{await fn();await load();}catch(e){setError(e.message);}finally{writing.current=false;setBusy(false);}}
  const connection=state?.connection,effective=state?.effective;
  const edit=()=>setForm({repository:connection?.repository||'',branch:connection?.branch||'main',token:'',allow_agent:connection?!!connection.allow_agent:true});
  return <section className="space-y-5"><div className="flex flex-wrap items-start justify-between gap-4"><div><h3 className="font-semibold flex items-center gap-2"><Github size={20}/>GitHub repository</h3><p className="text-sm text-zinc-400 mt-2 max-w-xl">{kind==='companies'?'Projects inherit this repository unless they have their own connection.':'Connect this project to its repository, or inherit the company connection.'}</p></div>{!form&&<button disabled={!state||busy} className={button} onClick={edit}>{connection?'Edit connection':effective?'Use a project repository':'Connect GitHub'}</button>}</div>
+  {state?.scope&&<p className="rounded-lg border border-zinc-800 p-3 text-xs text-zinc-400">{kind==='companies'?`Save to company: ${state.scope.company_name}`:`Save to project: ${state.scope.company_name||'Unassigned'} / ${state.scope.parent_board_name} / ${state.scope.project_name}`}<span className="block mt-1">{kind==='companies'?'Saved connections are inherited by this company’s projects and their chats.':'Saved connections are shared by every project and task chat in this project.'} The token stays saved when you close a chat or reload.</span></p>}
   {error&&<p role="alert" className="text-sm text-rose-300">{error}</p>}{notice&&<p role="status" className="text-sm text-emerald-300">{notice}</p>}
   {!state&&!error&&<p className="text-sm text-zinc-400">Loading GitHub connection…</p>}
-  {form&&<form className="p-5 rounded-xl border border-indigo-500/40 bg-zinc-900 space-y-4" onSubmit={e=>{e.preventDefault();act(async()=>{await api.put(base,form);setForm(null);setNotice('GitHub connection saved. Test access to verify the repository and branch.');});}}>
+  {form&&<form className="p-5 rounded-xl border border-indigo-500/40 bg-zinc-900 space-y-4" onSubmit={e=>{e.preventDefault();act(async()=>{await api.put(base,form);setForm(null);setNotice('GitHub connection saved for all chats in this scope. Test access to verify the repository and branch.');});}}>
    <label className="block text-sm text-zinc-300">Repository URL<input required className={input} placeholder="https://github.com/your-company/your-repo" value={form.repository} onChange={e=>setForm({...form,repository:e.target.value})}/></label>
    <label className="block text-sm text-zinc-300">Target branch<input required className={input} placeholder="main" value={form.branch} onChange={e=>setForm({...form,branch:e.target.value})}/></label>
    <label className="block text-sm text-zinc-300">GitHub access token<input required={!connection} className={input} autoComplete="new-password" spellCheck={false} type="password" placeholder={connection?'Leave blank to keep the saved token':'Paste your GitHub personal access token'} value={form.token} onChange={e=>setForm({...form,token:e.target.value})}/></label>

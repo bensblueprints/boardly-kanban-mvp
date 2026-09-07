@@ -14,10 +14,11 @@ function nextProjectJob(db, runtime) {
       WHERE (r.status IN ('running','recovering') OR (r.status='cancelled' AND r.worker_id IS NOT NULL AND r.settled_at IS NULL AND r.updated_at>strftime('%s','now')*1000-604800000)) AND (r.thread_id=j.thread_id OR (rt.board_id=t.board_id AND r.mode='work' AND j.mode='work')))
     ORDER BY j.created_at,j.rowid LIMIT 1`).get(runtime);
 }
-function snapshot(db, ids) {
+function snapshot(db, ids, {github} = {}) {
   return ids.map(id => ({
     project: db.prepare('SELECT id,name,description FROM boards WHERE id=?').get(id),
     scope: require('./hierarchy').createHierarchy(db).scope(id),
+    ...(github?{github:github(id)}:{}),
     lists: db.prepare('SELECT id,name FROM lists WHERE board_id=? AND archived=0').all(id),
     tasks: db.prepare(`SELECT c.id,c.title,c.description,l.name AS status FROM cards c JOIN lists l ON l.id=c.list_id
       WHERE l.board_id=? AND c.archived=0 AND l.archived=0 ORDER BY c.position LIMIT 200`).all(id).map(c => ({...c,

@@ -6,7 +6,7 @@ const multer = require('multer');
 const { safeText } = require('./agent-activity');
 const { MAX_AGENTS, nextProjectJob, snapshot, cleanValues } = require('./agent-scheduling');
 
-function createProjectChat({ db, connections, userId, uploadsDir, environment, payments, email, ssh, github }) {
+function createProjectChat({ db, connections, userId, uploadsDir, environment, payments, email, ssh, github, canUseGithub=(actor)=>actor===userId }) {
   const router = express.Router();
   db.exec(`CREATE TABLE IF NOT EXISTS chat_threads (
     id TEXT PRIMARY KEY, board_id INTEGER NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
@@ -46,7 +46,8 @@ function createProjectChat({ db, connections, userId, uploadsDir, environment, p
   const message = (threadId, role, content) => db.prepare('INSERT INTO chat_messages VALUES (?,?,?,?,?)')
     .run(crypto.randomUUID(), threadId, role, content, Date.now());
   const body = express.json({ limit: '1mb' });
-  const organization = require('./organization-agents').createOrganizationAgents({db,clean,userId,hosted:()=>router.hosted});
+  const githubContext=(actor,id)=>canUseGithub(actor,id)?github?.context(id)||{status:'not_connected',saved:false}:{status:'restricted',saved:null};
+  const organization = require('./organization-agents').createOrganizationAgents({db,clean,userId,hosted:()=>router.hosted,githubContext});
   router.organization=organization; router.use(organization.router);
   function expireJobs() {
     db.prepare("UPDATE chat_jobs SET status='interrupted',error='Codex worker disconnected. Review the result before sending another message.',updated_at=? WHERE status='running' AND updated_at<?")
@@ -88,6 +89,11 @@ function createProjectChat({ db, connections, userId, uploadsDir, environment, p
     const cardId = req.query.card_id == null ? null : Number(req.query.card_id);
     if (cardId !== null && (!Number.isSafeInteger(cardId) || !task(req.params.boardId, cardId))) return res.status(404).json({ error: 'Task does not belong to this project' });
     res.json(db.prepare('SELECT id,board_id,card_id,title,created_at FROM chat_threads WHERE board_id=? AND card_id IS ? ORDER BY created_at DESC,rowid DESC').all(req.params.boardId, cardId));
+  });
+  router.get('/api/boards/:boardId/chat/context',(req,res)=>{
+    const id=Number(req.params.boardId),actor=req.cloudUserId||userId;
+    if(!db.prepare('SELECT id FROM boards WHERE id=?').get(id))return res.status(404).json({error:'Project not found'});
+    res.json({github:githubContext(actor,id),can_manage_github:canUseGithub(actor,id),scope:hierarchy.scope(id)});
   });
   router.post('/api/boards/:boardId/chat/threads', body, (req, res) => {
     if (!db.prepare('SELECT id FROM boards WHERE id=?').get(req.params.boardId)) return res.status(404).json({ error: 'Project not found' });
@@ -164,7 +170,7 @@ function createProjectChat({ db, connections, userId, uploadsDir, environment, p
       require('./hierarchy').ensureProjects(db);
       const scope = hierarchy.scope(t.board_id);
       db.prepare('UPDATE chat_jobs SET company_id=? WHERE id=?').run(scope?.company_id ?? null,j.id);
-      if(j.mode!=='work')return {...j,status:'running',context:cleanValues(snapshot(db,[t.board_id]),value=>clean(t.board_id,value)),history:db.prepare('SELECT role,content FROM chat_messages WHERE thread_id=? ORDER BY created_at,rowid').all(t.id).slice(-40),prompt:db.prepare('SELECT content FROM chat_messages WHERE id=?').get(j.message_id).content};
+      if(j.mode!=='work')return {...j,status:'running',context:cleanValues(snapshot(db,[t.board_id],{github:id=>githubContext(j.requested_by||userId,id)}),value=>clean(t.board_id,value)),history:db.prepare('SELECT role,content FROM chat_messages WHERE thread_id=? ORDER BY created_at,rowid').all(t.id).slice(-40),prompt:db.prepare('SELECT content FROM chat_messages WHERE id=?').get(j.message_id).content};
       return { ...j, status: 'running', sessionId: t.codex_session_id,
         board: db.prepare('SELECT id,uuid,name,description FROM boards WHERE id=?').get(t.board_id),
         hierarchy: scope,
