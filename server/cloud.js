@@ -121,7 +121,7 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
       tenant.ssh=require('./ssh-connections').createSshConnections({db:local.db,key:projectKey,namespace:ownerId,tailnet});
       tenant.github=require('./github-connections').createGithubConnections({db:local.db,key:projectKey,namespace:ownerId,request:githubRequest});
       tenant.chat=createProjectChat({db:local.db,connections,userId:ownerId,uploadsDir:tenant.uploadsDir,environment:tenant.environment,payments:tenant.payments,email:tenant.email,ssh:tenant.ssh,github:tenant.github});
-      tenant.chat.hosted=require('./hosted-ai').createHostedAI({db:local.db,uploadsDir:tenant.uploadsDir,personal,canEdit:(actor,id)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).project(id)==='editor',retain:()=>tenant.active++,release:()=>tenant.active--,storageLimit:()=>tenant.plan.storage_bytes,organization:tenant.chat.organization,ssh:tenant.ssh,github:tenant.github});
+      tenant.chat.hosted=require('./hosted-ai').createHostedAI({db:local.db,uploadsDir:tenant.uploadsDir,personal,canEdit:(actor,id)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).project(id)==='editor',canUse:(actor,id,scope)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).capabilities('project',id).includes(scope),retain:()=>tenant.active++,release:()=>tenant.active--,storageLimit:()=>tenant.plan.storage_bytes,organization:tenant.chat.organization,ssh:tenant.ssh,github:tenant.github});
       tenant.chat.organization.router.enqueueApi=()=>tenant.chat.hosted.enqueue();
       tenant.assets=createProjectAssets({db:local.db,uploadsDir:tenant.uploadsDir,limitBytes:plan.storage_bytes});
       tenants.set(ownerId,tenant);
@@ -170,22 +170,7 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
   app.post('/api/billing/checkout',express.json({limit:'4kb'}),async(req,res,next)=>{try{if(!req.workspaceIsOwner)throw Object.assign(Error('Only the account owner can purchase the workspace plan or additional users'),{status:403});if(!['serial_entrepreneur','agency','extra_users'].includes(req.body?.kind))throw Object.assign(Error('Choose a plan or additional users'),{status:400});res.json(await personal.billing.checkout(req.cloudUserId,req.body.kind,req.body.quantity));}catch(e){next(e);}});
   app.use(async(req,res,next)=>{try{if(!req.tenant)return next();const mode=personal.account(req.cloudUserId).mode;req.aiRuntime=req.cloudUserId!==config.ownerId||mode!=='none'?'api':'codex';req.personalAiAllowed=mode==='key'||(mode==='card'&&personal.summary(req.cloudUserId).billing_ready);if(req.aiRuntime==='api'&&req.method==='POST'&&(/^\/api\/chat\/threads\/[^/]+\/messages$/.test(req.path)||/^\/api\/boards\/\d+\/agent$/.test(req.path)||/^\/api\/agents\/(company|board)\/\d+\/swarms$/.test(req.path)||/^\/api\/discussions\/threads\/[^/]+\/messages$/.test(req.path)))await personal.authorize(req.cloudUserId);next();}catch(e){next(e);}});
   app.get('/api/account/plan',(req,res)=>res.json({plan:req.accountPlan,owner:req.workspaceIsOwner,usage:{...memberships.usage(req.workspaceOwnerId),companies:req.tenant.app.db.prepare('SELECT COUNT(*) AS n FROM companies').get().n,storage_bytes:require('./project-assets').storageUsage(req.tenant.app.db).usedBytes},plans:Object.values(PLANS),billing_ready:personal.billing.ready(),extra_user_monthly_price:9,company_limit:req.accountPlan.companies,user_limit:req.accountPlan.users}));
-  const memberBody=express.json({limit:'8kb'});
-  const memberOwner=(req,res,next)=>req.workspaceIsOwner?next():res.status(403).json({error:'Only the account owner can manage members'});
-  const resource=(req,res,next)=>{const kind=req.params.kind==='companies'?'company':'project',table=kind==='company'?'companies':'boards';if(!req.tenant.app.db.prepare(`SELECT id FROM ${table} WHERE id=?`).get(req.params.id))return res.status(404).json({error:'Shared resource not found'});req.memberKind=kind;next();};
-  app.get('/api/:kind(companies|projects)/:id/members',memberOwner,resource,(req,res)=>{
-    const direct=memberships.list(req.workspaceOwnerId,req.memberKind,Number(req.params.id));let inherited=[];
-    if(req.memberKind==='project'){const scope=require('./hierarchy').createHierarchy(req.tenant.app.db).scope(req.params.id);if(scope?.company_id)inherited=memberships.list(req.workspaceOwnerId,'company',scope.company_id).map(m=>({...m,inherited_from:scope.company_name}));}
-    res.json({members:direct,inherited,usage:memberships.usage(req.workspaceOwnerId),user_limit:req.accountPlan.users,sign_in_url:config.origin+'/sign-in'});
-  });
-  app.post('/api/:kind(companies|projects)/:id/members',memberOwner,resource,memberBody,async(req,res,next)=>{
-    try{
-      const member=await memberships.add({ownerId:req.workspaceOwnerId,email:req.body?.email,kind:req.memberKind,resourceId:Number(req.params.id),memberRole:req.body?.role||'editor',limit:req.accountPlan.users,identity});
-      res.status(201).json({member,sign_in_url:config.origin+'/sign-in',message:'User added. They can sign in with their email code; no separate subscription is required.'});
-    }catch(e){next(e);}
-  });
-  app.patch('/api/memberships/:id',memberOwner,memberBody,(req,res)=>{memberships.update(req.workspaceOwnerId,req.params.id,req.body?.role);res.json({ok:true});});
-  app.delete('/api/memberships/:id',memberOwner,(req,res)=>{memberships.remove(req.workspaceOwnerId,req.params.id);res.json({ok:true});});
+  app.use(require('./member-routes').createMemberRoutes({memberships,identity,origin:config.origin}));
   app.use((req,res,next)=>{
     if(!req.tenant||req.workspaceIsOwner)return next();
     require('./member-access').memberGuard({db:req.tenant.app.db,memberships,ownerId:req.workspaceOwnerId,userId:req.cloudUserId})(req,res,next);

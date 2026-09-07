@@ -1,11 +1,18 @@
 const express=require('express');
 const fail=(status,message)=>Object.assign(Error(message),{status});
+const {SCOPE_IDS,readScopes}=require('./member-permissions');
 function accessForMember(db,grants){
  const companies=new Map(),direct=new Map();
  for(const g of grants){const map=g.kind==='company'?companies:direct;if(g.role==='editor'||!map.has(g.resource_id))map.set(g.resource_id,g.role);}
  const project=id=>{const row=db.prepare('SELECT p.workspace_id,b.company_id FROM company_projects p JOIN company_boards b ON b.id=p.parent_board_id WHERE p.workspace_id=?').get(id);if(!row)return null;const a=direct.get(Number(id)),b=companies.get(row.company_id);return a==='editor'||b==='editor'?'editor':a||b||null;};
- function filter(tree){const projects=tree.projects.filter(p=>project(p.id)).map(p=>({...p,role:project(p.id)})),parents=new Set(projects.map(p=>p.parent_board_id));const boards=tree.boards.filter(b=>parents.has(b.id)||companies.has(b.company_id)),companyIds=new Set(boards.map(b=>b.company_id));return{companies:tree.companies.filter(c=>companies.has(c.id)||companyIds.has(c.id)).map(c=>({...c,description:'',role:companies.get(c.id)||'project_guest'})),boards:boards.map(b=>({...b,description:''})),projects,owner:false};}
- return{project,filter};
+ function capabilities(kind,id){
+  id=Number(id);let companyId=id;
+  if(kind==='project'){if(!project(id))return[];companyId=db.prepare('SELECT b.company_id FROM company_projects p JOIN company_boards b ON b.id=p.parent_board_id WHERE p.workspace_id=?').get(id)?.company_id;}
+  const permitted=grants.filter(g=>(g.kind==='company'&&g.resource_id===companyId)||(kind==='project'&&g.kind==='project'&&g.resource_id===id&&(g.scope_company_id??null)===(companyId??null))).flatMap(g=>readScopes(g.scopes));
+  return SCOPE_IDS.filter(scope=>permitted.includes(scope));
+ }
+ function filter(tree){const projects=tree.projects.filter(p=>project(p.id)).map(p=>({...p,role:project(p.id),scopes:capabilities('project',p.id)})),parents=new Set(projects.map(p=>p.parent_board_id));const boards=tree.boards.filter(b=>parents.has(b.id)||companies.has(b.company_id)),companyIds=new Set(boards.map(b=>b.company_id));return{companies:tree.companies.filter(c=>companies.has(c.id)||companyIds.has(c.id)).map(c=>({...c,description:'',role:companies.get(c.id)||'project_guest',scopes:capabilities('company',c.id)})),boards:boards.map(b=>({...b,description:''})),projects,owner:false};}
+ return{project,company:id=>companies.get(Number(id))||null,capabilities,filter};
 }
 function memberGuard({db,memberships,ownerId,userId}){
  const router=express.Router();router.use(express.json({limit:'2mb'}));
@@ -13,6 +20,27 @@ function memberGuard({db,memberships,ownerId,userId}){
   try{
    const permissions=()=>accessForMember(db,memberships.grants(ownerId,userId));
    const scope=permissions(),route=req.path.toLowerCase().replace(/\/$/,''),method=req.method==='HEAD'?'GET':req.method,write=method!=='GET';
+   // Optional privileges are independent of the task Editor/Viewer role.
+   // Match only the existing connector routes, then recheck live grants for
+   // async provider operations as well as the initial HTTP request.
+   let privileged;
+   const connection=route.match(/^\/api\/(companies|projects)\/(\d+)\/(ssh|github)(?:\/([\w-]+))?(?:\/(test))?$/);
+   if(connection){
+    const [,kind,id,cap,part,test]=connection;
+    const permitted=cap==='github'?(!part&&['GET','PUT','DELETE'].includes(method))||(part==='test'&&!test&&method==='POST'):(!part&&['GET','POST'].includes(method))||(part&&!test&&['PATCH','DELETE'].includes(method))||(part&&test&&method==='POST');
+    if(permitted)privileged={kind:kind==='companies'?'company':'project',id:Number(id),cap};
+   }
+   const secret=route.match(/^\/api\/boards\/(\d+)\/(environment|payments)(.*)$/);
+   if(secret){
+    const [,id,cap,suffix]=secret;
+    const permitted=cap==='environment'?(!suffix&&method==='GET')||(/^\/[a-z_][a-z0-9_]*$/.test(suffix)&&['PUT','DELETE'].includes(method)):
+      (!suffix&&method==='GET')||(suffix==='/cards'&&method==='POST')||(/^\/cards\/[\w-]+$/.test(suffix)&&['PATCH','DELETE'].includes(method))||(/^\/cards\/[\w-]+\/billing$/.test(suffix)&&method==='GET');
+    if(permitted)privileged={kind:'project',id:Number(id),cap};
+   }
+   if(privileged){
+    const verify=()=>{const current=permissions();if(!current.capabilities(privileged.kind,privileged.id).includes(privileged.cap))throw fail(403,'The owner has not enabled this member permission scope');};
+    verify();req.revalidateMember=verify;return next();
+   }
    const check=id=>{const role=permissions().project(id);if(!role)throw fail(404,'Project not found');if(write&&role!=='editor')throw fail(403,'This project is shared with view-only access');return role;};
    const find=(sql,id)=>db.prepare(sql).get(id)?.board_id;
    const card=id=>find('SELECT l.board_id FROM cards c JOIN lists l ON l.id=c.list_id WHERE c.id=?',id);
@@ -30,7 +58,7 @@ function memberGuard({db,memberships,ownerId,userId}){
     if(write&&suffix==='agent'&&!req.personalAiAllowed)throw fail(402,'Add your personal AI key or billing in Account & AI');
     if(method==='GET'?!read.includes(suffix):!edits.includes(suffix))throw fail(403,'This setting is managed by the account owner');
     if(method==='POST'&&suffix==='lists/reorder'&&Array.isArray(req.body?.order))for(const id of req.body.order){if(find('SELECT board_id FROM lists WHERE id=?',id)!==projectId)throw fail(404,'List not found');}
-    if(method==='GET'&&!suffix){const json=res.json.bind(res);res.json=value=>json({...value,permissions:{owner:false,role:scope.project(projectId),can_ai:scope.project(projectId)==='editor'}});}
+    if(method==='GET'&&!suffix){const json=res.json.bind(res);res.json=value=>json({...value,permissions:{owner:false,role:scope.project(projectId),can_ai:scope.project(projectId)==='editor',scopes:scope.capabilities('project',projectId)}});}
     if(method==='GET'&&suffix==='files'){const json=res.json.bind(res);res.json=value=>json({...value,storage:null});}
    }else if((match=route.match(/^\/api\/lists\/(\d+)(?:\/(cards))?$/))){
     if(!((method==='PATCH'&&!match[2])||(method==='POST'&&match[2]==='cards')))throw fail(403,'Action not permitted');projectId=find('SELECT board_id FROM lists WHERE id=?',match[1]);

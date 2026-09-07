@@ -118,6 +118,7 @@ export default function BoardView({ boardId, onBack, cloud = false }) {
   const [members,setMembers]=useState(false);
   const [board, setBoard] = useState(null);
   const readOnly=board?.permissions?.role==='viewer';
+  const can=scope=>owner||board?.permissions?.scopes?.includes(scope);
   const [openCardId, setOpenCardId] = useState(null);
   const [query, setQuery] = useState('');
   const [labelFilter, setLabelFilter] = useState(null);
@@ -142,6 +143,14 @@ export default function BoardView({ boardId, onBack, cloud = false }) {
 
   const load = useCallback(() => api.get(`/api/boards/${boardId}`).then(setBoard).catch(() => onBack()), [boardId]);
   useEffect(() => { load(); }, [load]);
+  useEffect(()=>{
+    if(!cloud)return;let active=true,pending=false;
+    const refresh=async()=>{if(!active||pending)return;pending=true;try{const permissions=await api.get(`/api/projects/${boardId}/permissions`);if(active)setBoard(previous=>previous?{...previous,permissions}:previous);}catch(e){if(active&&(e.status===403||e.status===404))onBack();}finally{pending=false;}};
+    const visible=()=>{if(document.visibilityState==='visible')refresh();};
+    refresh();const timer=setInterval(visible,3000);window.addEventListener('focus',refresh);
+    return()=>{active=false;clearInterval(timer);window.removeEventListener('focus',refresh);};
+  },[cloud,boardId]);
+
 
   // keyboard shortcuts: n = new card (first list), / = focus search
   useEffect(() => {
@@ -380,18 +389,18 @@ export default function BoardView({ boardId, onBack, cloud = false }) {
         {cloud && <button disabled={deployBusy||readOnly} onClick={() => launchAgent()} className="text-sm text-indigo-300 border border-indigo-500/30 rounded-lg px-3 py-1.5 disabled:opacity-50">{deployBusy ? 'Starting…' : 'Deploy agent'}</button>}
         {cloud && <button onClick={() => setAssetsTab('files')} className="text-sm text-zinc-300 px-2">Files</button>}
         {cloud && <button onClick={() => setAssetsTab('links')} className="text-sm text-zinc-300 px-2">Links</button>}
-        {cloud && owner && <button onClick={() => setAssetsTab('ssh')} className="text-sm text-zinc-300 px-2">SSH</button>}
-        {cloud && owner && <button onClick={() => setAssetsTab('github')} className="text-sm text-zinc-300 px-2">GitHub</button>}
-        {cloud && owner && <button onClick={() => setAssetsTab('environment')} className="text-sm text-zinc-300 px-2">Environment</button>}
-        {cloud && owner && <button onClick={() => setAssetsTab('payments')} className="text-sm text-zinc-300 px-2">Payments</button>}
+        {cloud && can('ssh') && <button onClick={() => setAssetsTab('ssh')} className="text-sm text-zinc-300 px-2">SSH</button>}
+        {cloud && can('github') && <button onClick={() => setAssetsTab('github')} className="text-sm text-zinc-300 px-2">GitHub</button>}
+        {cloud && can('environment') && <button onClick={() => setAssetsTab('environment')} className="text-sm text-zinc-300 px-2">Environment</button>}
+        {cloud && can('payments') && <button onClick={() => setAssetsTab('payments')} className="text-sm text-zinc-300 px-2">Payments</button>}
         {cloud && owner && <button onClick={() => setConnections(true)} className="text-sm text-zinc-400 hover:text-zinc-200 px-2">Connections</button>}
-        {owner&&<button onClick={()=>setMembers(true)} className="text-sm text-zinc-300 px-2">Members</button>}{readOnly&&<span className="text-xs text-zinc-500">View-only access</span>}
+        {can('members')&&<button onClick={()=>setMembers(true)} className="text-sm text-zinc-300 px-2">Members</button>}{readOnly&&<span className="text-xs text-zinc-500">View-only access</span>}
       </nav>}
-      {members&&<Members kind="projects" id={board.id} onClose={()=>setMembers(false)}/>}
+      {members&&can('members')&&<Members kind="projects" id={board.id} onClose={()=>setMembers(false)}/>}
       {cloud && showChat && <ProjectChat key={`${board.id}:${chatTask?.id || ''}:${chatThread || ''}`} initialThreadId={chatThread} task={chatTask} board={{...board,name:board.hierarchy?.project_name || board.name}} onClose={() => setShowChat(false)} onUpdated={load} />}
       {cloud && connections && <CloudConnections onClose={() => setConnections(false)} />}
 
-      {cloud && assetsTab && <ProjectAssets board={{...board,name:board.hierarchy?.project_name || board.name}} initialTab={assetsTab} onClose={() => setAssetsTab(null)} />}
+      {cloud && assetsTab && (['files','links'].includes(assetsTab)||can(assetsTab)) && <ProjectAssets board={{...board,name:board.hierarchy?.project_name || board.name}} initialTab={assetsTab} onClose={() => setAssetsTab(null)} />}
       {agentError && <p role="alert" className="p-3 text-sm text-rose-300">{agentError}</p>}
       {/* project description */}
       <div className="shrink-0 px-4 py-2 border-b border-zinc-800/60 bg-zinc-950/40">

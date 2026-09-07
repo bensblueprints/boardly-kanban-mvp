@@ -149,7 +149,7 @@ function createGithubConnections({ db, key, namespace, request = githubRequest }
   router.get('/api/:kind(companies|projects)/:id/github', (req,res) => res.json({ connection:direct(req.params.kind,req.params.id), effective:req.params.kind === 'projects' ? effective(Number(req.params.id)) : direct(req.params.kind,req.params.id) }));
   router.put('/api/:kind(companies|projects)/:id/github', (req,res) => res.json(save(req.params.kind,req.params.id,req.body)));
   router.delete('/api/:kind(companies|projects)/:id/github', (req,res) => { direct(req.params.kind,req.params.id); db.prepare(`DELETE FROM github_connections WHERE ${field(req.params.kind)}=?`).run(req.params.id); res.json({ok:true}); });
-  router.post('/api/:kind(companies|projects)/:id/github/test', async(req,res,next) => { try { const row = req.params.kind === 'projects' ? effective(Number(req.params.id)) : direct(req.params.kind,req.params.id); if (!row) throw fail(404,'Save a GitHub connection first'); res.json(await operate(row,'test')); } catch(e) { next(e); } });
+  router.post('/api/:kind(companies|projects)/:id/github/test', async(req,res,next) => { try { const row = req.params.kind === 'projects' ? effective(Number(req.params.id)) : direct(req.params.kind,req.params.id); if (!row) throw fail(404,'Save a GitHub connection first'); res.json(await operate(row,'test',{},()=>{try{req.revalidateMember?.();return true;}catch{return false;}})); } catch(e) { next(e); } });
   router.use((e,req,res,next) => e.status ? res.status(e.status).json({error:e.message}) : next(e));
   async function run({projectId,companyId,connectionId,action,data={},valid=()=>true,ssh}) {
     const row = forJob(projectId,companyId,connectionId);
