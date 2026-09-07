@@ -55,7 +55,7 @@ function memberGuard({db,memberships,ownerId,userId}){
     projectId=Number(match[1]);const suffix=match[2]||'';
     const read=['','cards','activity','archived','export','files','links','chat/threads'];
     const edits=['lists','lists/reorder','labels','files','file-links','links','chat/threads','agent'];
-    if(write&&suffix==='agent'&&!req.personalAiAllowed)throw fail(402,'Add your personal AI key or billing in Account & AI');
+    if(write&&suffix==='agent'&&!req.personalAiAllowed)throw fail(402,'Ask the company owner to connect AI funding');
     if(method==='GET'?!read.includes(suffix):!edits.includes(suffix))throw fail(403,'This setting is managed by the account owner');
     if(method==='POST'&&suffix==='lists/reorder'&&Array.isArray(req.body?.order))for(const id of req.body.order){if(find('SELECT board_id FROM lists WHERE id=?',id)!==projectId)throw fail(404,'List not found');}
     if(method==='GET'&&!suffix){const json=res.json.bind(res);res.json=value=>json({...value,permissions:{owner:false,role:scope.project(projectId),can_ai:scope.project(projectId)==='editor',scopes:scope.capabilities('project',projectId)}});}
@@ -76,8 +76,8 @@ function memberGuard({db,memberships,ownerId,userId}){
     projectId=find('SELECT l.board_id FROM attachments a JOIN cards c ON c.id=a.card_id JOIN lists l ON l.id=c.list_id WHERE a.filename=?',filename)||find('SELECT board_id FROM project_files WHERE filename=?',filename);
    }else if((match=route.match(/^\/api\/chat\/threads\/([a-f0-9-]+)(?:\/(messages))?$/))){
     projectId=find('SELECT board_id FROM chat_threads WHERE id=?',match[1]);
-    if(write&&!req.personalAiAllowed)throw fail(403,'Connect your own AI billing in AI settings first');
-   }else if((match=route.match(/^\/api\/boards\/(\d+)\/agent$/))){projectId=Number(match[1]);if(!req.personalAiAllowed)throw fail(403,'Connect your own AI billing in AI settings first');}
+    if(write&&!req.personalAiAllowed)throw fail(403,'Ask the company owner to connect AI funding first');
+   }else if((match=route.match(/^\/api\/boards\/(\d+)\/agent$/))){projectId=Number(match[1]);if(!req.personalAiAllowed)throw fail(403,'Ask the company owner to connect AI funding first');}
    else if((match=route.match(/^\/api\/chat\/jobs\/([a-f0-9-]+)\/(?:cancel|resume)$/))){const j=db.prepare('SELECT j.requested_by,t.board_id FROM chat_jobs j JOIN chat_threads t ON t.id=j.thread_id WHERE j.id=?').get(match[1]);if(!j||j.requested_by!==userId)throw fail(404,'Your AI run was not found');projectId=j.board_id;}
    else if(method==='GET'&&route==='/api/chat/status')return next();
    else throw fail(403,'This action is managed by the account owner');

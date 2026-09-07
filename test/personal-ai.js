@@ -23,20 +23,20 @@ async function run(){
  const f=await fixture({providerRequest:fake});try{
   const a=await f.project('Shared','Project'),b=await f.project('Secret','Private');secretCard=(await f.api(`/api/lists/${b.list.id}/cards`,{method:'POST',body:{title:'PRIVATE_UNIQUE_CONTEXT'}})).id;
   const added=await f.api(`/api/projects/${a.project.id}/members`,{method:'POST',body:{email:'ai@example.com',role:'editor'}}),user=added.member.user_id;
-  await f.api('/api/ai/settings',{user,method:'PUT',body:{mode:'key',model:'gpt-6-astra',monthly_cap:20,api_key:key}});
-  assert.equal((await f.api('/api/ai/settings')).has_key,false);assert.equal((await f.api('/api/ai/settings',{user})).has_key,true);
-  const thread=await f.api(`/api/boards/${a.project.id}/chat/threads`,{user,method:'POST',body:{title:'Personal API test'}});
+  await f.api('/api/ai/settings',{method:'PUT',body:{mode:'key',model:'gpt-6-astra',monthly_cap:20,api_key:key}});
+  assert.equal((await f.api('/api/ai/settings')).has_key,true);assert.equal((await f.api('/api/ai/settings',{user})).has_key,false);
+  const thread=await f.api(`/api/boards/${a.project.id}/chat/threads`,{user,method:'POST',body:{title:'Owner funded API test'}});
   await f.api(`/api/chat/threads/${thread.id}/messages`,{user,method:'POST',body:{ mode:'work', content:'Read this project and save a deliverable.'}});
   let chat;for(let i=0;i<100;i++){chat=await f.api(`/api/chat/threads/${thread.id}`,{user});if(!['queued','running'].includes(chat.job.status))break;await new Promise(r=>setTimeout(r,20));}
   assert.equal(chat.job.status,'completed',JSON.stringify(chat));assert.equal(chat.messages.at(-1).content,'Saved deliverable.txt in this project.');assert.equal(chat.job.activity.length,3);
   assert.ok(JSON.stringify(requests).includes('Task not found in this project'));assert.ok(!JSON.stringify(requests).includes('PRIVATE_UNIQUE_CONTEXT'));assert.ok(!JSON.stringify(chat).includes(key));
   const files=await f.api(`/api/boards/${a.project.id}/files`,{user});assert.equal(files.files.length,1);assert.equal(await(await f.request(`/api/project-files/${files.files[0].id}/download`,{user})).text(),'Saved inside the authorized project.');
-  let summary=await f.api('/api/ai/settings',{user});assert.equal(summary.usage.boardly_charge,0);assert.equal(summary.usage.provider_cost,0.010035);
+  assert.equal((await f.api('/api/ai/settings',{user})).usage.provider_cost,0);let summary=await f.api('/api/ai/settings');assert.equal(summary.usage.boardly_charge,0);assert.equal(summary.usage.provider_cost,0.010035);
   const disk=new Database(path.join(f.root,'personal-ai.db'));assert.ok(!JSON.stringify(disk.prepare('SELECT * FROM ai_accounts').all()).includes(key));disk.close();
   mode='wait';await f.api(`/api/chat/threads/${thread.id}/messages`,{user,method:'POST',body:{ mode:'work', content:'Run after revocation'}});while(!resolveNetwork)await new Promise(r=>setTimeout(r,5));
   const grants=await f.api(`/api/projects/${a.project.id}/members`);await f.api(`/api/memberships/${grants.members[0].grant_id}`,{method:'DELETE'});resolveNetwork();
   await new Promise(r=>setTimeout(r,30));chat=await f.api(`/api/chat/threads/${thread.id}`);assert.equal(chat.job.status,'blocked');assert.equal((await f.request(`/api/chat/threads/${thread.id}`,{user})).status,403);
-  console.log('PASS: encrypted per-user keys, scoped API tools, file output, visible activity, actual token costs, zero Boardly BYOK charges and in-flight access revocation');
+  console.log('PASS: encrypted owner-funded keys, zero member charges, scoped API tools, file output, visible activity, actual token costs, zero Boardly BYOK charges and in-flight access revocation');
  }finally{await f.close();}
  let paidCalls=0;const records=[],customers=new Map(),subs=new Map();let failMeter=true,networkFail=false;
  const billing={secretKey:'sk_test_stripe',webhookSecret:'whsec_fixture',serialPrice:'price_serial',agencyPrice:'price_agency',seatPrice:'price_seats',aiPrice:'price_ai'};

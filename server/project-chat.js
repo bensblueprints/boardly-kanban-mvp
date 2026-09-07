@@ -31,7 +31,7 @@ function createProjectChat({ db, connections, userId, uploadsDir, environment, p
   if (!db.prepare('PRAGMA table_info(chat_threads)').all().some(c => c.name === 'card_id')) db.exec('ALTER TABLE chat_threads ADD COLUMN card_id INTEGER REFERENCES cards(id) ON DELETE CASCADE');
   db.exec('CREATE INDEX IF NOT EXISTS chat_scope ON chat_threads(board_id,card_id,created_at)');
   if (!db.prepare('PRAGMA table_info(chat_jobs)').all().some(c => c.name === 'company_id')) db.exec('ALTER TABLE chat_jobs ADD COLUMN company_id INTEGER');
-  for (const [name,type] of [['runtime',"TEXT NOT NULL DEFAULT 'codex'"],['requested_by','TEXT']]) if (!db.prepare('PRAGMA table_info(chat_jobs)').all().some(c=>c.name===name)) db.exec(`ALTER TABLE chat_jobs ADD COLUMN ${name} ${type}`);
+  for (const [name,type] of [['runtime',"TEXT NOT NULL DEFAULT 'codex'"],['requested_by','TEXT'],['billing_owner_id','TEXT']]) if (!db.prepare('PRAGMA table_info(chat_jobs)').all().some(c=>c.name===name)) db.exec(`ALTER TABLE chat_jobs ADD COLUMN ${name} ${type}`);
   for (const [name,type] of [['mode',"TEXT NOT NULL DEFAULT 'work'"],['swarm_id','TEXT'],['settled_at','INTEGER']]) if (!db.prepare('PRAGMA table_info(chat_jobs)').all().some(c=>c.name===name)) db.exec(`ALTER TABLE chat_jobs ADD COLUMN ${name} ${type}`);
   for(const [name,type] of [['worker_host',"TEXT NOT NULL DEFAULT 'desktop'"],['continuation_count','INTEGER NOT NULL DEFAULT 0'],['recovery_required','INTEGER NOT NULL DEFAULT 0'],['blocker_card_id','INTEGER REFERENCES cards(id) ON DELETE SET NULL'],['blocker','TEXT'],['next_action','TEXT'],['resume_note','TEXT']])if(!db.prepare('PRAGMA table_info(chat_jobs)').all().some(c=>c.name===name))db.exec(`ALTER TABLE chat_jobs ADD COLUMN ${name} ${type}`);
   const blockers=require('./agent-blockers').createAgentBlockers(db);
@@ -71,13 +71,13 @@ function createProjectChat({ db, connections, userId, uploadsDir, environment, p
       db.prepare('INSERT INTO chat_messages VALUES (?,?,?,?,?)').run(mid, id, 'user', clean(board.id, content), now);
       db.prepare("INSERT INTO chat_jobs (id,thread_id,message_id,status,created_at,updated_at) VALUES (?,?,?,'queued',?,?)").run(jid, id, mid, now, now);
     })();
-    db.prepare('UPDATE chat_jobs SET runtime=?,requested_by=? WHERE id=?').run(req.aiRuntime||'codex',req.cloudUserId||userId,jid);
+    db.prepare('UPDATE chat_jobs SET runtime=?,requested_by=?,billing_owner_id=? WHERE id=?').run(req.aiRuntime||'codex',req.cloudUserId||userId,userId,jid);
     if(req.aiRuntime==='api')router.hosted.enqueue();
     res.status(202).json({ threadId: id, jobId: jid });
   });
   router.get('/api/chat/status', (req, res) => {
     expireJobs();
-    if(req.aiRuntime==='api')return res.json({online:!!req.personalAiAllowed,message:'AI uses your personal key or billing card. Activity and results are saved in this project.',personal_ai:true});
+    if(req.aiRuntime==='api')return res.json({online:!!req.personalAiAllowed,message:req.aiFunding==='owner_subscription'?'AI uses the company owner’s connected subscription. Your permission scopes still apply.':'AI usage is funded by the company owner. Activity and results are saved in this project.',personal_ai:true,funding:req.aiFunding||'owner_api'});
     const workers = connections.list(userId).filter(c => c.scope === 'worker' && !c.revoked_at && c.expires_at > Date.now());
     res.json({ online: workers.some(c => c.last_used_at > Date.now() - 45000),
       cloud:workers.some(c=>c.name.startsWith('Cloud agent')&&c.last_used_at>Date.now()-45000),max_agents:MAX_AGENTS,message:'Up to four agents work through assigned objectives. Progress and blockers are saved with this project.' });
@@ -124,7 +124,7 @@ function createProjectChat({ db, connections, userId, uploadsDir, environment, p
       db.prepare("INSERT INTO chat_jobs (id,thread_id,message_id,status,created_at,updated_at) VALUES (?,?,?,'queued',?,?)").run(id, t.id, mid, now, now);
       if (t.title === 'New conversation') db.prepare('UPDATE chat_threads SET title=? WHERE id=?').run(clean(t.board_id, content.trim()).slice(0, 80), t.id);
     })();
-    db.prepare('UPDATE chat_jobs SET runtime=?,requested_by=?,mode=? WHERE id=?').run(req.aiRuntime||'codex',req.cloudUserId||userId,mode,id);
+    db.prepare('UPDATE chat_jobs SET runtime=?,requested_by=?,mode=?,billing_owner_id=? WHERE id=?').run(req.aiRuntime||'codex',req.cloudUserId||userId,mode,userId,id);
     if(req.aiRuntime==='api')router.hosted.enqueue();
     res.status(202).json({ id, status: 'queued' });
   });

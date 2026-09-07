@@ -5,6 +5,7 @@ import {
   X, AlignLeft, CheckSquare, Tag, Clock, Paperclip, MessageSquare, History,
   Archive, Trash2, Plus, Pencil, Download, RotateCcw
 } from 'lucide-react';
+import CompanyChat from './CompanyChat.jsx';
 import { api } from '../api.js';
 
 const LABEL_COLORS = ['#ef4444', '#f59e0b', '#22c55e', '#14b8a6', '#3b82f6', '#8b5cf6', '#ec4899', '#64748b'];
@@ -25,6 +26,7 @@ function Section({ icon: Icon, title, action, children }) {
 
 export default function CardModal({ cardId, board, onClose, onBoardChange, onDeployAgent, onChat }) {
   const readOnly=board.permissions?.role==='viewer';
+  const [teamChat,setTeamChat]=useState(false);
   const [card, setCard] = useState(null);
   const [editingDesc, setEditingDesc] = useState(false);
   const [desc, setDesc] = useState('');
@@ -147,6 +149,7 @@ export default function CardModal({ cardId, board, onClose, onBoardChange, onDep
           </button>
         </div>
 
+        {board.hierarchy?.company_id&&<div className="px-5 py-3"><button aria-expanded={teamChat} onClick={()=>setTeamChat(!teamChat)} className="text-sm text-indigo-300 rounded-lg border border-indigo-500/30 px-3 py-2">Company team chat</button>{teamChat&&<div className="mt-3"><CompanyChat key={cardId} cardId={cardId}/></div>}</div>}
         <fieldset disabled={readOnly} className="px-5 pb-5">
           {/* labels + due */}
           <div className="flex flex-wrap items-center gap-2 mb-5 pl-0">

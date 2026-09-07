@@ -14,7 +14,7 @@ async function run(){
   for(const route of [`/api/boards/${b.project.id}`,`/api/cards/${secretCard.id}`,`/api/companies/${a.company.id}/emails`,`/api/boards/${a.project.id}/environment`,`/api/boards/${a.project.id}/payments`,'/api/connections','/api/sync/status'])assert.ok([403,404].includes((await request(route,{user:member})).status),route);
   assert.equal((await request(`/api/cards/${card.id}/move`,{user:member,method:'POST',body:{list_id:b.list.id,position:0}})).status,404);
   assert.equal((await request('/api/boards',{user:member,workspace:'user_stranger'})).status,403);
-  assert.equal((await request(`/api/boards/${a.project.id}/agent`,{user:member,method:'POST',body:{}})).status,402);
+  assert.equal((await request(`/api/boards/${a.project.id}/agent`,{user:member,method:'POST',body:{}})).status,503);
   const form=new FormData();form.set('file',new Blob(['member file'],{type:'text/plain'}),'shared.txt');const file=await api(`/api/boards/${a.project.id}/files`,{user:member,method:'POST',body:form});
   assert.equal(await(await request(`/api/project-files/${file.id}/download`,{user:member})).text(),'member file');
   const companyMembers=await api(`/api/companies/${a.company.id}/members`);await api(`/api/memberships/${companyMembers.members[0].grant_id}`,{method:'DELETE'});

@@ -40,6 +40,7 @@ function stopChild(child) {
 for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => { stopping = true; for(const child of children)stopChild(child); });
 const safeName = name => path.basename(name).replace(/[^a-zA-Z0-9._ -]/g, '_').slice(0, 180) || 'file';
 async function run(job) {
+  if(job.kind==='subscription')return require('./subscription-runner.cjs').runSubscription({job,settings,api,children,stopping:()=>stopping,save});
   if(job.kind==='discussion'||job.mode!=='work')return require('./discussion-runner.cjs').runDiscussion({job,settings,api,children,stopping:()=>stopping,save});
   let child=null,paused=false;
   if (!/^[a-f0-9-]{36}$/.test(job.board.uuid) || !/^[a-f0-9-]{36}$/.test(job.id)) throw Error('Invalid project or run identifier');
@@ -241,9 +242,9 @@ async function flush() {
     try{
       await flush();
       if(active.size<maxAgents){
-        const {job}=await api('/api/worker/claim',{cloud:!!settings.cloud});
+        const {job}=await api('/api/worker/claim',{cloud:!!settings.cloud,subscription_bridge:true});
         if(job){
-          const running=run(job).catch(async()=>{await save(job.id,job.kind==='discussion'?`/api/worker/discussions/${job.id}`:`/api/worker/jobs/${job.id}`,{status:'failed',error:'The worker could not complete this request.'});}).finally(()=>active.delete(running));
+          const running=run(job).catch(async()=>{await save(job.id,job.kind==='subscription'?`/api/worker/subscriptions/${job.id}`:job.kind==='discussion'?`/api/worker/discussions/${job.id}`:`/api/worker/jobs/${job.id}`,{status:'failed',error:'The worker could not complete this request.'});}).finally(()=>active.delete(running));
           active.add(running);
           if(settings.once){await running;await flush();break;}
           continue;

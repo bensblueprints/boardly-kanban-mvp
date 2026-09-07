@@ -21,7 +21,7 @@ const response=output=>Response.json({id:'resp_'+crypto.randomUUID(),model:'gpt-
   const set=scopes=>f.api(`/api/memberships/${grant}`,{method:'PATCH',body:{scopes}});
   await f.api(`/api/projects/${p.project.id}/github`,{method:'PUT',body:{repository:'northstar/website',branch:'main',token:'github_pat_fixture_'+crypto.randomBytes(24).toString('hex'),allow_agent:true}});
   const ssh=await f.api(`/api/projects/${p.project.id}/ssh`,{method:'POST',body:{label:'Never dial',host:'127.0.0.1',port:9,username:'fixture',auth_type:'password',password:'synthetic',fingerprint:'SHA256:'+'a'.repeat(43),allow_agent:true}});sshId=ssh.id;
-  await f.api('/api/ai/settings',{user,method:'PUT',body:{mode:'key',model:'gpt-6-astra',monthly_cap:20,api_key:'sk-fixture_'+crypto.randomBytes(24).toString('hex')}});
+  await f.api('/api/ai/settings',{method:'PUT',body:{mode:'key',model:'gpt-6-astra',monthly_cap:20,api_key:'sk-fixture_'+crypto.randomBytes(24).toString('hex')}});
   async function start(){const t=await f.api(`/api/boards/${p.project.id}/chat/threads`,{user,method:'POST',body:{}});await f.api(`/api/chat/threads/${t.id}/messages`,{user,method:'POST',body:{mode:'work',content:'Check scoped tools.'}});return t;}
   async function finish(t){for(let n=0;n<150;n++){const h=await f.api(`/api/chat/threads/${t.id}`);if(!['queued','running'].includes(h.job.status)){assert.equal(h.job.status,'completed',h.job.blocker||h.job.error);return h;}await new Promise(r=>setTimeout(r,20));}throw Error('Agent did not finish');}
   await finish(await start());assert.equal(remote.calls.length,0,'No GitHub preflight without scope');
