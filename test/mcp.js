@@ -113,7 +113,17 @@ function check(label, cond) {
   const boards = await callTool('list_boards', {});
   check('list_boards', boards.length === 1 && boards[0].card_count === 1 && boards[0].list_count === 2);
 
-  const err = await rpc('tools/call', { name: 'get_board', arguments: { board_id: 9999 } });
+  const tree = await callTool('get_hierarchy', {});
+  check('legacy workspace preserved as General project', tree.projects[0].id === board.id && tree.projects[0].name === 'General');
+  const company = await callTool('create_company', {name:'MCP company'});
+  await callTool('update_company_board', {board_id:tree.boards[0].id,company_id:company.id});
+  const parent = await callTool('create_company_board', {name:'Engineering',company_id:company.id});
+  const project = await callTool('create_project', {name:'Website',parent_board_id:parent.id});
+  await callTool('update_project', {project_id:project.id,name:'New website'});
+  const scoped = await callTool('get_board', {board_id:project.id});
+  check('company and project MCP tools preserve task API compatibility', scoped.hierarchy.company_id === company.id && scoped.hierarchy.project_name === 'New website' && scoped.lists.length === 4);
+
+  const err = await rpc('tools/call' , { name: 'get_board', arguments: { board_id: 9999 } });
   check('missing board -> isError', err.isError === true);
 
   child.stdin.end();

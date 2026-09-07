@@ -1,0 +1,4 @@
+# Preserve the verified cloud worker runtime and sandbox defaults.
+FROM boardly-cloud-worker:recovery-20260907
+COPY server /app/server
+COPY scripts /app/scripts

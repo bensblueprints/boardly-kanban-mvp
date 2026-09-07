@@ -1,0 +1,27 @@
+#!/usr/bin/env node
+// Run on the cloud host with its private env file. Dry-run performs no API calls.
+const fs=require('node:fs'),crypto=require('node:crypto');
+const args=process.argv.slice(2),envFile=args[args.indexOf('--env-file')+1];
+if(!args.includes('--env-file')||!envFile)throw Error('Usage: node scripts/setup-billing.cjs --env-file /private/cloud.env [--apply]');
+const raw=fs.readFileSync(envFile,'utf8'),env=Object.fromEntries(raw.split('\n').filter(x=>/^[A-Z_]+=/.test(x)).map(x=>{const i=x.indexOf('=');return[x.slice(0,i),x.slice(i+1)];}));
+const plan={currency:'usd',interval:'month',plans:{serial_entrepreneur:7900,agency:29900},extra_user_cents:900,ai_meter_event:'boardly_ai_nano_usd',ai_unit_amount_decimal_cents:'0.0000001',webhook_url:env.BOARDLY_ORIGIN+'/api/billing/webhook'};
+if(!args.includes('--apply')){console.log(JSON.stringify({action:'preview',...plan,credentials:{stripe:!!env.STRIPE_SECRET_KEY,openai:!!env.BOARDLY_OPENAI_API_KEY}},null,2));process.exit(0);}
+if(!/^sk_(test|live)_/.test(env.STRIPE_SECRET_KEY||''))throw Error('Set STRIPE_SECRET_KEY in the private env file first');
+const origin=new URL(env.BOARDLY_ORIGIN);if(origin.protocol!=='https:')throw Error('A production HTTPS origin is required');
+const prefix='boardly-'+crypto.createHash('sha256').update(origin.origin).digest('hex').slice(0,16)+'-20260907-';
+function encode(value,prefix='',body=new URLSearchParams()){for(const [k,v]of Object.entries(value)){if(v==null)continue;const name=prefix?`${prefix}[${k}]`:k;if(typeof v==='object')encode(v,name,body);else body.append(name,String(v));}return body;}
+async function stripe(route,data,id){const r=await fetch('https://api.stripe.com/v1/'+route,{method:'POST',headers:{Authorization:'Bearer '+env.STRIPE_SECRET_KEY,'Content-Type':'application/x-www-form-urlencoded','Stripe-Version':'2025-12-15.clover','Idempotency-Key':prefix+id},body:encode(data),signal:AbortSignal.timeout(20000)});const d=await r.json();if(!r.ok)throw Error(`Stripe setup failed at ${route} (${r.status}). Inspect the Stripe request log; no credentials have been printed.`);return d;}
+(async()=>{
+ const products={};for(const [slug,name]of Object.entries({serial:'Boardly Serial Entrepreneur',agency:'Boardly Agency',seat:'Boardly additional user',ai:'Boardly AI usage — 2× OpenAI cost'}))products[slug]=await stripe('products',{name,metadata:{application:'boardly',kind:slug}},'product-'+slug);
+ const meter=await stripe('billing/meters',{display_name:'Boardly AI usage in billionths of USD',event_name:plan.ai_meter_event,default_aggregation:{formula:'sum'},customer_mapping:{type:'by_id',event_payload_key:'stripe_customer_id'},value_settings:{event_payload_key:'value'}},'meter');
+ const prices={};for(const [slug,amount]of Object.entries({serial:7900,agency:29900,seat:900,ai:null}))prices[slug]=await stripe('prices',{product:products[slug].id,currency:'usd',...(slug==='ai'?{unit_amount_decimal:plan.ai_unit_amount_decimal_cents,recurring:{interval:'month',usage_type:'metered',meter:meter.id}}:{unit_amount:amount,recurring:{interval:'month'}})},'price-'+slug);
+ const portal=await stripe('billing_portal/configurations',{business_profile:{headline:'Manage Boardly billing'},features:{customer_update:{enabled:true,allowed_updates:['email','address','name']},invoice_history:{enabled:true},payment_method_update:{enabled:true},subscription_cancel:{enabled:true,mode:'at_period_end'},subscription_update:{enabled:true,default_allowed_updates:['price','quantity'],proration_behavior:'create_prorations',products:[{product:products.serial.id,prices:[prices.serial.id],adjustable_quantity:{enabled:false}},{product:products.agency.id,prices:[prices.agency.id],adjustable_quantity:{enabled:false}},{product:products.seat.id,prices:[prices.seat.id],adjustable_quantity:{enabled:true,minimum:1,maximum:10000}}]}},default_return_url:origin.origin+'/#/account'},'portal');
+ const webhook=await stripe('webhook_endpoints',{url:plan.webhook_url,enabled_events:['customer.subscription.created','customer.subscription.updated','customer.subscription.deleted','invoice.paid','invoice.payment_failed'],api_version:'2025-12-15.clover'},'webhook');
+ const additions={STRIPE_PORTAL_CONFIGURATION_ID:portal.id,STRIPE_SERIAL_PRICE_ID:prices.serial.id,STRIPE_AGENCY_PRICE_ID:prices.agency.id,STRIPE_SEAT_PRICE_ID:prices.seat.id,STRIPE_AI_PRICE_ID:prices.ai.id,STRIPE_AI_METER_EVENT:plan.ai_meter_event,STRIPE_WEBHOOK_SECRET:webhook.secret};
+ // The secret is returned only when creating the webhook. Keep an existing
+ // configured secret if Stripe's idempotent replay omits it.
+ if(!additions.STRIPE_WEBHOOK_SECRET){if(!env.STRIPE_WEBHOOK_SECRET)throw Error('Save the webhook signing secret from Stripe in the private env file');delete additions.STRIPE_WEBHOOK_SECRET;}
+ const updated=raw.split('\n').filter(line=>!Object.keys(additions).some(k=>line.startsWith(k+'='))).join('\n').trimEnd()+'\n'+Object.entries(additions).map(([k,v])=>k+'='+v).join('\n')+'\n';
+ fs.writeFileSync(envFile+'.billing-tmp',updated,{mode:0o600});fs.renameSync(envFile+'.billing-tmp',envFile);fs.chmodSync(envFile,0o600);
+ console.log('Stripe products, monthly prices, AI meter, portal and webhook configured. Private env file updated. Restart only boardly-clerk, then verify test-mode checkout, monthly usage and webhook delivery before enabling live billing.');
+})().catch(e=>{console.error(e.message);process.exitCode=1;});

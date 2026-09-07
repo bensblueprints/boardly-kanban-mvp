@@ -1,13 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
-import { marked } from 'marked';
+import { renderDescription } from '../markdown.mjs';
 import {
   X, AlignLeft, CheckSquare, Tag, Clock, Paperclip, MessageSquare, History,
   Archive, Trash2, Plus, Pencil, Download, RotateCcw
 } from 'lucide-react';
 import { api } from '../api.js';
-
-marked.setOptions({ breaks: true, gfm: true });
 
 const LABEL_COLORS = ['#ef4444', '#f59e0b', '#22c55e', '#14b8a6', '#3b82f6', '#8b5cf6', '#ec4899', '#64748b'];
 
@@ -25,7 +23,8 @@ function Section({ icon: Icon, title, action, children }) {
   );
 }
 
-export default function CardModal({ cardId, board, onClose, onBoardChange }) {
+export default function CardModal({ cardId, board, onClose, onBoardChange, onDeployAgent, onChat }) {
+  const readOnly=board.permissions?.role==='viewer';
   const [card, setCard] = useState(null);
   const [editingDesc, setEditingDesc] = useState(false);
   const [desc, setDesc] = useState('');
@@ -128,10 +127,11 @@ export default function CardModal({ cardId, board, onClose, onBoardChange }) {
         className="w-full max-w-2xl bg-zinc-900 border border-zinc-800 rounded-2xl shadow-2xl"
       >
         {/* header */}
+        {onChat && <div className="px-6 pt-4 flex flex-wrap gap-2"><button onClick={() => onChat(card)} className="px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-sm">Chat about this task</button>{onDeployAgent && <button onClick={() => onDeployAgent(card)} className="px-3 py-2 rounded-lg border border-indigo-500/40 text-indigo-200 text-sm">Deploy agent on this task</button>}</div>}
         <div className="flex items-start gap-3 p-5 pb-2">
           <div className="flex-1 min-w-0">
             <input
-              key={card.id + card.title}
+              readOnly={readOnly} key={card.id + card.title}
               defaultValue={card.title}
               onBlur={(e) => e.target.value.trim() && e.target.value !== card.title && patch({ title: e.target.value.trim() })}
               onKeyDown={(e) => e.key === 'Enter' && e.target.blur()}
@@ -147,7 +147,7 @@ export default function CardModal({ cardId, board, onClose, onBoardChange }) {
           </button>
         </div>
 
-        <div className="px-5 pb-5">
+        <fieldset disabled={readOnly} className="px-5 pb-5">
           {/* labels + due */}
           <div className="flex flex-wrap items-center gap-2 mb-5 pl-0">
             {card.labels.map((l) => (
@@ -230,7 +230,7 @@ export default function CardModal({ cardId, board, onClose, onBoardChange }) {
               </div>
             ) : card.description.trim() ? (
               <div className="md-body" onClick={() => setEditingDesc(true)}
-                dangerouslySetInnerHTML={{ __html: marked.parse(card.description) }} />
+                dangerouslySetInnerHTML={{ __html: renderDescription(card.description) }} />
             ) : (
               <button onClick={() => setEditingDesc(true)}
                 className="w-full text-left text-sm text-zinc-600 bg-zinc-950/70 hover:bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-3">
@@ -405,7 +405,7 @@ export default function CardModal({ cardId, board, onClose, onBoardChange }) {
               <Trash2 className="w-4 h-4" /> Delete
             </button>
           </div>
-        </div>
+        </fieldset>
       </motion.div>
     </motion.div>
   );

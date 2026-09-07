@@ -8,6 +8,11 @@ import {
 import { api } from '../api.js';
 import CardModal from './CardModal.jsx';
 import CoachPanel from './CoachPanel.jsx';
+import ProjectChat from './ProjectChat.jsx';
+import CloudConnections from './CloudConnections.jsx';
+import Members from './Members.jsx';
+import {useAccess} from '../access.jsx';
+import ProjectAssets from './ProjectAssets.jsx';
 
 function dueState(due) {
   if (!due) return null;
@@ -108,8 +113,11 @@ function AddCard({ listId, onAdded, autoFocus }) {
   );
 }
 
-export default function BoardView({ boardId, onBack }) {
+export default function BoardView({ boardId, onBack, cloud = false }) {
+  const owner=useAccess().workspaceOwner!==false;
+  const [members,setMembers]=useState(false);
   const [board, setBoard] = useState(null);
+  const readOnly=board?.permissions?.role==='viewer';
   const [openCardId, setOpenCardId] = useState(null);
   const [query, setQuery] = useState('');
   const [labelFilter, setLabelFilter] = useState(null);
@@ -117,6 +125,13 @@ export default function BoardView({ boardId, onBack }) {
   const [filterOpen, setFilterOpen] = useState(false);
   const [panel, setPanel] = useState(null); // 'activity' | 'archived' | null
   const [showCoach, setShowCoach] = useState(false);
+  const [showChat, setShowChat] = useState(false);
+  const [connections, setConnections] = useState(false);
+  const [assetsTab, setAssetsTab] = useState(null);
+  const [chatThread, setChatThread] = useState(null);
+  const [chatTask, setChatTask] = useState(null);
+  const [deployBusy, setDeployBusy] = useState(false);
+  const [agentError, setAgentError] = useState('');
   const [activity, setActivity] = useState([]);
   const [archived, setArchived] = useState({ lists: [], cards: [] });
   const [addingList, setAddingList] = useState(false);
@@ -133,7 +148,7 @@ export default function BoardView({ boardId, onBack }) {
     function onKey(e) {
       if (openCardId || e.target.closest('input, textarea, [contenteditable]')) return;
       if (e.key === '/') { e.preventDefault(); searchRef.current?.focus(); }
-      if (e.key === 'n' && board?.lists?.length) { e.preventDefault(); setQuickAddList(board.lists[0].id); }
+      if (e.key === 'n' && !readOnly && board?.lists?.length) { e.preventDefault(); setQuickAddList(board.lists[0].id); }
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -158,6 +173,7 @@ export default function BoardView({ boardId, onBack }) {
   }, [board, query, labelFilter, dueFilter]);
 
   async function onDragEnd(result) {
+    if(readOnly)return;
     const { destination, source, draggableId, type } = result;
     if (!destination || !board) return;
 
@@ -185,6 +201,19 @@ export default function BoardView({ boardId, onBack }) {
     setBoard({ ...board, lists });
     await api.post(`/api/cards/${cardId}/move`, { list_id: toListId, position: destination.index });
     load();
+  }
+
+  async function launchAgent(task = null) {
+    setDeployBusy(true); setAgentError('');
+    try {
+      const run = await api.post(`/api/boards/${boardId}/agent`, task ? { card_id: task.id } : {});
+      setChatTask(task); setChatThread(run.threadId); setShowChat(true); setOpenCardId(null);
+    } catch (e) { setAgentError(e.message); }
+    finally { setDeployBusy(false); }
+  }
+
+  function openTaskChat(task) {
+    setChatTask(task); setChatThread(null); setShowChat(true); setOpenCardId(null);
   }
 
   async function addList(e) {
@@ -251,23 +280,25 @@ export default function BoardView({ boardId, onBack }) {
     <div className="flex-1 min-w-0 flex flex-col" style={{ background: `linear-gradient(180deg, ${board.color}22, transparent 240px)` }}>
       {/* header */}
       <header className="shrink-0 px-4 py-3 flex items-center gap-2 flex-wrap border-b border-zinc-800/60 bg-zinc-950/70 backdrop-blur">
-        <button onClick={onBack} className="p-2 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-zinc-100" title="All boards">
+        {cloud && board.hierarchy && <nav className="w-full flex gap-2 text-xs text-zinc-400 pb-1"><button onClick={onBack}>Companies</button><span>/</span><button onClick={() => location.hash = `#/company/${board.hierarchy.company_id ?? 'unassigned'}`}>{board.hierarchy.company_name || 'Unassigned'}</button><span>/</span><button onClick={() => location.hash = `#/collection/${board.hierarchy.parent_board_id}`}>{board.hierarchy.parent_board_name}</button><span>/</span><span>{board.hierarchy.project_name}</span></nav>}
+        <button onClick={() => cloud && board.hierarchy ? location.hash = `#/collection/${board.hierarchy.parent_board_id}` : onBack()} className="p-2 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-zinc-100" title="Back to projects">
           <ArrowLeft className="w-4 h-4" />
         </button>
         <span className="text-xl">{board.emoji}</span>
         <input
-          key={board.id + board.name}
-          defaultValue={board.name}
-          onBlur={(e) => e.target.value.trim() && e.target.value !== board.name &&
-            api.patch(`/api/boards/${board.id}`, { name: e.target.value.trim() }).then(load)}
+          key={board.id + (board.hierarchy?.project_name || board.name)}
+          readOnly={!owner} aria-label="Project name"
+          defaultValue={cloud && board.hierarchy ? board.hierarchy.project_name : board.name}
+          onBlur={(e) => e.target.value.trim() && e.target.value !== (cloud && board.hierarchy ? board.hierarchy.project_name : board.name) &&
+            api.patch(`/api/${cloud && board.hierarchy ? 'projects' : 'boards'}/${board.id}`, { name: e.target.value.trim() }).then(load)}
           onKeyDown={(e) => e.key === 'Enter' && e.target.blur()}
           className="font-bold text-lg bg-transparent outline-none rounded-md px-1.5 py-0.5 hover:bg-zinc-800/60 focus:bg-zinc-900 max-w-56"
         />
-        <button onClick={() => api.patch(`/api/boards/${board.id}`, { starred: !board.starred }).then(load)}
+        <button hidden={!owner} onClick={() => api.patch(`/api/boards/${board.id}`, { starred: !board.starred }).then(load)}
           className="p-2 rounded-lg hover:bg-zinc-800" title="Star board">
           <Star className={`w-4 h-4 ${board.starred ? 'text-amber-400 fill-amber-400' : 'text-zinc-500'}`} />
         </button>
-        <button
+        {!cloud && <button
           onClick={() => setShowCoach((v) => !v)}
           title="Ask what to work on next"
           className={`flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg border transition-colors ${
@@ -275,7 +306,7 @@ export default function BoardView({ boardId, onBack }) {
           }`}
         >
           <Sparkles className="w-4 h-4" /> What's next
-        </button>
+        </button>}
 
         <div className="flex-1" />
 
@@ -337,17 +368,35 @@ export default function BoardView({ boardId, onBack }) {
         <button onClick={exportBoard} className="p-2 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-zinc-100" title="Export board as JSON">
           <Download className="w-4 h-4" />
         </button>
-        <button onClick={() => importRef.current?.click()} className="p-2 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-zinc-100" title="Import board from JSON">
+        <button hidden={!owner} onClick={() => importRef.current?.click()} className="p-2 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-zinc-100" title="Import board from JSON">
           <Upload className="w-4 h-4" />
         </button>
         <input ref={importRef} type="file" accept=".json,application/json" className="hidden"
           onChange={(e) => { importBoard(e.target.files[0]); e.target.value = ''; }} />
       </header>
 
+      {cloud && <nav aria-label="Project tools" className="shrink-0 flex flex-wrap items-center gap-3 px-5 py-3 border-b border-zinc-800 bg-zinc-950/60">
+        {cloud && <button onClick={() => { setChatTask(null); setChatThread(null); setShowChat(true); }} className="flex items-center gap-2 text-sm px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500"><MessageSquare size={16} /> Chat with AI</button>}
+        {cloud && <button disabled={deployBusy||readOnly} onClick={() => launchAgent()} className="text-sm text-indigo-300 border border-indigo-500/30 rounded-lg px-3 py-1.5 disabled:opacity-50">{deployBusy ? 'Starting…' : 'Deploy agent'}</button>}
+        {cloud && <button onClick={() => setAssetsTab('files')} className="text-sm text-zinc-300 px-2">Files</button>}
+        {cloud && <button onClick={() => setAssetsTab('links')} className="text-sm text-zinc-300 px-2">Links</button>}
+        {cloud && owner && <button onClick={() => setAssetsTab('ssh')} className="text-sm text-zinc-300 px-2">SSH</button>}
+        {cloud && owner && <button onClick={() => setAssetsTab('github')} className="text-sm text-zinc-300 px-2">GitHub</button>}
+        {cloud && owner && <button onClick={() => setAssetsTab('environment')} className="text-sm text-zinc-300 px-2">Environment</button>}
+        {cloud && owner && <button onClick={() => setAssetsTab('payments')} className="text-sm text-zinc-300 px-2">Payments</button>}
+        {cloud && owner && <button onClick={() => setConnections(true)} className="text-sm text-zinc-400 hover:text-zinc-200 px-2">Connections</button>}
+        {owner&&<button onClick={()=>setMembers(true)} className="text-sm text-zinc-300 px-2">Members</button>}{readOnly&&<span className="text-xs text-zinc-500">View-only access</span>}
+      </nav>}
+      {members&&<Members kind="projects" id={board.id} onClose={()=>setMembers(false)}/>}
+      {cloud && showChat && <ProjectChat key={`${board.id}:${chatTask?.id || ''}:${chatThread || ''}`} initialThreadId={chatThread} task={chatTask} board={{...board,name:board.hierarchy?.project_name || board.name}} onClose={() => setShowChat(false)} onUpdated={load} />}
+      {cloud && connections && <CloudConnections onClose={() => setConnections(false)} />}
+
+      {cloud && assetsTab && <ProjectAssets board={{...board,name:board.hierarchy?.project_name || board.name}} initialTab={assetsTab} onClose={() => setAssetsTab(null)} />}
+      {agentError && <p role="alert" className="p-3 text-sm text-rose-300">{agentError}</p>}
       {/* project description */}
       <div className="shrink-0 px-4 py-2 border-b border-zinc-800/60 bg-zinc-950/40">
         <textarea
-          key={board.id + '-desc'}
+          readOnly={!owner} key={board.id + '-desc'}
           defaultValue={board.description || ''}
           rows={board.description ? 2 : 1}
           placeholder="Add a project description — what this board is for…"
@@ -365,20 +414,20 @@ export default function BoardView({ boardId, onBack }) {
             <div ref={provided.innerRef} {...provided.droppableProps}
               className="flex-1 overflow-x-auto overflow-y-hidden flex items-start gap-3 p-4">
               {visibleLists.map((list, li) => (
-                <Draggable key={list.id} draggableId={`listwrap-${list.id}`} index={li} isDragDisabled={!!filtering}>
+                <Draggable key={list.id} draggableId={`listwrap-${list.id}`} index={li} isDragDisabled={!!filtering||readOnly}>
                   {(lp) => (
                     <div ref={lp.innerRef} {...lp.draggableProps}
                       className="w-72 shrink-0 bg-zinc-950/80 border border-zinc-800/80 rounded-2xl flex flex-col max-h-full">
                       <div {...lp.dragHandleProps} className="flex items-center gap-1 px-3 pt-3 pb-1">
                         <input
-                          key={list.id + list.name}
+                          readOnly={readOnly} key={list.id + list.name}
                           defaultValue={list.name}
                           onBlur={(e) => renameList(list, e.target.value)}
                           onKeyDown={(e) => e.key === 'Enter' && e.target.blur()}
                           className="flex-1 min-w-0 bg-transparent font-semibold text-sm outline-none rounded-md px-1.5 py-1 hover:bg-zinc-800/60 focus:bg-zinc-900"
                         />
                         <span className="text-xs text-zinc-600 px-1">{list.cards.length}</span>
-                        <button onClick={() => archiveList(list)} title="Archive list"
+                        <button hidden={readOnly} onClick={() => archiveList(list)} title="Archive list"
                           className="p-1.5 rounded-md hover:bg-zinc-800 text-zinc-600 hover:text-zinc-300">
                           <Archive className="w-3.5 h-3.5" />
                         </button>
@@ -388,7 +437,7 @@ export default function BoardView({ boardId, onBack }) {
                           <div ref={dp.innerRef} {...dp.droppableProps}
                             className={`flex-1 overflow-y-auto px-2.5 pb-1 space-y-2 min-h-8 rounded-lg mx-0.5 transition-colors ${snapshot.isDraggingOver ? 'bg-indigo-500/5' : ''}`}>
                             {list.cards.map((card, ci) => (
-                              <Draggable key={card.id} draggableId={`card-${card.id}`} index={ci} isDragDisabled={!!filtering}>
+                              <Draggable key={card.id} draggableId={`card-${card.id}`} index={ci} isDragDisabled={!!filtering||readOnly}>
                                 {(cp, cs) => (
                                   <div ref={cp.innerRef} {...cp.draggableProps} {...cp.dragHandleProps}
                                     style={cp.draggableProps.style}
@@ -402,7 +451,7 @@ export default function BoardView({ boardId, onBack }) {
                           </div>
                         )}
                       </Droppable>
-                      <div className="p-2.5 pt-1">
+                      <div hidden={readOnly} className="p-2.5 pt-1">
                         <AddCard listId={list.id} autoFocus={quickAddList === list.id}
                           onAdded={() => { setQuickAddList(null); load(); }} />
                       </div>
@@ -413,7 +462,7 @@ export default function BoardView({ boardId, onBack }) {
               {provided.placeholder}
 
               {/* add list */}
-              <div className="w-72 shrink-0">
+              <div hidden={readOnly} className="w-72 shrink-0">
                 {addingList ? (
                   <form onSubmit={addList} className="bg-zinc-950/80 border border-indigo-500/50 rounded-2xl p-3">
                     <input autoFocus value={listName} onChange={(e) => setListName(e.target.value)}
@@ -469,7 +518,7 @@ export default function BoardView({ boardId, onBack }) {
                   {archived.lists.map((l) => (
                     <div key={`l${l.id}`} className="flex items-center justify-between bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2">
                       <span className="text-sm text-zinc-300">📑 {l.name}</span>
-                      <button onClick={() => restoreList(l.id)} className="flex items-center gap-1 text-xs text-indigo-300 hover:text-indigo-200">
+                      <button hidden={readOnly} onClick={() => restoreList(l.id)} className="flex items-center gap-1 text-xs text-indigo-300 hover:text-indigo-200">
                         <RotateCcw className="w-3 h-3" /> Restore
                       </button>
                     </div>
@@ -480,7 +529,7 @@ export default function BoardView({ boardId, onBack }) {
                         <p className="text-sm text-zinc-300 truncate">{c.title}</p>
                         <p className="text-xs text-zinc-600">in {c.list_name}</p>
                       </div>
-                      <button onClick={() => restoreCard(c.id)} className="flex items-center gap-1 text-xs text-indigo-300 hover:text-indigo-200 shrink-0 ml-2">
+                      <button hidden={readOnly} onClick={() => restoreCard(c.id)} className="flex items-center gap-1 text-xs text-indigo-300 hover:text-indigo-200 shrink-0 ml-2">
                         <RotateCcw className="w-3 h-3" /> Restore
                       </button>
                     </div>
@@ -496,6 +545,8 @@ export default function BoardView({ boardId, onBack }) {
       <AnimatePresence>
         {openCardId && (
           <CardModal
+            onChat={cloud ? openTaskChat : undefined}
+            onDeployAgent={cloud&&!readOnly ? launchAgent : undefined}
             cardId={openCardId}
             board={board}
             onClose={() => { setOpenCardId(null); load(); }}

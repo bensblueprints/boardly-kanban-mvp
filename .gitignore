@@ -1,7 +1,15 @@
-node_modules/
+node_modules
 dist/
 release/
 vendor/
 data/
 .env
+.env.*
+!.env.example
+!.env.cloud.example
+cloud-data/
 *.log
+
+.clerk/
+.boardly/
+.codex/

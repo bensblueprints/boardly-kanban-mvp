@@ -117,6 +117,8 @@ function openDb(dataDir) {
 
   // uuid / updated_at columns, stamping triggers, tombstones (cloud sync).
   installSyncTracking(db);
+  require('./hierarchy').installHierarchy(db);
+  require('./project-assets').installProjectAssets(db);
 
   return db;
 }
