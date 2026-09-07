@@ -155,7 +155,10 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
       const tenant=tenantFor(chosen.owner_id,plan);req.tenant=tenant;
       if(!chosen.owner&&!memberships.grants(chosen.owner_id,auth.userId).length)throw Object.assign(Error('Your shared access has been removed'),{status:403});
       memberships.touch(auth.userId);
-      if(route==='/api/me'&&req.method==='GET')return res.json({authed:true,allowed:true,userId:auth.userId,plan:plan.slug,error:null,maxUploadMb:25,cloud:true,workspaceId:chosen.owner_id,workspaceOwner:chosen.owner,workspaces:choices});
+      if(route==='/api/me'&&req.method==='GET') {
+        const workspaces=choices.map(choice=>choice.owner?choice:{...choice,companies:require('./shared-companies').sharedCompanies(path.join(workspacePath(config.dataDir,choice.owner_id),'app.db'),memberships.grants(choice.owner_id,auth.userId))});
+        return res.json({authed:true,allowed:true,userId:auth.userId,plan:plan.slug,error:null,maxUploadMb:25,cloud:true,workspaceId:chosen.owner_id,workspaceOwner:chosen.owner,workspaces});
+      }
       identities.set(req,chosen.owner_id);tenant.active++;tenant.used=Date.now();let released=false;const release=()=>{if(!released){tenant.active--;released=true;}};res.once('finish',release);res.once('close',release);
       next();
     }catch(e){res.status(e.status||503).json({error:e.status?e.message:'Boardly could not check account access. Please try again.'});}
