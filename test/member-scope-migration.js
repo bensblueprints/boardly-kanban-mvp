@@ -11,8 +11,8 @@ try{
  const original=legacy.prepare('SELECT * FROM access_grants').get(),member=legacy.prepare('SELECT * FROM account_members').get();legacy.close();
  let migrated=createMemberships(root);const row=migrated.db.prepare('SELECT * FROM access_grants').get();
  for(const [key,value]of Object.entries(original))assert.equal(row[key],value);
- assert.deepEqual(migrated.db.prepare('SELECT * FROM account_members').get(),member);assert.equal(row.scopes,'[]');assert.equal(row.scope_company_id,null);assert.equal(migrated.db.pragma('integrity_check',{simple:true}),'ok');
- migrated.setScopes('user_owner','g',['ssh'],'user_owner');migrated.close();migrated=createMemberships(root);
- assert.deepEqual(migrated.grants('user_owner','user_member')[0].scopes,['ssh']);assert.equal(migrated.db.prepare('SELECT COUNT(*) n FROM member_scope_events').get().n,1);migrated.close();
+ assert.deepEqual(migrated.db.prepare('SELECT * FROM account_members').get(),{...member,owner_ssh:0});assert.equal(row.scopes,'[]');assert.equal(row.scope_company_id,null);assert.equal(migrated.db.pragma('integrity_check',{simple:true}),'ok');
+ migrated.setScopes('user_owner','g',['ssh'],'user_owner');migrated.setOwnerSsh('user_owner','g',true,'user_owner');migrated.close();migrated=createMemberships(root);
+ assert.deepEqual(migrated.grants('user_owner','user_member')[0].scopes,['ssh']);assert.equal(migrated.grants('user_owner','user_member')[0].owner_ssh,1);assert.equal(migrated.db.prepare('SELECT COUNT(*) n FROM member_scope_events').get().n,2);migrated.close();
  console.log('PASS: legacy membership rows preserved, scopes default off, audit and permissions persist across reopen');
 }finally{fs.rmSync(root,{recursive:true,force:true});}

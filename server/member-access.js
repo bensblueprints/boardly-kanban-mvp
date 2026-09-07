@@ -9,6 +9,7 @@ function accessForMember(db,grants){
   id=Number(id);let companyId=id;
   if(kind==='project'){if(!project(id))return[];companyId=db.prepare('SELECT b.company_id FROM company_projects p JOIN company_boards b ON b.id=p.parent_board_id WHERE p.workspace_id=?').get(id)?.company_id;}
   const permitted=grants.filter(g=>(g.kind==='company'&&g.resource_id===companyId)||(kind==='project'&&g.kind==='project'&&g.resource_id===id&&(g.scope_company_id??null)===(companyId??null))).flatMap(g=>readScopes(g.scopes));
+  if(grants.some(g=>g.owner_ssh)&&(kind==='project'?!!project(id):companies.has(id)))permitted.push('ssh');
   return SCOPE_IDS.filter(scope=>permitted.includes(scope));
  }
  function filter(tree){const projects=tree.projects.filter(p=>project(p.id)).map(p=>({...p,role:project(p.id),scopes:capabilities('project',p.id)})),parents=new Set(projects.map(p=>p.parent_board_id));const boards=tree.boards.filter(b=>parents.has(b.id)||companies.has(b.company_id)),companyIds=new Set(boards.map(b=>b.company_id));return{companies:tree.companies.filter(c=>companies.has(c.id)||companyIds.has(c.id)).map(c=>({...c,description:'',role:companies.get(c.id)||'project_guest',scopes:capabilities('company',c.id)})),boards:boards.map(b=>({...b,description:''})),projects,owner:false};}

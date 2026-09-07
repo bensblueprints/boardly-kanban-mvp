@@ -1,5 +1,6 @@
 import React,{useEffect,useState} from 'react';
 import {api} from '../api.js';
+import SshConnections from './SshConnections.jsx';
 import TailscaleConnection from './TailscaleConnection.jsx';
 const input='rounded-lg bg-zinc-950 border border-zinc-700 px-3 py-2 text-sm';
 const button='rounded-lg border border-zinc-700 px-4 py-2 text-sm hover:bg-zinc-800 disabled:opacity-40';
@@ -28,6 +29,7 @@ export default function AccountSettings({onClose}){
  <p className="text-sm">This month: OpenAI cost {dollars(ai.usage.provider_cost)} · Boardly AI charges {dollars(ai.usage.boardly_charge)}</p>{ai.review>0&&<p className="text-sm text-amber-200">{ai.review} interrupted request(s) need usage review. Unconfirmed usage is not automatically charged again.</p>}
  <details className="text-sm"><summary className="cursor-pointer text-zinc-400">Usage and rates</summary><p className="my-3 text-xs text-zinc-400">Standard OpenAI USD per 1 million tokens, rate version {ai.rate_version}. Card billing applies 2× these prices. Longer contexts use OpenAI’s applicable long-context prices.</p><div className="overflow-auto"><table className="w-full text-left text-xs"><thead><tr><th>Model</th><th>Input</th><th>Cached</th><th>Cache write</th><th>Output</th></tr></thead><tbody>{ai.models.map(m=><tr key={m.id}><td className="py-2">{m.id}</td><td>${m.input}</td><td>${m.cached}</td><td>${m.cache_write}</td><td>${m.output}</td></tr>)}</tbody></table></div>{ai.history.map((h,i)=><p key={i} className="text-xs text-zinc-400 py-1">{new Date(h.created_at).toLocaleString()} · {h.model} · OpenAI {dollars(h.provider_cost)} · Boardly {dollars(h.boardly_charge)}</p>)}</details>
  </section>}
+ {plan?.owner&&<div className="border-t border-zinc-700 pt-5"><SshConnections kind="owner" id={0}/></div>}
  <TailscaleConnection/>
  {billing?.ready&&<button className={button} disabled={busy} onClick={()=>act(async()=>{const r=await api.post('/api/billing/portal');location.assign(r.url);})}>Manage subscriptions, invoices & billing card</button>}
  </section></div>;

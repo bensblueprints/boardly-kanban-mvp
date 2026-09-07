@@ -19,7 +19,7 @@ function createMemberRoutes({ memberships, identity, origin }) {
     const role = requireManagement(req, kind, id);
     if (req.workspaceIsOwner) return;
     if (grant?.user_id === req.cloudUserId) throw fail(403, 'Only the owner can change your membership');
-    if (grant?.scopes.length) throw fail(403, 'Only the owner can change a member with extra permission scopes');
+    if (grant?.scopes.length || grant?.owner_ssh) throw fail(403, 'Only the owner can change a member with extra permission scopes');
     if (role !== 'editor' && (grant?.role === 'editor' || proposedRole === 'editor')) throw fail(403, 'You can manage Viewer access only');
   }
   function target(req) {
@@ -60,7 +60,7 @@ function createMemberRoutes({ memberships, identity, origin }) {
     const { kind, id } = resource(req), role = req.body?.role || 'editor';
     // Creation never grants advanced scopes. The owner enables them explicitly
     // on the resulting grant so a duplicate Add cannot reset privileges.
-    if (req.body?.scopes !== undefined) throw fail(400, 'Add the member first, then set their permission scopes');
+    if (req.body?.scopes !== undefined || req.body?.owner_ssh !== undefined) throw fail(400, 'Add the member first, then set their permission scopes');
     authorizeTarget(req, kind, id, null, role);
     const member = await memberships.add({ ownerId: req.workspaceOwnerId, email: req.body?.email,
       kind, resourceId: id, memberRole: role, limit: req.accountPlan.users, identity,
@@ -68,12 +68,13 @@ function createMemberRoutes({ memberships, identity, origin }) {
     res.status(201).json({ member, sign_in_url: origin + '/sign-in', message: 'User added. Share the sign-in link with them.' });
   }));
   router.patch('/api/memberships/:id', body, run((req, res) => {
-    const grant = target(req), hasScopes = req.body?.scopes !== undefined, hasRole = req.body?.role !== undefined;
-    if (!hasScopes && !hasRole) throw fail(400, 'Choose a role or permission scopes to update');
-    if (hasScopes && !req.workspaceIsOwner) throw fail(403, 'Only the account owner can change member permission scopes');
+    const grant = target(req), hasOwnerSsh = req.body?.owner_ssh !== undefined, hasScopes = req.body?.scopes !== undefined, hasRole = req.body?.role !== undefined;
+    if (!hasScopes && !hasRole && !hasOwnerSsh) throw fail(400, 'Choose a role or permission scopes to update');
+    if ((hasScopes || hasOwnerSsh) && !req.workspaceIsOwner) throw fail(403, 'Only the account owner can change member permission scopes');
     if (hasScopes) validateScopes(req.body.scopes);
     memberships.db.transaction(() => {
       authorizeTarget(req, grant.kind, grant.resource_id, target(req), req.body.role);
+      if (hasOwnerSsh) memberships.setOwnerSsh(req.workspaceOwnerId, grant.id, req.body.owner_ssh, req.cloudUserId);
       if (hasRole) memberships.update(req.workspaceOwnerId, grant.id, req.body.role);
       if (hasScopes) memberships.setScopes(req.workspaceOwnerId, grant.id, req.body.scopes, req.cloudUserId,grant.kind==='project'?require('./hierarchy').createHierarchy(req.tenant.app.db).scope(grant.resource_id)?.company_id??null:null);
     }).immediate();

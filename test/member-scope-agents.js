@@ -29,6 +29,9 @@ const response=output=>Response.json({id:'resp_'+crypto.randomUUID(),model:'gpt-
   const modelReady=new Promise(resolve=>modelStarted=resolve),t=await start();await modelReady;
   const before=remote.calls.length;await set([]);pendingModel();await finish(t);
   assert.equal(remote.calls.length,before,'Revocation blocks model-returned calls before provider access');
+  await set(['github']);await f.api(`/api/memberships/${grant}`,{method:'PATCH',body:{owner_ssh:true}});phase='revoke';step=0;
+  const sharedReady=new Promise(resolve=>modelStarted=resolve),sharedThread=await start();await sharedReady;
+  await f.api(`/api/memberships/${grant}`,{method:'PATCH',body:{owner_ssh:false,scopes:[]}});pendingModel();await finish(sharedThread);
   await set(['github']);holdGithub=true;const githubReady=new Promise(resolve=>githubStarted=resolve);
   const checking=f.request(`/api/projects/${p.project.id}/github/test`,{user,method:'POST',body:{}});await githubReady;await set([]);pendingGithub();
   assert.equal((await checking).status,403,'An in-flight connection test rechecks membership before returning data');

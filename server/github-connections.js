@@ -169,7 +169,7 @@ function createGithubConnections({ db, key, namespace, request = githubRequest }
     if (typeof data.verification !== 'string' || data.verification.trim().length < 5 || data.verification.length > 5000) throw fail(400,'Record the checks passed for this exact release commit before deployment');
     const server = ssh.forJob(projectId,companyId,data.ssh_connection_id);
     const release = await operate(row,'verify-deployment',data,permitted);
-    const result = await ssh.execute(server,{command:`export BOARDLY_RELEASE_SHA='${release.sha}'; export BOARDLY_REPOSITORY='${row.repository}'; ${data.command}`,valid:() => { try { return permitted() && ssh.forJob(projectId,companyId,server.id).updated_at === server.updated_at; } catch { return false; } }});
+    const result = await ssh.execute(server,{requireEnabled:true,command:`export BOARDLY_RELEASE_SHA='${release.sha}'; export BOARDLY_REPOSITORY='${row.repository}'; ${data.command}`,valid:() => { try { return permitted() && ssh.forJob(projectId,companyId,server.id).updated_at === server.updated_at; } catch { return false; } }});
     return { ...result,release,deployed:result.code === 0,verification:data.verification };
   }
   return { router,save,direct,effective,agentList,context,forJob,operate,run,redact:input => { let result = input; for (const row of db.prepare('SELECT * FROM github_connections').all()) result = redact(result,{token:decrypt(row)}); return result; } };

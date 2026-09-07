@@ -208,7 +208,7 @@ function createProjectChat({ db, connections, userId, uploadsDir, environment, p
     if(!ssh||typeof req.body?.command!=='string'||!req.body.command.trim()||req.body.command.length>30000)return res.status(400).json({error:'Enter an SSH command'});
     const config=ssh.forJob(req.projectThread.board_id,req.projectJob.company_id,req.params.connectionId);
     const valid=()=>{try{const current=job(req.params.id);return current?.status==='running'&&current.worker_id===req.boardlyConnection.id&&ssh.forJob(req.projectThread.board_id,req.projectJob.company_id,config.id).updated_at===config.updated_at;}catch{return false;}};
-    res.setHeader('cache-control','no-store');res.json(await ssh.execute(config,{command:req.body.command,valid}));
+    res.setHeader('cache-control','no-store');res.json(await ssh.execute(config,{requireEnabled:true,command:req.body.command,valid}));
   }catch(e){next(e);}});
   router.post('/api/worker/jobs/:id/emails/:action', activeJob, body, async (req,res,next) => {
     if (!email) return res.status(503).json({error:'Company email is unavailable'});
