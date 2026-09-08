@@ -46,14 +46,24 @@ function createGithubConnections({ db, key, namespace, request = githubRequest }
     CHECK((company_id IS NULL)!=(project_id IS NULL)));
     CREATE UNIQUE INDEX IF NOT EXISTS github_company ON github_connections(company_id) WHERE company_id IS NOT NULL;
     CREATE UNIQUE INDEX IF NOT EXISTS github_project ON github_connections(project_id) WHERE project_id IS NOT NULL;`);
-  const columns = 'id,company_id,project_id,repository,branch,allow_agent,created_at,updated_at,tested_at,last_commit_sha,last_pushed_at';
+  if(!db.prepare('PRAGMA table_info(github_connections)').all().some(c=>c.name==='credential_source'))db.exec("ALTER TABLE github_connections ADD COLUMN credential_source TEXT NOT NULL DEFAULT 'scoped'");
+  db.exec('CREATE TABLE IF NOT EXISTS github_account_credentials (id TEXT PRIMARY KEY,encrypted TEXT NOT NULL,updated_at INTEGER NOT NULL,tested_at INTEGER,login TEXT)');
+  const columns = 'id,company_id,project_id,repository,branch,allow_agent,created_at,updated_at,tested_at,last_commit_sha,last_pushed_at,credential_source';
   const hierarchy = require('./hierarchy').createHierarchy(db);
   const field = kind => { if (!['companies', 'projects'].includes(kind)) throw fail(400, 'Invalid GitHub scope'); return kind === 'companies' ? 'company_id' : 'project_id'; };
   const scope = (kind, id) => { field(kind); if (!db.prepare(`SELECT id FROM ${kind === 'companies' ? 'companies' : 'boards'} WHERE id=?`).get(id)) throw fail(404, 'GitHub scope not found'); };
   const aad = row => Buffer.from(JSON.stringify(['github', namespace, row.id, row.company_id, row.project_id, row.repository, row.branch]));
   const decrypt = row => { const b = Buffer.from(row.encrypted, 'base64'), c = crypto.createDecipheriv('aes-256-gcm', key, b.subarray(0, 12)); c.setAAD(aad(row)); c.setAuthTag(b.subarray(12, 28)); return Buffer.concat([c.update(b.subarray(28)), c.final()]).toString(); };
   const encrypt = (row, token) => { const iv = crypto.randomBytes(12), c = crypto.createCipheriv('aes-256-gcm', key, iv); c.setAAD(aad(row)); const b = Buffer.concat([c.update(token), c.final()]); return Buffer.concat([iv, c.getAuthTag(), b]).toString('base64'); };
-  const direct = (kind, id) => { scope(kind, id); return db.prepare(`SELECT ${columns} FROM github_connections WHERE ${field(kind)}=?`).get(id) || null; };
+  // Account credentials remain bound to this owner, and repository rows only hold a reference.
+  const accountRow=()=>db.prepare("SELECT * FROM github_account_credentials WHERE id='account'").get();
+  const accountBinding={id:'account',company_id:null,project_id:null,repository:'',branch:''};
+  const validToken=token=>{if(typeof token!=='string'||token.length<20||token.length>2000||/\s|[^\x21-\x7e]/.test(token))throw fail(400,'Enter a valid GitHub personal access token');return token;};
+  const accountState=()=>{const r=accountRow();return {has_token:!!r?.encrypted,updated_at:r?.updated_at||null,tested_at:r?.tested_at||null,login:r?.login||null};};
+  function saveAccount(token){const old=accountRow();validToken(token);db.prepare("INSERT INTO github_account_credentials (id,encrypted,updated_at) VALUES ('account',?,?) ON CONFLICT(id) DO UPDATE SET encrypted=excluded.encrypted,updated_at=excluded.updated_at,tested_at=NULL,login=NULL").run(encrypt(accountBinding,token),Math.max(Date.now(),(old?.updated_at||0)+1));return accountState();}
+  function credential(row){if(row.credential_source==='account'){const r=accountRow();return {token:r?.encrypted?decrypt({...accountBinding,encrypted:r.encrypted}):'',version:r?`account:${r.updated_at}`:'account:missing'};}return{token:decrypt(row),version:`scoped:${row.updated_at}`};}
+  function describe(row){if(!row)return null;const account=row.credential_source==='account'?accountRow():null;return {...row,credential_ready:row.credential_source!=='account'||!!account?.encrypted,credential_version:row.credential_source==='account'?(account?`account:${account.updated_at}`:'account:missing'):`scoped:${row.updated_at}`,tested_at:row.credential_source==='account'&&(!account?.encrypted||row.tested_at<account.updated_at)?null:row.tested_at};}
+  const direct = (kind, id) => { scope(kind, id); return describe(db.prepare(`SELECT ${columns} FROM github_connections WHERE ${field(kind)}=?`).get(id)); };
   function effective(projectId) {
     const own = direct('projects', projectId);
     // An explicitly paused project connection also overrides the company.
@@ -66,35 +76,40 @@ function createGithubConnections({ db, key, namespace, request = githubRequest }
     const previous = direct(kind, id), old = previous && db.prepare('SELECT * FROM github_connections WHERE id=?').get(previous.id);
     const row = { id: old?.id || crypto.randomUUID(), company_id: kind === 'companies' ? Number(id) : null, project_id: kind === 'projects' ? Number(id) : null, repository: repositoryName(data.repository ?? old?.repository), branch: branchName(data.branch ?? old?.branch ?? 'main') };
     if (data.allow_agent !== undefined && typeof data.allow_agent !== 'boolean') throw fail(400, 'Agent access must be on or off');
-    const token = data.token || (old && decrypt(old));
-    if (typeof token !== 'string' || token.length < 20 || token.length > 2000 || /\s|[^\x21-\x7e]/.test(token)) throw fail(400, 'Enter a valid GitHub access token');
-    db.prepare(`INSERT INTO github_connections (id,company_id,project_id,repository,branch,encrypted,allow_agent,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)
-      ON CONFLICT(id) DO UPDATE SET repository=excluded.repository,branch=excluded.branch,encrypted=excluded.encrypted,allow_agent=excluded.allow_agent,updated_at=excluded.updated_at,tested_at=NULL,last_commit_sha=NULL,last_pushed_at=NULL`)
-      .run(row.id,row.company_id,row.project_id,row.repository,row.branch,encrypt(row,token),data.allow_agent === undefined ? old?.allow_agent || 0 : Number(data.allow_agent),old?.created_at || Date.now(),Math.max(Date.now(),(old?.updated_at || 0)+1));
+    const source=data.credential_source??(data.token?'scoped':old?.credential_source||'account');
+    if(!['account','scoped'].includes(source))throw fail(400,'Choose the account PAT or a separate repository token');
+    const token=source==='account'?'':validToken(data.token||(old?.credential_source==='scoped'?decrypt(old):''));
+    if(source==='account'&&data.token)throw fail(400,'Save the account PAT in Account & AI');
+    db.prepare(`INSERT INTO github_connections (id,company_id,project_id,repository,branch,encrypted,allow_agent,created_at,updated_at,credential_source) VALUES (?,?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(id) DO UPDATE SET repository=excluded.repository,branch=excluded.branch,encrypted=excluded.encrypted,allow_agent=excluded.allow_agent,updated_at=excluded.updated_at,tested_at=NULL,last_commit_sha=NULL,last_pushed_at=NULL,credential_source=excluded.credential_source`)
+      .run(row.id,row.company_id,row.project_id,row.repository,row.branch,encrypt(row,token),data.allow_agent === undefined ? old?.allow_agent || 0 : Number(data.allow_agent),old?.created_at || Date.now(),Math.max(Date.now(),(old?.updated_at || 0)+1),source);
     return direct(kind, id);
   }
-  const agentList = projectId => { const row = effective(projectId); return row?.allow_agent ? [row] : []; };
+  const agentList = projectId => { const row = effective(projectId); return row?.allow_agent && row.credential_ready ? [row] : []; };
   // Rebuild this from durable settings for every conversation; never put the
   // encrypted credential or decrypted token in model context or UI summaries.
   function context(projectId) {
     const row=effective(projectId), location=hierarchy.scope(projectId);
     if(!row)return {status:'not_connected',saved:false};
-    return {status:row.allow_agent?'connected':'paused',saved:true,repository:row.repository,branch:row.branch,
+    return {status:!row.credential_ready?'needs_token':row.allow_agent?'connected':'paused',saved:true,repository:row.repository,branch:row.branch,
       inherited:!!row.inherited,scope:row.inherited?'company':'project',
       scope_name:row.inherited?location?.company_name:location?.project_name,
-      allow_agent:!!row.allow_agent,tested_at:row.tested_at,updated_at:row.updated_at};
+      credential_source:row.credential_source,credential_ready:row.credential_ready,allow_agent:!!row.allow_agent,tested_at:row.tested_at,updated_at:row.updated_at};
   }
   function forJob(projectId, companyId, connectionId) {
     if (hierarchy.scope(projectId)?.company_id !== companyId) throw fail(403, 'Project company changed. Start a fresh Work run.');
     const row = effective(projectId);
     if (!row || row.id !== connectionId || !row.allow_agent) throw fail(403, 'This GitHub connection is not enabled for this project');
+    if(!row.credential_ready)throw fail(403,'The company owner must add a GitHub PAT in Account & AI');
     return row;
   }
   async function operate(row, action, data = {}, valid = () => true) {
     const original = db.prepare('SELECT * FROM github_connections WHERE id=?').get(row.id);
     if (!original || original.updated_at !== row.updated_at) throw fail(403, 'GitHub connection changed. Read its settings again.');
-    const token = decrypt(original), prefix = '/repos/' + row.repository, started = Date.now();
-    const current = () => { if(Date.now()-started>120000)throw fail(504,'GitHub operation timed out. Inspect the branch before retrying a write.'); const now = db.prepare('SELECT updated_at FROM github_connections WHERE id=?').get(row.id); if (!now || now.updated_at !== row.updated_at || !valid()) throw fail(403, 'GitHub permission or run access was removed'); };
+    const auth=credential(original);if(!auth.token)throw fail(409,'Add the owner account GitHub PAT in Account & AI before connecting');
+    if(row.credential_version&&row.credential_version!==auth.version)throw fail(403,'GitHub credential changed. Read its settings again.');
+    const token = auth.token, prefix = '/repos/' + row.repository, started = Date.now();
+    const current = () => { if(Date.now()-started>120000)throw fail(504,'GitHub operation timed out. Inspect the branch before retrying a write.'); const now = db.prepare('SELECT updated_at FROM github_connections WHERE id=?').get(row.id); if (!now || now.updated_at !== row.updated_at || credential(original).version!==auth.version || !valid()) throw fail(403, 'GitHub permission or run access was removed'); };
     const call = async (route, options) => { current(); const result = await request(token, prefix + route, options); current(); return result; };
     const head = async () => { const ref = await call('/git/ref/heads/' + encodeURIComponent(row.branch)); if (!shaPattern.test(ref.object?.sha)) throw fail(502, 'GitHub returned an invalid branch reference'); return ref.object.sha; };
     const clean = value => JSON.parse(redact(JSON.stringify(value), { token }));
@@ -156,14 +171,29 @@ function createGithubConnections({ db, key, namespace, request = githubRequest }
     throw fail(404, 'GitHub action not found');
   }
   const router = express.Router(); router.use(express.json({ limit:'16kb' }));
-  router.get('/api/:kind(companies|projects)/:id/github', (req,res) => res.json({ connection:direct(req.params.kind,req.params.id), effective:req.params.kind === 'projects' ? effective(Number(req.params.id)) : direct(req.params.kind,req.params.id), scope:req.params.kind==='projects'?hierarchy.scope(Number(req.params.id)):{company_name:db.prepare('SELECT name FROM companies WHERE id=?').get(req.params.id)?.name} }));
-  router.put('/api/:kind(companies|projects)/:id/github', (req,res) => res.json(save(req.params.kind,req.params.id,req.body)));
+  router.use('/api/account/github',(req,res,next)=>req.workspaceIsOwner?next():res.status(403).json({error:'Only the account owner can manage the account GitHub PAT'}));
+  router.get('/api/account/github',(req,res)=>res.json(accountState()));
+  router.put('/api/account/github',(req,res)=>res.json(saveAccount(req.body.token)));
+  // Keep the revision tombstone so delete/re-add cannot revive an in-flight operation.
+  router.delete('/api/account/github',(req,res)=>{const old=accountRow();if(old)db.prepare("UPDATE github_account_credentials SET encrypted='',updated_at=?,tested_at=NULL,login=NULL WHERE id='account'").run(Math.max(Date.now(),old.updated_at+1));res.json({ok:true});});
+  router.post('/api/account/github/test',async(req,res,next)=>{try{const old=accountRow();if(!old?.encrypted)throw fail(409,'Save an account GitHub PAT first');const user=await request(decrypt({...accountBinding,encrypted:old.encrypted}),'/user');if(accountRow()?.updated_at!==old.updated_at)throw fail(403,'The account GitHub PAT changed during the check');if(typeof user.login!=='string'||!/^[a-zA-Z0-9-]{1,39}$/.test(user.login))throw fail(502,'GitHub did not return an account name');db.prepare("UPDATE github_account_credentials SET login=?,tested_at=? WHERE id='account' AND updated_at=?").run(user.login,Date.now(),old.updated_at);res.json(accountState());}catch(e){next(e);}});
+
+  router.get('/api/:kind(companies|projects)/:id/github', (req,res) => res.json({ can_manage_account:!!req.workspaceIsOwner,account_has_token:accountState().has_token,connection:direct(req.params.kind,req.params.id), effective:req.params.kind === 'projects' ? effective(Number(req.params.id)) : direct(req.params.kind,req.params.id), scope:req.params.kind==='projects'?hierarchy.scope(Number(req.params.id)):{company_name:db.prepare('SELECT name FROM companies WHERE id=?').get(req.params.id)?.name} }));
+  router.put('/api/:kind(companies|projects)/:id/github', (req,res) => {
+    const old=direct(req.params.kind,req.params.id),source=req.body.credential_source??(req.body.token?'scoped':old?.credential_source||'account'),repository=repositoryName(req.body.repository??old?.repository);
+    // A scoped member may use an assigned repository, never repurpose an owner credential.
+    if(!req.workspaceIsOwner){
+      if(source==='account'&&(!old||old.credential_source!=='account'||old.repository!==repository))throw fail(403,'Only the account owner can assign a repository using the account GitHub PAT');
+      if(old&&old.repository!==repository&&!req.body.token)throw fail(403,'Ask the owner to change this repository, or supply a separate token');
+    }
+    res.json(save(req.params.kind,req.params.id,req.body));
+  });
   router.delete('/api/:kind(companies|projects)/:id/github', (req,res) => { direct(req.params.kind,req.params.id); db.prepare(`DELETE FROM github_connections WHERE ${field(req.params.kind)}=?`).run(req.params.id); res.json({ok:true}); });
   router.post('/api/:kind(companies|projects)/:id/github/test', async(req,res,next) => { try { const row = req.params.kind === 'projects' ? effective(Number(req.params.id)) : direct(req.params.kind,req.params.id); if (!row) throw fail(404,'Save a GitHub connection first'); res.json(await operate(row,'test',{},()=>{try{req.revalidateMember?.();return true;}catch{return false;}})); } catch(e) { next(e); } });
   router.use((e,req,res,next) => e.status ? res.status(e.status).json({error:e.message}) : next(e));
   async function run({projectId,companyId,connectionId,action,data={},valid=()=>true,ssh}) {
     const row = forJob(projectId,companyId,connectionId);
-    const permitted = () => { try { return valid() && forJob(projectId,companyId,connectionId).updated_at === row.updated_at; } catch { return false; } };
+    const permitted = () => { try { const current=forJob(projectId,companyId,connectionId);return valid() && current.updated_at === row.updated_at && current.credential_version===row.credential_version; } catch { return false; } };
     if (action !== 'deploy') return operate(row,action,data,permitted);
     if (!ssh || typeof data.command !== 'string' || !data.command.trim() || data.command.length > 30000) throw fail(400,'Choose an enabled SSH connection and a production deployment command');
     if (typeof data.verification !== 'string' || data.verification.trim().length < 5 || data.verification.length > 5000) throw fail(400,'Record the checks passed for this exact release commit before deployment');
@@ -172,6 +202,6 @@ function createGithubConnections({ db, key, namespace, request = githubRequest }
     const result = await ssh.execute(server,{requireEnabled:true,command:`export BOARDLY_RELEASE_SHA='${release.sha}'; export BOARDLY_REPOSITORY='${row.repository}'; ${data.command}`,valid:() => { try { return permitted() && ssh.forJob(projectId,companyId,server.id).updated_at === server.updated_at; } catch { return false; } }});
     return { ...result,release,deployed:result.code === 0,verification:data.verification };
   }
-  return { router,save,direct,effective,agentList,context,forJob,operate,run,redact:input => { let result = input; for (const row of db.prepare('SELECT * FROM github_connections').all()) result = redact(result,{token:decrypt(row)}); return result; } };
+  return { router,save,saveAccount,accountState,direct,effective,agentList,context,forJob,operate,run,redact:input => { let result = input; for (const row of db.prepare('SELECT * FROM github_connections').all()) result = redact(result,{token:decrypt(row)}); const account=accountRow();if(account?.encrypted)result=redact(result,{token:decrypt({...accountBinding,encrypted:account.encrypted})});return result; } };
 }
 module.exports = { createGithubConnections, githubRequest, repositoryName, branchName, filePath };

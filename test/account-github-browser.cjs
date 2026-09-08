@@ -1,0 +1,43 @@
+const assert=require('node:assert/strict'),path=require('node:path');
+const {fixture}=require('./member-fixture');
+const {chromium}=require('/home/ben/.npm/_npx/e41f203b7505f1fb/node_modules/playwright');
+let f,vite,browser,owner,member;
+(async()=>{
+ f=await fixture({githubRequest:async(token,route)=>route==='/user'?{login:'fixture-owner'}:route.includes('/git/ref/')?{object:{sha:'a'.repeat(40)}}:{permissions:{push:true}}});const a=await f.project('Clothing Company','Nasdo');
+ const added=await f.api(`/api/companies/${a.company.id}/members`,{method:'POST',body:{email:'member@example.com',role:'editor'}}),user=added.member.user_id;
+ const projectAdded=await f.api(`/api/projects/${a.project.id}/members`,{method:'POST',body:{email:'project@example.com',role:'editor'}});
+ const card=await f.api(`/api/lists/${a.list.id}/cards`,{method:'POST',body:{title:'GitHub task'}});
+ const tokens=Object.fromEntries(['user_owner',user,projectAdded.member.user_id].map(id=>[id,f.token(id)]));
+ const repo=path.resolve(__dirname,'..'),{createServer}=await import('vite'),react=(await import('@vitejs/plugin-react')).default,tailwind=(await import('@tailwindcss/vite')).default;
+ vite=await createServer({configFile:false,root:repo+'/client',plugins:[react(),tailwind(),{
+  name:'scope-qa',resolveId(id){if(id==='/qa-entry.jsx')return '\0scope-qa';},load(id){if(id==='\0scope-qa')return `import React from 'react';import {createRoot} from 'react-dom/client';import WorkspaceSession from '/src/WorkspaceSession.jsx';import '/src/index.css';const user=new URLSearchParams(location.search).get('user')||'user_owner',tokens=${JSON.stringify(tokens)},getToken=async()=>tokens[user];createRoot(document.getElementById('root')).render(React.createElement(WorkspaceSession,{userId:user,getToken,onLogout:()=>{}}));`;},configureServer(s){s.middlewares.use('/qa',async(q,r)=>{r.setHeader('content-type','text/html');r.end(await s.transformIndexHtml('/qa','<html class="dark"><body class="bg-zinc-950 text-zinc-100"><div id="root"></div><script type="module" src="/qa-entry.jsx"></script></body></html>'));});}
+ }],server:{host:'127.0.0.1',port:0,proxy:{'/api':{target:f.base,configure:p=>p.on('proxyReq',q=>q.setHeader('origin',f.config.origin))}}}});await vite.listen();const url=vite.resolvedUrls.local[0]+'qa';
+ browser=await chromium.launch({executablePath:'/usr/bin/google-chrome',headless:true,args:['--no-sandbox']});const errors=[];
+ owner=await browser.newPage({viewport:{width:1440,height:1000}});member=await browser.newPage({viewport:{width:1280,height:1000}});
+ for(const page of [owner,member])page.on('pageerror',error=>errors.push(error.message));
+ await f.api(`/api/companies/${a.company.id}/github`,{method:'PUT',body:{repository:'company/main',allow_agent:true}});
+ await owner.goto(url+`#/board/${a.project.id}`);await owner.getByRole('button',{name:'Chat with AI',exact:true}).click();
+ const chat=owner.getByRole('dialog',{name:'Codex chat for Nasdo'});
+ await chat.getByRole('button',{name:'Set up account GitHub PAT',exact:true}).click();
+ const account=owner.getByRole('dialog',{name:'Account and AI settings'}),patField=account.getByLabel('Account GitHub personal access token',{exact:true}),pat='github_pat_fixture_browser_12345678901234567890';
+ await patField.waitFor();await owner.waitForFunction(()=>document.activeElement?.type==='password');
+ await patField.fill(pat);await account.getByRole('button',{name:'Save account GitHub PAT',exact:true}).click();
+ await account.getByText('Account PAT saved',{exact:true}).waitFor();assert.equal(await patField.inputValue(),'');
+ await account.getByRole('button',{name:'Test account PAT',exact:true}).click();await account.getByText('Account PAT saved · Verified as fixture-owner',{exact:true}).waitFor();
+ await account.getByLabel('Close account settings').click();await chat.getByRole('button',{name:'GitHub settings',exact:true}).click();
+ await chat.getByRole('button',{name:'Use a project repository',exact:true}).click();
+ assert.equal(await chat.getByLabel('GitHub credential',{exact:true}).inputValue(),'account');assert.equal(await chat.getByLabel('GitHub access token',{exact:true}).count(),0);
+ await chat.getByLabel('Repository URL',{exact:true}).fill('other-org/project');await chat.getByRole('button',{name:'Save GitHub connection',exact:true}).click();
+ await chat.getByRole('button',{name:'Edit connection',exact:true}).waitFor();
+ await owner.reload();await owner.getByRole('button',{name:'Chat with AI',exact:true}).click();await chat.getByText('GitHub: other-org/project · main',{exact:true}).waitFor();
+ await chat.getByRole('button',{name:'Start new conversation',exact:true}).click();await chat.getByText('GitHub: other-org/project · main',{exact:true}).waitFor();
+ await owner.getByRole('button',{name:'Account & AI',exact:true}).click();await account.getByText('Account PAT saved · Verified as fixture-owner',{exact:true}).waitFor();assert.equal(await patField.inputValue(),'');
+ await owner.setViewportSize({width:390,height:844});await patField.scrollIntoViewIfNeeded();await owner.screenshot({path:'/home/ben/.local/share/boardly-ops/account-github-mobile-20260908.png'});assert.ok(await owner.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await account.getByLabel('Close account settings').click();
+ await owner.setViewportSize({width:1440,height:1000});await chat.getByRole('button',{name:'GitHub settings',exact:true}).click();
+ owner.once('dialog',d=>d.accept());await chat.getByRole('button',{name:'Remove project connection',exact:true}).click();await chat.getByText('GitHub: company/main · main',{exact:true}).waitFor({timeout:6500});
+ await owner.screenshot({path:'/home/ben/.local/share/boardly-ops/account-github-desktop-20260908.png'});
+ const grant=(await f.api(`/api/companies/${a.company.id}/members`)).members[0].grant_id;await f.api(`/api/memberships/${grant}`,{method:'PATCH',body:{scopes:['github']}});
+ await member.goto(url+`?user=${user}#/board/${a.project.id}`);await member.getByRole('button',{name:'Chat with AI',exact:true}).click();await member.getByText('GitHub: company/main · main',{exact:true}).waitFor();
+ await member.getByRole('button',{name:'Account & AI',exact:true}).click();await member.getByText('Shared account · Owner',{exact:true}).waitFor();assert.equal(await member.getByLabel('Account GitHub personal access token',{exact:true}).count(),0);
+ assert.ok(!(await owner.locator('body').innerText()).includes(pat));assert.deepEqual(errors,[]);console.log('PASS: secure account PAT prompt, save/test/reload, blank secret, company inheritance, project override/removal, new chat reuse, member isolation and desktop/mobile layout');
+})().catch(async e=>{console.error(e);if(owner)console.error((await owner.locator('body').innerText()).slice(0,2500));process.exitCode=1;}).finally(async()=>{if(browser)await browser.close();if(vite)await vite.close();if(f)await f.close();});

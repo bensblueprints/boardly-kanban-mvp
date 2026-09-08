@@ -1,12 +1,13 @@
 import React,{useEffect,useState} from 'react';
 import {api} from '../api.js';
+import AccountGithub from './AccountGithub.jsx';
 import SshConnections from './SshConnections.jsx';
 import TailscaleConnection from './TailscaleConnection.jsx';
 const input='rounded-lg bg-zinc-950 border border-zinc-700 px-3 py-2 text-sm';
 const button='rounded-lg border border-zinc-700 px-4 py-2 text-sm hover:bg-zinc-800 disabled:opacity-40';
 const dollars=n=>'$'+Number(n).toFixed(4);
 const storage=n=>n===null?'Unlimited storage':n>=1024**4?'1 TB':`${n/1024**3} GB`;
-export default function AccountSettings({onClose}){
+export default function AccountSettings({onClose,initialSection}){
  const [plan,setPlan]=useState(null),[ai,setAi]=useState(null),[form,setForm]=useState(null),[billing,setBilling]=useState(null),[error,setError]=useState(''),[notice,setNotice]=useState(''),[busy,setBusy]=useState(false),[seats,setSeats]=useState(1),[consent,setConsent]=useState(false);
  async function load(){const [p,a,b]=await Promise.all([api.get('/api/account/plan'),api.get('/api/ai/settings'),api.get('/api/billing/status')]);setPlan(p);setAi(a);setBilling(b);setForm({mode:a.mode,model:a.model,monthly_cap:a.monthly_cap,api_key:''});}
  useEffect(()=>{load().catch(e=>setError(e.message));},[]);
@@ -15,6 +16,7 @@ export default function AccountSettings({onClose}){
  return <div className="fixed inset-0 z-[70] bg-black/70 p-3 flex items-center justify-center" onClick={onClose}><section role="dialog" aria-modal="true" aria-label="Account and AI settings" onClick={e=>e.stopPropagation()} className="w-full max-w-4xl max-h-[94vh] overflow-auto rounded-2xl border border-zinc-700 bg-zinc-900 p-6 space-y-6">
  <header className="flex justify-between"><div><h2 className="text-xl font-semibold">Account & AI</h2><p className="text-sm text-zinc-400 mt-1">Your workspace subscription and AI funding.</p></div><button aria-label="Close account settings" onClick={onClose}>✕</button></header>
  {error&&<p role="alert" className="text-rose-300">{error}</p>}{notice&&<p role="status" className="text-emerald-300">{notice}</p>}
+ {plan?.owner&&<AccountGithub focus={initialSection==='github'}/>}
  {plan&&<section className="space-y-4"><h3 className="font-semibold">{plan.owner?'Your account':'Shared account'} · {plan.plan.name}</h3><p className="text-sm text-zinc-400">{plan.usage.companies} / {plan.company_limit??'Unlimited'} companies · {plan.usage.users} / {plan.user_limit??'Unlimited'} users · {storage(plan.plan.storage_bytes)} storage allowance</p>{!plan.owner&&<p className="text-sm text-zinc-400">The company owner funds your seat and AI work in this shared workspace. Your own AI settings apply to your own workspace.</p>}
  <div className="grid sm:grid-cols-3 gap-3">{plan.plans.map(p=><article key={p.slug} className="rounded-xl border border-zinc-700 p-4 space-y-2"><h4 className="font-semibold">{p.name}</h4><p className="text-xl">{p.monthly_price?'$'+p.monthly_price:'Free'}{p.monthly_price>0&&<span className="text-xs text-zinc-400"> / month</span>}</p><p className="text-sm text-zinc-400">{p.companies} {p.companies===1?'company':'companies'} · {p.users} {p.users===1?'user':'users'} · {storage(p.storage_bytes)}</p><p className="text-xs text-zinc-400">Additional users: $9 each / month</p>{plan.owner&&plan.plan.slug!=='owner'&&p.monthly_price>0&&<button disabled={busy||!plan.billing_ready} className={button} onClick={()=>checkout(p.slug)}>Choose plan</button>}</article>)}</div>
  {plan.owner&&plan.plan.users!==null&&<div className="flex flex-wrap items-center gap-3"><label className="text-sm">Additional users <input aria-label="Additional paid users" type="number" min="1" max="10000" value={seats} onChange={e=>setSeats(Number(e.target.value))} className={input+' w-24 ml-2'}/></label><button disabled={busy||!plan.billing_ready} className={button} onClick={()=>checkout('extra_users',seats)}>Review ${seats*9}/month</button><span className="text-xs text-zinc-400">After your included allowance, on every plan.</span></div>}

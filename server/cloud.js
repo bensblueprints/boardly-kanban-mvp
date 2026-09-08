@@ -222,6 +222,7 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
   app.use((req, res, next) => {
     if (!req.tenant) return next();
     if (/^\/api\/(chat|worker|agents|swarms|discussions)(\/|$)/i.test(req.path) || /^\/api\/boards\/\d+\/(chat\/|agent$)/i.test(req.path)) return req.tenant.subscription.router(req,res,err=>err?next(err):req.tenant.chat(req, res, next));
+    if(/^\/api\/account\/github(?:\/|$)/.test(req.path))return req.tenant.github.router(req,res,next);
     if(/^\/api\/account\/ssh(?:\/|$)/.test(req.path))return req.tenant.ssh.router(req,res,next);
     if (/^\/api\/(sync|account)(\/|$)/i.test(req.path)) return req.tenant.hub(req, res, () => res.status(404).json({ error: 'Sync endpoint not found' }));
     if(/^\/api\/(companies|projects)\/\d+\/ssh(?:\/|$)/.test(req.path))return req.tenant.ssh.router(req,res,next);

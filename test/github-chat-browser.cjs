@@ -19,6 +19,7 @@ let f,vite,browser,owner,member;
  const chat=owner.getByRole('dialog',{name:'Codex chat for Nasdo'});await chat.getByText('No GitHub connection saved for this project.',{exact:true}).waitFor();
  await chat.getByRole('button',{name:'Connect GitHub',exact:true}).click();await chat.getByRole('button',{name:'Connect GitHub',exact:true}).click();
  await chat.getByLabel('Repository URL',{exact:true}).fill('https://github.com/northstar/website');await chat.getByLabel('Target branch',{exact:true}).fill('production');
+ await chat.getByLabel('GitHub credential',{exact:true}).selectOption('scoped');
  const token='github_pat_browser_fixture_123456789012345678901234567890';await chat.getByLabel('GitHub access token',{exact:true}).fill(token);await chat.getByRole('button',{name:'Save GitHub connection',exact:true}).click();
  await chat.getByText('GitHub connection saved for all chats in this scope. Test access to verify the repository and branch.',{exact:true}).waitFor();
  await chat.getByRole('button',{name:'Close GitHub settings',exact:true}).click();await chat.getByText('GitHub: northstar/website · production',{exact:true}).waitFor({timeout:6500});
