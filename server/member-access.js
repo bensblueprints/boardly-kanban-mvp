@@ -28,7 +28,7 @@ function memberGuard({db,memberships,ownerId,userId}){
    const connection=route.match(/^\/api\/(companies|projects)\/(\d+)\/(ssh|github)(?:\/([\w-]+))?(?:\/(test))?$/);
    if(connection){
     const [,kind,id,cap,part,test]=connection;
-    const permitted=cap==='github'?(!part&&['GET','PUT','DELETE'].includes(method))||(part==='test'&&!test&&method==='POST'):(!part&&['GET','POST'].includes(method))||(part&&!test&&['PATCH','DELETE'].includes(method))||(part&&test&&method==='POST');
+    const permitted=cap==='github'?(!part&&['GET','PUT','DELETE'].includes(method))||(['test','repositories'].includes(part)&&!test&&method==='POST'):(!part&&['GET','POST'].includes(method))||(part&&!test&&['PATCH','DELETE'].includes(method))||(part&&test&&method==='POST');
     if(permitted)privileged={kind:kind==='companies'?'company':'project',id:Number(id),cap};
    }
    const secret=route.match(/^\/api\/boards\/(\d+)\/(environment|payments)(.*)$/);

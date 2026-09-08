@@ -3,7 +3,7 @@ const {fixture}=require('./member-fixture');
 const {chromium}=require('/home/ben/.npm/_npx/e41f203b7505f1fb/node_modules/playwright');
 let f,vite,browser,owner,member;
 (async()=>{
- f=await fixture();const a=await f.project('Clothing Company','Nasdo');
+ f=await fixture({githubRequest:async()=>[]});const a=await f.project('Clothing Company','Nasdo');
  const added=await f.api(`/api/companies/${a.company.id}/members`,{method:'POST',body:{email:'member@example.com',role:'editor'}}),user=added.member.user_id;
  const projectAdded=await f.api(`/api/projects/${a.project.id}/members`,{method:'POST',body:{email:'project@example.com',role:'editor'}});
  const card=await f.api(`/api/lists/${a.list.id}/cards`,{method:'POST',body:{title:'GitHub task'}});

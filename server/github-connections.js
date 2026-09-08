@@ -171,6 +171,34 @@ function createGithubConnections({ db, key, namespace, request = githubRequest }
     throw fail(404, 'GitHub action not found');
   }
   const router = express.Router(); router.use(express.json({ limit:'16kb' }));
+  // Repository discovery is broader than an assigned repository. Never enumerate
+  // an owner's account or saved scoped PAT on behalf of a company member.
+  router.post('/api/:kind(companies|projects)/:id/github/repositories',async(req,res,next)=>{try{
+    scope(req.params.kind,req.params.id);
+    const {credential_source:source='account',token:supplied,page=1,credential_version:expected}=req.body;
+    if(!Number.isSafeInteger(page)||page<1||page>10000)throw fail(400,'Invalid repository page');
+    if(!['account','scoped'].includes(source))throw fail(400,'Choose the account PAT or a separate repository token');
+    if(!req.workspaceIsOwner&&(source==='account'||!supplied))throw fail(403,'Only the account owner can browse repositories using a saved PAT');
+    let token,version,current;
+    if(source==='account'){
+      if(supplied)throw fail(400,'Save the account PAT in Account & AI');
+      const account=accountRow();if(!account?.encrypted)throw fail(409,'Add your account GitHub PAT in Account & AI to browse repositories');
+      token=decrypt({...accountBinding,encrypted:account.encrypted});version=`account:${account.updated_at}`;
+      current=()=>accountRow()?.updated_at===account.updated_at;
+    }else if(supplied){token=validToken(supplied);version='supplied';current=()=>true;
+    }else{
+      const saved=direct(req.params.kind,req.params.id);if(saved?.credential_source!=='scoped')throw fail(409,'Enter a separate GitHub token to browse its repositories');
+      const raw=db.prepare('SELECT * FROM github_connections WHERE id=?').get(saved.id);token=decrypt(raw);version=`scoped:${saved.id}:${saved.updated_at}`;
+      current=()=>{const now=direct(req.params.kind,req.params.id);return now?.id===saved.id&&now?.credential_version===saved.credential_version;};
+    }
+    if(expected!==undefined&&expected!==version)throw fail(409,'GitHub credential changed. Refresh the repository list.');
+    const check=()=>{req.revalidateMember?.();scope(req.params.kind,req.params.id);if(!current())throw fail(403,'GitHub credential changed. Refresh the repository list.');};
+    check();const rows=await request(token,`/user/repos?per_page=100&page=${page}&sort=full_name&direction=asc`);check();
+    if(!Array.isArray(rows)||rows.length>100)throw fail(502,'GitHub returned an invalid repository list');
+    // Return only picker metadata, never provider URLs, clone credentials or arbitrary fields.
+    const repositories=rows.map(row=>{try{return {repository:repositoryName(row.full_name),default_branch:branchName(row.default_branch||'main'),private:!!row.private,archived:!!row.archived};}catch{throw fail(502,'GitHub returned invalid repository details');}});
+    res.set('Cache-Control','no-store').json({repositories,credential_version:version,next_page:rows.length===100?page+1:null});
+  }catch(e){next(e);}});
   router.use('/api/account/github',(req,res,next)=>req.workspaceIsOwner?next():res.status(403).json({error:'Only the account owner can manage the account GitHub PAT'}));
   router.get('/api/account/github',(req,res)=>res.json(accountState()));
   router.put('/api/account/github',(req,res)=>res.json(saveAccount(req.body.token)));
@@ -178,7 +206,7 @@ function createGithubConnections({ db, key, namespace, request = githubRequest }
   router.delete('/api/account/github',(req,res)=>{const old=accountRow();if(old)db.prepare("UPDATE github_account_credentials SET encrypted='',updated_at=?,tested_at=NULL,login=NULL WHERE id='account'").run(Math.max(Date.now(),old.updated_at+1));res.json({ok:true});});
   router.post('/api/account/github/test',async(req,res,next)=>{try{const old=accountRow();if(!old?.encrypted)throw fail(409,'Save an account GitHub PAT first');const user=await request(decrypt({...accountBinding,encrypted:old.encrypted}),'/user');if(accountRow()?.updated_at!==old.updated_at)throw fail(403,'The account GitHub PAT changed during the check');if(typeof user.login!=='string'||!/^[a-zA-Z0-9-]{1,39}$/.test(user.login))throw fail(502,'GitHub did not return an account name');db.prepare("UPDATE github_account_credentials SET login=?,tested_at=? WHERE id='account' AND updated_at=?").run(user.login,Date.now(),old.updated_at);res.json(accountState());}catch(e){next(e);}});
 
-  router.get('/api/:kind(companies|projects)/:id/github', (req,res) => res.json({ can_manage_account:!!req.workspaceIsOwner,account_has_token:accountState().has_token,connection:direct(req.params.kind,req.params.id), effective:req.params.kind === 'projects' ? effective(Number(req.params.id)) : direct(req.params.kind,req.params.id), scope:req.params.kind==='projects'?hierarchy.scope(Number(req.params.id)):{company_name:db.prepare('SELECT name FROM companies WHERE id=?').get(req.params.id)?.name} }));
+  router.get('/api/:kind(companies|projects)/:id/github', (req,res) => res.json({ can_manage_account:!!req.workspaceIsOwner,account_has_token:accountState().has_token,account_updated_at:req.workspaceIsOwner?accountState().updated_at:undefined,connection:direct(req.params.kind,req.params.id), effective:req.params.kind === 'projects' ? effective(Number(req.params.id)) : direct(req.params.kind,req.params.id), scope:req.params.kind==='projects'?hierarchy.scope(Number(req.params.id)):{company_name:db.prepare('SELECT name FROM companies WHERE id=?').get(req.params.id)?.name} }));
   router.put('/api/:kind(companies|projects)/:id/github', (req,res) => {
     const old=direct(req.params.kind,req.params.id),source=req.body.credential_source??(req.body.token?'scoped':old?.credential_source||'account'),repository=repositoryName(req.body.repository??old?.repository);
     // A scoped member may use an assigned repository, never repurpose an owner credential.
