@@ -9,6 +9,7 @@ import { api } from '../api.js';
 import CardModal from './CardModal.jsx';
 import CoachPanel from './CoachPanel.jsx';
 import ProjectChat from './ProjectChat.jsx';
+import SplitWorkspace from './SplitWorkspace.jsx';
 import CloudConnections from './CloudConnections.jsx';
 import Members from './Members.jsx';
 import {useAccess} from '../access.jsx';
@@ -285,11 +286,11 @@ export default function BoardView({ boardId, onBack, cloud = false }) {
   if (!board) return <div className="h-full flex items-center justify-center text-zinc-600">Loading…</div>;
 
   return (
-    <div className="h-full flex">
-    <div className="flex-1 min-w-0 flex flex-col" style={{ background: `linear-gradient(180deg, ${board.color}22, transparent 240px)` }}>
+    <div className="h-full min-h-0 flex">
+    <div className="flex-1 min-w-0 min-h-0 flex flex-col" style={{ background: `linear-gradient(180deg, ${board.color}22, transparent 240px)` }}>
       {/* header */}
       <header className="shrink-0 px-4 py-3 flex items-center gap-2 flex-wrap border-b border-zinc-800/60 bg-zinc-950/70 backdrop-blur">
-        {cloud && board.hierarchy && <nav className="w-full flex gap-2 text-xs text-zinc-400 pb-1"><button onClick={onBack}>Companies</button><span>/</span><button onClick={() => location.hash = `#/company/${board.hierarchy.company_id ?? 'unassigned'}`}>{board.hierarchy.company_name || 'Unassigned'}</button><span>/</span><button onClick={() => location.hash = `#/collection/${board.hierarchy.parent_board_id}`}>{board.hierarchy.parent_board_name}</button><span>/</span><span>{board.hierarchy.project_name}</span></nav>}
+        {cloud && board.hierarchy && <nav className="w-full flex flex-wrap gap-2 text-xs text-zinc-400 pb-1"><button onClick={onBack}>Companies</button><span>/</span><button onClick={() => location.hash = `#/company/${board.hierarchy.company_id ?? 'unassigned'}`}>{board.hierarchy.company_name || 'Unassigned'}</button><span>/</span><button onClick={() => location.hash = `#/collection/${board.hierarchy.parent_board_id}`}>{board.hierarchy.parent_board_name}</button><span>/</span><span>{board.hierarchy.project_name}</span></nav>}
         <button onClick={() => cloud && board.hierarchy ? location.hash = `#/collection/${board.hierarchy.parent_board_id}` : onBack()} className="p-2 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-zinc-100" title="Back to projects">
           <ArrowLeft className="w-4 h-4" />
         </button>
@@ -384,7 +385,7 @@ export default function BoardView({ boardId, onBack, cloud = false }) {
           onChange={(e) => { importBoard(e.target.files[0]); e.target.value = ''; }} />
       </header>
 
-      {cloud && <nav aria-label="Project tools" className="shrink-0 flex flex-wrap items-center gap-3 px-5 py-3 border-b border-zinc-800 bg-zinc-950/60">
+      {cloud && <nav aria-label="Project tools" className="project-tools shrink-0 flex items-center gap-3 px-5 py-3 border-b border-zinc-800 bg-zinc-950/60">
         {cloud && <button onClick={() => { setChatTask(null); setChatThread(null); setShowChat(true); }} className="flex items-center gap-2 text-sm px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500"><MessageSquare size={16} /> Chat with AI</button>}
         {cloud && <button disabled={deployBusy||readOnly} onClick={() => launchAgent()} className="text-sm text-indigo-300 border border-indigo-500/30 rounded-lg px-3 py-1.5 disabled:opacity-50">{deployBusy ? 'Starting…' : 'Deploy agent'}</button>}
         {cloud && <button onClick={() => setAssetsTab('files')} className="text-sm text-zinc-300 px-2">Files</button>}
@@ -397,7 +398,6 @@ export default function BoardView({ boardId, onBack, cloud = false }) {
         {can('members')&&<button onClick={()=>setMembers(true)} className="text-sm text-zinc-300 px-2">Members</button>}{readOnly&&<span className="text-xs text-zinc-500">View-only access</span>}
       </nav>}
       {members&&can('members')&&<Members kind="projects" id={board.id} onClose={()=>setMembers(false)}/>}
-      {cloud && showChat && <ProjectChat key={`${board.id}:${chatTask?.id || ''}:${chatThread || ''}`} initialThreadId={chatThread} task={chatTask} board={{...board,name:board.hierarchy?.project_name || board.name}} onClose={() => setShowChat(false)} onUpdated={load} />}
       {cloud && connections && <CloudConnections onClose={() => setConnections(false)} />}
 
       {cloud && assetsTab && (['files','links'].includes(assetsTab)||can(assetsTab)) && <ProjectAssets board={{...board,name:board.hierarchy?.project_name || board.name}} initialTab={assetsTab} onClose={() => setAssetsTab(null)} />}
@@ -416,20 +416,22 @@ export default function BoardView({ boardId, onBack, cloud = false }) {
         />
       </div>
 
-      {/* lists */}
+      {/* Board and coding pane share the available workspace, without an overlay. */}
+      <SplitWorkspace secondary={cloud && showChat ? <ProjectChat key={`${board.id}:${chatTask?.id || ''}:${chatThread || ''}`} initialThreadId={chatThread} task={chatTask} board={{...board,name:board.hierarchy?.project_name || board.name}} onClose={() => setShowChat(false)} onUpdated={load} /> : null}>
       <DragDropContext onDragEnd={onDragEnd}>
         <Droppable droppableId="board" direction="horizontal" type="list">
           {(provided) => (
             <div ref={provided.innerRef} {...provided.droppableProps}
-              className="flex-1 overflow-x-auto overflow-y-hidden flex items-start gap-3 p-4">
+              className="task-lists flex-1 min-h-0 overflow-x-auto overflow-y-hidden flex items-start gap-3 p-4">
               {visibleLists.map((list, li) => (
                 <Draggable key={list.id} draggableId={`listwrap-${list.id}`} index={li} isDragDisabled={!!filtering||readOnly}>
                   {(lp) => (
                     <div ref={lp.innerRef} {...lp.draggableProps}
+                      style={{...(cloud && showChat ? {width: `clamp(12rem, calc((100% - 3rem) / ${Math.min(visibleLists.length || 1, 4)}), 18rem)`} : {}), ...lp.draggableProps.style}}
                       className="w-72 shrink-0 bg-zinc-950/80 border border-zinc-800/80 rounded-2xl flex flex-col max-h-full">
                       <div {...lp.dragHandleProps} className="flex items-center gap-1 px-3 pt-3 pb-1">
                         <input
-                          readOnly={readOnly} key={list.id + list.name}
+                          aria-label={`${list.name} list name`} readOnly={readOnly} key={list.id + list.name}
                           defaultValue={list.name}
                           onBlur={(e) => renameList(list, e.target.value)}
                           onKeyDown={(e) => e.key === 'Enter' && e.target.blur()}
@@ -494,6 +496,7 @@ export default function BoardView({ boardId, onBack, cloud = false }) {
           )}
         </Droppable>
       </DragDropContext>
+      </SplitWorkspace>
 
       {/* side panel: activity / archived */}
       <AnimatePresence>
