@@ -83,7 +83,21 @@ async function run(job) {
     if(job.github?.length){
       github=await require('./github-broker.cjs').createGithubBroker({socketPath:path.join(temp,'github.sock'),request:(id,action,data)=>api(`/api/worker/jobs/${job.id}/github/${encodeURIComponent(id)}/${action}`,data),onActivity:(key,title,status)=>step(key,title,status)});
       step('github:prepare','Checking connected GitHub repository','running');
-      githubStatus=await api(`/api/worker/jobs/${job.id}/github/${encodeURIComponent(job.github[0].id)}/status`,{});
+      try {
+        githubStatus=await api(`/api/worker/jobs/${job.id}/github/${encodeURIComponent(job.github[0].id)}/status`,{});
+      } catch(error) {
+        const connection=job.github[0], settingsLocation=connection.inherited?'Company → GitHub':'Project → GitHub';
+        const summary=clean(`The assignment paused while checking ${connection.repository} (${connection.branch}). No AI work started.`);
+        const blocker=clean(error.message||'The connected GitHub repository could not be checked.');
+        const nextAction=error.status===403
+          ? `Check ${settingsLocation} for the intended repository and branch. ${connection.credential_source==='account'?'Update or test the GitHub token in Account & AI → GitHub.':'Update or test the saved repository token in '+settingsLocation+'.'} Then resume this saved assignment.`
+          : error.status===404
+            ? `Check the repository, branch and token access in ${settingsLocation}, test the connection, then resume this saved assignment.`
+            : `Check the GitHub connection in ${settingsLocation} and retry its connection test. Resume this saved assignment when GitHub is reachable.`;
+        checkpoint={state:'blocked',summary,blocker,next_action:nextAction};
+        step('github:prepare','GitHub connection needs attention','failed',blocker);
+        throw error;
+      }
       step('github:prepare','GitHub repository ready','completed',`${githubStatus.repository} · ${githubStatus.branch} · ${githubStatus.sha.slice(0,8)}`);
     }
     if(job.ssh?.length)ssh=await require('./ssh-broker.cjs').createSshBroker({socketPath:path.join(temp,'ssh.sock'),request:id=>api(`/api/worker/jobs/${job.id}/ssh/${encodeURIComponent(id)}`),execute:settings.cloud?data=>api(`/api/worker/jobs/${job.id}/ssh/${encodeURIComponent(data.connection_id)}/exec`,data):undefined,onSecret:value=>{privateValues['ssh_'+Object.keys(privateValues).length]=value;},onActivity:(key,title,status)=>step(key,title,status)});
@@ -201,8 +215,9 @@ async function run(job) {
     }
     if (status === 'failed') failure = 'Codex could not complete this run. Check the agent runtime and AI sign-in, then send another message.';
   } catch {
-    status = cancelled || stopping ? 'cancelled' : 'failed';
-    failure = 'The project run could not finish. Check the agent runtime, then resume the saved assignment.';
+    status = cancelled || stopping ? 'cancelled' : checkpoint?.state==='blocked' ? 'blocked' : 'failed';
+    if(status==='blocked'){text=checkpoint.summary;failure=checkpoint.blocker;}
+    else failure = 'The project run could not finish. Check the agent runtime, then resume the saved assignment.';
   } finally {
     if(ssh)await ssh.close();
     if(github)await github.close();

@@ -39,7 +39,7 @@ function Login({ onLogin }) {
             <KanbanSquare className="w-6 h-6 text-indigo-400" />
           </div>
           <div>
-            <h1 className="text-xl font-bold">Boardly</h1>
+            <h1 className="text-xl font-bold">boredly</h1>
             <p className="text-xs text-zinc-500">Your boards. Your server. No per-seat fees.</p>
           </div>
         </div>
@@ -108,10 +108,10 @@ export default function App() {
   const [error, setError] = useState(false);
   useEffect(() => { api.get('/api/auth-config').then(setConfig).catch(() => setError(true)); }, []);
   if (error) return <div className="h-full flex flex-col gap-4 items-center justify-center">
-    <p>Boardly could not connect. Please try again.</p>
+    <p>boredly could not connect. Please try again.</p>
     <button onClick={() => location.reload()} className="text-indigo-400">Retry</button>
   </div>;
-  if (!config) return <div className="h-full flex items-center justify-center">Loading Boardly…</div>;
+  if (!config) return <div className="h-full flex items-center justify-center">Loading boredly…</div>;
   return config.mode === 'clerk'
     ? <Suspense fallback={<div className="h-full flex items-center justify-center">Loading sign-in…</div>}><CloudApp config={config} /></Suspense>
     : <LocalApp />;

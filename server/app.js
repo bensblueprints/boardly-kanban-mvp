@@ -627,7 +627,7 @@ function createApp(opts = {}) {
   app.post('/api/boards/import', requireAuth, (req, res) => {
     const data = req.body;
     if (!data || data.app !== 'boardly' || !data.board || !Array.isArray(data.lists)) {
-      return res.status(400).json({ error: 'Not a valid Boardly export file' });
+      return res.status(400).json({ error: 'Not a valid boredly export file' });
     }
     let boardId;
     const pendingFiles = []; // written after the transaction commits

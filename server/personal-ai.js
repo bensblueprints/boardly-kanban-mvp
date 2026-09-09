@@ -25,7 +25,7 @@ function createPersonalAI({config,key,request=fetch}){
   const a=account(user);
   if(a.mode==='key'&&a.encrypted_key)return{...a,key:unseal(user,a.encrypted_key)};
   if(a.mode==='card'){
-   if(!config.openaiApiKey||!billing.ready())throw fail(503,'Card-funded AI is awaiting Boardly’s payment and OpenAI setup');
+   if(!config.openaiApiKey||!billing.ready())throw fail(503,'Card-funded AI is awaiting boredly’s payment and OpenAI setup');
    if(!(await billing.state(user)).ai)throw fail(402,'Attach a billing card and activate AI usage billing in Account & AI');
    if(summary(user).review)throw fail(409,'An interrupted AI request needs billing review before another charged run');
    return{...a,key:config.openaiApiKey};
@@ -79,13 +79,13 @@ function createPersonalAI({config,key,request=fetch}){
     encrypted=seal(user,api_key);
    }
    if(mode==='key'&&!encrypted)throw fail(400,'Enter your OpenAI API key');
-   if(mode==='card'&&(!billing.ready()||!config.openaiApiKey))throw fail(503,'Card-funded AI is awaiting Boardly’s payment and OpenAI setup');
+   if(mode==='card'&&(!billing.ready()||!config.openaiApiKey))throw fail(503,'Card-funded AI is awaiting boredly’s payment and OpenAI setup');
    if(mode==='none')encrypted=null;
    db.prepare('INSERT INTO ai_accounts VALUES (?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET mode=excluded.mode,encrypted_key=excluded.encrypted_key,model=excluded.model,monthly_cap_nano=excluded.monthly_cap_nano').run(user,mode,encrypted,model,Math.round(monthly_cap*1e9));
    res.json(summary(user));
   }catch(e){next(e.status?e:fail(503,'Could not verify the OpenAI key. Please try again.'));}
  });
- router.post('/api/ai/checkout',async(req,res,next)=>{try{if(!config.openaiApiKey)throw fail(503,'Card-funded AI is awaiting Boardly’s OpenAI setup');if(req.body?.consent!==true)throw fail(400,'Confirm AI usage billing at 2× OpenAI rates');res.json(await billing.checkout(req.cloudUserId,'ai'));}catch(e){next(e);}});
+ router.post('/api/ai/checkout',async(req,res,next)=>{try{if(!config.openaiApiKey)throw fail(503,'Card-funded AI is awaiting boredly’s OpenAI setup');if(req.body?.consent!==true)throw fail(400,'Confirm AI usage billing at 2× OpenAI rates');res.json(await billing.checkout(req.cloudUserId,'ai'));}catch(e){next(e);}});
  return{db,billing,router,summary,account,authorize,respond,flush,close(){clearInterval(timer);db.close();}};
 }
 module.exports={createPersonalAI};

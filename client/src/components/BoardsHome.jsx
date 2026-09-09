@@ -77,7 +77,7 @@ export default function BoardsHome({ onOpen, onLogout, cloud = false }) {
         <div className="max-w-6xl mx-auto px-4 sm:px-6 min-h-16 py-3 flex flex-wrap gap-3 items-center justify-between">
           <div className="flex items-center gap-2.5">
             <KanbanSquare className="w-6 h-6 text-indigo-400" />
-            <span className="font-bold text-lg">Boardly</span>
+            <span className="font-bold text-lg">boredly</span>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <button hidden={!owner}
@@ -127,7 +127,7 @@ export default function BoardsHome({ onOpen, onLogout, cloud = false }) {
         <h1 className="text-2xl font-bold mb-1">Your boards</h1>
         <p className="text-sm text-zinc-500 mb-8">{cloud ? 'Your projects and next steps.' : 'Every project, one flat price. Zero per-seat math.'}</p>
 
-        {cloud && <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-4"><div><p className="text-sm font-medium">Your projects, on every computer</p><p className="text-xs text-zinc-500 mt-1">Download Boardly desktop and sync it with this workspace.</p></div><button onClick={() => setConnectionTab('downloads')} className="text-sm text-indigo-300 hover:text-indigo-200 flex items-center gap-2"><Download size={16} /> Get the desktop app</button></div>}
+        {cloud && <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-4"><div><p className="text-sm font-medium">Your projects, on every computer</p><p className="text-xs text-zinc-500 mt-1">Download boredly desktop and sync it with this workspace.</p></div><button onClick={() => setConnectionTab('downloads')} className="text-sm text-indigo-300 hover:text-indigo-200 flex items-center gap-2"><Download size={16} /> Get the desktop app</button></div>}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           <AnimatePresence>
             {(boards || []).map((b) => (

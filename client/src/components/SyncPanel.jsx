@@ -196,7 +196,7 @@ export default function SyncPanel({ onClose }) {
                     value={token}
                     onChange={(e) => setToken(e.target.value)}
                     className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-indigo-500 transition-colors"
-                    placeholder="Paste your token from the Boardly account portal"
+                    placeholder="Paste your token from the boredly account portal"
                   />
                 </div>
                 {status.lastError && (
