@@ -35,7 +35,7 @@ function createChatGPTService({root,token,command='codex',spawnProcess=spawn,log
   child.stdin.on('error',()=>{});child.stderr.resume();
   readline.createInterface({input:child.stdout}).on('line',line=>{
    let msg;try{msg=JSON.parse(line);}catch{return;}
-   if(msg.id!==undefined&&pending.has(msg.id)){const r=pending.get(msg.id);pending.delete(msg.id);clearTimeout(r.timer);if(msg.error)r.reject(fail(502,'OpenAI could not complete sign-in. Enable device-code login in ChatGPT Settings → Security, then try again.'));else r.resolve(msg.result);}
+   if(msg.id!==undefined&&pending.has(msg.id)){const r=pending.get(msg.id);pending.delete(msg.id);clearTimeout(r.timer);if(msg.error){const network=/error sending request|certificate|timed out|connection refused/i.test(msg.error.message||'');r.reject(fail(network?503:400,network?'boredly could not reach OpenAI sign-in. Please retry shortly.':'OpenAI could not complete sign-in. Enable device-code login in ChatGPT Settings → Security, then try again.'));}else r.resolve(msg.result);}
    else if(msg.method==='account/login/completed'&&p.pending?.login_id===msg.params?.loginId){p.pending=null;p.error=msg.params.success?null:'ChatGPT sign-in was not completed. Start a new code and approve it in OpenAI.';}
    // No tool/approval request is ever forwarded or approved.
   });

@@ -56,8 +56,8 @@ const {connectorFixture}=require('./chatgpt-fixture.cjs'),{fixture}=require('./m
   // Disconnect one account while a generation is running. Neither its result
   // nor refreshed credentials may survive, and the other account stays usable.
   const slow=c.request(a,'respond',payload('slow-response'));await new Promise(r=>setTimeout(r,100));
-  const disconnect=f.api('/api/ai/chatgpt/disconnect',{user:a,method:'POST'}),during=f.api('/api/ai/chatgpt',opts(a));
-  assert.equal((await slow).status,401);await disconnect;assert.equal((await during).connected,false);
+  const disconnect=f.api('/api/ai/chatgpt/disconnect',{user:a,method:'POST'});
+  assert.equal((await slow).status,401);const during=f.api('/api/ai/chatgpt',opts(a));await disconnect;assert.equal((await during).connected,false);
   assert.equal((await f.api('/api/ai/settings',opts(a))).mode,'none');assert.equal((await f.api('/api/ai/chatgpt',opts(a))).connected,false);
   assert.equal((await f.api('/api/ai/chatgpt',opts(b))).connected,true);
   console.log('PASS: real process protocol harness, private service, independent customer logins, cancel/test/disconnect race, Ask/Plan/Work with scoped task actions, zero API charges, rate-limit errors and per-user onboarding persistence');
