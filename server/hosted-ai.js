@@ -86,7 +86,7 @@ function createHostedAI({db,uploadsDir,personal,canEdit,canUse=()=>false,retain,
     const text=(response.output||[]).filter(x=>x.type==='message').flatMap(x=>x.content||[]).filter(x=>x.type==='output_text').map(x=>x.text).join('\n');
     if(!text)throw Error('No answer');
     db.prepare("UPDATE discussion_jobs SET status='completed',draft=?,updated_at=? WHERE id=?").run(safeText(text),Date.now(),j.id);
-  }catch{if(current()==='running')db.prepare("UPDATE discussion_jobs SET status='failed',error='The reply could not finish. Check your AI settings and try again.',updated_at=? WHERE id=?").run(Date.now(),j.id);}
+  }catch(e){if(current()==='running')db.prepare("UPDATE discussion_jobs SET status='failed',error=?,updated_at=? WHERE id=?").run(safeText(e.status?e.message:'The reply could not finish. Check your AI settings and try again.'),Date.now(),j.id);}
   finally{clearInterval(beat);personal.flush();}
  }
  async function run(j){

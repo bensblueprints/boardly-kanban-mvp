@@ -3,6 +3,7 @@ import { motion } from 'framer-motion';
 import { KanbanSquare, Lock } from 'lucide-react';
 import { api } from './api.js';
 import {AccessContext} from './access.jsx';
+import GettingStarted from './components/GettingStarted.jsx';
 import AccountSettings from './components/AccountSettings.jsx';
 import BoardsHome from './components/BoardsHome.jsx';
 import BoardView from './components/BoardView.jsx';
@@ -78,6 +79,8 @@ function LocalApp() {
 }
 
 export function Workspace({ onLogout, cloud = false, access={workspaceOwner:true}, onSwitch }) {
+  const tutorialOpen=React.useRef(null);
+  const registerTutorial=React.useCallback(fn=>{tutorialOpen.current=fn;},[]);
   const [accountOpen,setAccountOpen]=useState(location.hash==='#/account'),[accountSection,setAccountSection]=useState(null);
   useEffect(()=>{const open=e=>{setAccountSection(e.detail?.section||null);setAccountOpen(true);};window.addEventListener('boardly-account',open);return()=>window.removeEventListener('boardly-account',open);},[]);
   const [boardId, setBoardId] = useState(() => {
@@ -98,7 +101,7 @@ export function Workspace({ onLogout, cloud = false, access={workspaceOwner:true
     location.hash = id ? `#/board/${id}` : '#/';
   }
 
-  return <AccessContext.Provider value={{...access,onSwitch}}><div className="h-full flex flex-col">{cloud&&<div className="shrink-0 flex justify-end items-center gap-4 border-b border-zinc-800 bg-zinc-950 px-5 py-2 text-xs"><span className="text-zinc-400">{access.workspaceOwner?'Account owner':'Shared workspace'}</span>{access.workspaces?.length>1&&<select aria-label="Workspace account" className="bg-zinc-900 rounded px-2 py-1" value={access.workspaceId} onChange={e=>onSwitch(e.target.value)}>{access.workspaces.map(w=><option key={w.owner_id} value={w.owner_id}>{w.name}</option>)}</select>}<button onClick={()=>{setAccountSection(null);setAccountOpen(true);}} className="text-indigo-300">Account & AI</button></div>}{accountOpen&&cloud&&<AccountSettings initialSection={accountSection} onClose={()=>{setAccountOpen(false);if(location.hash==='#/account')location.hash='#/';}}/>}<div className="flex-1 min-h-0">{boardId?<BoardView boardId={boardId} onBack={()=>openBoard(null)} cloud={cloud}/>:<BoardsHome onOpen={openBoard} onLogout={onLogout} cloud={cloud}/>}</div></div></AccessContext.Provider>;
+  return <AccessContext.Provider value={{...access,onSwitch}}><div className="h-full flex flex-col">{cloud&&<div className="shrink-0 flex flex-wrap justify-end items-center gap-3 border-b border-zinc-800 bg-zinc-950 px-5 py-2 text-xs"><span className="text-zinc-400">{access.workspaceOwner?'Account owner':'Shared workspace'}</span>{access.workspaces?.length>1&&<select aria-label="Workspace account" className="bg-zinc-900 rounded px-2 py-1" value={access.workspaceId} onChange={e=>onSwitch(e.target.value)}>{access.workspaces.map(w=><option key={w.owner_id} value={w.owner_id}>{w.name}</option>)}</select>}<button onClick={()=>tutorialOpen.current?.()} className="text-indigo-300">Help & tutorial</button><button onClick={()=>{setAccountSection(null);setAccountOpen(true);}} className="text-indigo-300">Account & AI</button></div>}{cloud&&<GettingStarted access={access} registerOpen={registerTutorial}/>}{accountOpen&&cloud&&<AccountSettings initialSection={accountSection} onClose={()=>{setAccountOpen(false);if(location.hash==='#/account')location.hash='#/';}}/>}<div className="flex-1 min-h-0">{boardId?<BoardView boardId={boardId} onBack={()=>openBoard(null)} cloud={cloud}/>:<BoardsHome onOpen={openBoard} onLogout={onLogout} cloud={cloud}/>}</div></div></AccessContext.Provider>;
 }
 
 const CloudApp = lazy(() => import('./CloudApp.jsx'));

@@ -14,6 +14,7 @@ function createPersonalAI({config,key,request=fetch}){
  db.prepare("UPDATE ai_requests SET status='review' WHERE status='pending'").run();
  const billing=require('./customer-billing').createBilling({db,config,request});
  const account=user=>db.prepare('SELECT * FROM ai_accounts WHERE user_id=?').get(user)||{user_id:user,mode:'none',model:'gpt-6-astra',monthly_cap_nano:20e9};
+ function setMode(user,mode){if(!['none','chatgpt'].includes(mode))throw Error('Invalid connection mode');const old=account(user);db.prepare('INSERT INTO ai_accounts VALUES (?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET mode=excluded.mode').run(user,mode,old.encrypted_key||null,old.model,old.monthly_cap_nano);}
  function seal(user,value){const iv=crypto.randomBytes(12),c=crypto.createCipheriv('aes-256-gcm',key,iv);c.setAAD(Buffer.from('personal-ai:'+user));return Buffer.concat([iv,c.update(value),c.final(),c.getAuthTag()]).toString('base64');}
  function unseal(user,value){const b=Buffer.from(value,'base64'),d=crypto.createDecipheriv('aes-256-gcm',key,b.subarray(0,12));d.setAAD(Buffer.from('personal-ai:'+user));d.setAuthTag(b.subarray(-16));return Buffer.concat([d.update(b.subarray(12,-16)),d.final()]).toString();}
  const month=()=>Date.UTC(new Date().getUTCFullYear(),new Date().getUTCMonth(),1);
@@ -30,7 +31,7 @@ function createPersonalAI({config,key,request=fetch}){
    if(summary(user).review)throw fail(409,'An interrupted AI request needs billing review before another charged run');
    return{...a,key:config.openaiApiKey};
   }
-  throw fail(402,'Add your own OpenAI API key or activate card billing in Account & AI');
+  throw fail(402,'Connect your ChatGPT account in Account & AI. You can also choose an OpenAI API key or card billing.');
  }
  function reserve(a,jobId,maximum){return db.transaction(()=>{
   if(db.prepare("SELECT id FROM ai_requests WHERE user_id=? AND status='pending'").get(a.user_id))throw fail(409,'Another AI request is running on your account');
@@ -69,7 +70,8 @@ function createPersonalAI({config,key,request=fetch}){
  router.put('/api/ai/settings',async(req,res,next)=>{
   try{
    const user=req.cloudUserId,old=account(user),{mode,model,api_key,monthly_cap}=req.body||{};
-   if(!['none','key','card'].includes(mode)||!RATES[model])throw fail(400,'Choose an AI payment method and model');
+   if(!['none','key','card','chatgpt'].includes(mode)||!RATES[model])throw fail(400,'Choose an AI connection and model');
+   if(mode==='chatgpt'&&old.mode!=='chatgpt')throw fail(400,'Connect and activate ChatGPT first');
    if(typeof monthly_cap!=='number'||monthly_cap<1||monthly_cap>10000||!Number.isSafeInteger(Math.round(monthly_cap*1e9)))throw fail(400,'Enter a monthly AI cap between $1 and $10,000');
    let encrypted=old.encrypted_key||null;
    if(api_key){
@@ -86,6 +88,6 @@ function createPersonalAI({config,key,request=fetch}){
   }catch(e){next(e.status?e:fail(503,'Could not verify the OpenAI key. Please try again.'));}
  });
  router.post('/api/ai/checkout',async(req,res,next)=>{try{if(!config.openaiApiKey)throw fail(503,'Card-funded AI is awaiting boredly’s OpenAI setup');if(req.body?.consent!==true)throw fail(400,'Confirm AI usage billing at 2× OpenAI rates');res.json(await billing.checkout(req.cloudUserId,'ai'));}catch(e){next(e);}});
- return{db,billing,router,summary,account,authorize,respond,flush,close(){clearInterval(timer);db.close();}};
+ return{db,billing,router,summary,account,setMode,authorize,respond,flush,close(){clearInterval(timer);db.close();}};
 }
 module.exports={createPersonalAI};

@@ -1,0 +1,32 @@
+# Optional private ChatGPT connector overlay for docker-compose.cloud.yml.
+# The token file must contain a random value of at least 32 characters and be
+# readable only by the service user (UID 1000). Do not publish the connector port.
+services:
+  boardly-cloud:
+    environment:
+      BOARDLY_CHATGPT_URL: http://chatgpt:5320
+      BOARDLY_CHATGPT_TOKEN_FILE: /run/secrets/chatgpt-token
+    volumes:
+      - ./secrets/chatgpt-token:/run/secrets/chatgpt-token:ro
+  chatgpt:
+    build:
+      context: .
+      dockerfile: Dockerfile.chatgpt
+    environment:
+      CHATGPT_TOKEN_FILE: /run/secrets/chatgpt-token
+    volumes:
+      - chatgpt-profiles:/profiles
+      - ./secrets/chatgpt-token:/run/secrets/chatgpt-token:ro
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=512m,mode=1777
+    read_only: true
+    restart: unless-stopped
+    init: true
+    mem_limit: 2g
+    pids_limit: 1024
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+volumes:
+  chatgpt-profiles:

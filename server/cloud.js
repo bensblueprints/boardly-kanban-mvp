@@ -41,6 +41,7 @@ function readCloudConfig(env = process.env) {
     jwtKey: env.CLERK_JWT_KEY || undefined,
     storageLimitBytes, freeEnabled: true, openaiApiKey: env.BOARDLY_OPENAI_API_KEY || '',
     audio: { url: env.BOARDLY_AUDIO_URL || '', token: env.BOARDLY_AUDIO_TOKEN_FILE ? fs.readFileSync(env.BOARDLY_AUDIO_TOKEN_FILE, 'utf8').trim() : env.BOARDLY_AUDIO_TOKEN || '' },
+    chatgpt: { url: env.BOARDLY_CHATGPT_URL || '', token: env.BOARDLY_CHATGPT_TOKEN_FILE ? fs.readFileSync(env.BOARDLY_CHATGPT_TOKEN_FILE, 'utf8').trim() : '' },
     billing:{portalConfiguration:env.STRIPE_PORTAL_CONFIGURATION_ID,secretKey:env.STRIPE_SECRET_KEY,webhookSecret:env.STRIPE_WEBHOOK_SECRET,serialPrice:env.STRIPE_SERIAL_PRICE_ID,agencyPrice:env.STRIPE_AGENCY_PRICE_ID,seatPrice:env.STRIPE_SEAT_PRICE_ID,aiPrice:env.STRIPE_AI_PRICE_ID,meterEvent:env.STRIPE_AI_METER_EVENT},
   };
 }
@@ -76,6 +77,7 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
   const {planFor,createPlanService,PLANS} = require('./account-plans');
   const planService = createPlanService(config,identity);
   const personal=require('./personal-ai').createPersonalAI({config,key:projectKey,request:providerRequest});
+  const chatgpt=require('./chatgpt').createChatGPT(config.chatgpt,personal);
   const tailnet=require('./tailnet').createTailnet(config.tailnet||{url:process.env.BOARDLY_TAILNET_URL,token:process.env.BOARDLY_TAILNET_TOKEN_FILE?fs.readFileSync(process.env.BOARDLY_TAILNET_TOKEN_FILE,'utf8').trim():undefined});
   app.use(personal.billing.webhook);
   const dist = path.join(__dirname, '..', 'dist');
@@ -127,8 +129,9 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
       tenant.subscription=require('./subscription-ai').createSubscriptionAI({db:local.db,ownerId,canEdit,connections});
       const funded={...personal,authorize:async(actor)=>{
         if(ownerId===config.ownerId&&personal.account(ownerId).mode==='none')return{user_id:ownerId,actor_id:actor,mode:'subscription',model:personal.account(ownerId).model};
+        if(personal.account(ownerId).mode==='chatgpt')return chatgpt.authorize(ownerId);
         return personal.authorize(ownerId);
-      },respond:(a,id,payload)=>a.mode==='subscription'?tenant.subscription.respond(a.actor_id,id,payload):personal.respond(a,id,payload)};
+      },respond:(a,id,payload)=>a.mode==='subscription'?tenant.subscription.respond(a.actor_id,id,payload):a.mode==='chatgpt'?chatgpt.respond(a,id,payload):personal.respond(a,id,payload)};
       tenant.chat.hosted=require('./hosted-ai').createHostedAI({db:local.db,uploadsDir:tenant.uploadsDir,personal:funded,canEdit:(actor,id)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).project(id)==='editor',canUse:(actor,id,scope)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).capabilities('project',id).includes(scope),retain:()=>tenant.active++,release:()=>tenant.active--,storageLimit:()=>tenant.plan.storage_bytes,organization:tenant.chat.organization,ssh:tenant.ssh,github:tenant.github});
       tenant.chat.organization.router.enqueueApi=()=>tenant.chat.hosted.enqueue();
       tenant.assets=createProjectAssets({db:local.db,uploadsDir:tenant.uploadsDir,limitBytes:plan.storage_bytes});
@@ -173,6 +176,8 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
   });
   app.use(tailnet.router);
   app.use(personal.router);
+  app.use(chatgpt.router);
+  app.use(require('./onboarding').createOnboarding(personal.db));
   app.get('/api/billing/status',async(req,res,next)=>{try{const state=await personal.billing.state(req.cloudUserId);res.json({ready:state.ready,ai_active:state.ai,extra_users:state.extra_users});}catch(e){next(e);}});
   app.post('/api/billing/portal',async(req,res,next)=>{try{res.json(await personal.billing.portal(req.cloudUserId));}catch(e){next(e);}});
   app.post('/api/billing/checkout',express.json({limit:'4kb'}),async(req,res,next)=>{try{if(!req.workspaceIsOwner)throw Object.assign(Error('Only the account owner can purchase the workspace plan or additional users'),{status:403});if(!['serial_entrepreneur','agency','extra_users'].includes(req.body?.kind))throw Object.assign(Error('Choose a plan or additional users'),{status:400});res.json(await personal.billing.checkout(req.cloudUserId,req.body.kind,req.body.quantity));}catch(e){next(e);}});
@@ -181,11 +186,11 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
     const payer=req.workspaceOwnerId,mode=personal.account(payer).mode;
     const subscription=payer===config.ownerId&&mode==='none';
     req.aiRuntime=req.workspaceIsOwner&&subscription?'codex':'api';
-    req.aiFunding=subscription?'owner_subscription':'owner_api';
-    req.personalAiAllowed=subscription?req.tenant.subscription.online():mode==='key'||(mode==='card'&&personal.summary(payer).billing_ready);
+    req.aiFunding=subscription?'owner_subscription':mode==='chatgpt'?'owner_chatgpt':'owner_api';
+    req.personalAiAllowed=subscription?req.tenant.subscription.online():mode==='chatgpt'?chatgpt.configured:mode==='key'||(mode==='card'&&personal.summary(payer).billing_ready);
     if(req.aiRuntime==='api'&&req.method==='POST'&&(/^\/api\/chat\/threads\/[^/]+\/messages$/.test(req.path)||/^\/api\/boards\/\d+\/agent$/.test(req.path)||/^\/api\/agents\/(company|board)\/\d+\/swarms$/.test(req.path)||/^\/api\/discussions\/threads\/[^/]+\/messages$/.test(req.path)||/^\/api\/audio\/(project|company|board)\/\d+\/work$/.test(req.path))){
       if(subscription&&!req.personalAiAllowed)throw Object.assign(Error('The company owner’s subscription worker is offline. Ask the owner to reconnect it.'),{status:503});
-      if(!subscription)try{await personal.authorize(payer);}catch(e){if(!req.workspaceIsOwner)throw Object.assign(Error('Company AI funding is unavailable. Ask the company owner to check Account & AI.'),{status:e.status||503});throw e;}
+      if(!subscription)try{await(mode==='chatgpt'?chatgpt.authorize(payer):personal.authorize(payer));}catch(e){if(!req.workspaceIsOwner)throw Object.assign(Error('Company AI funding is unavailable. Ask the company owner to check Account & AI.'),{status:e.status||503});throw e;}
     }
     next();
   }catch(e){next(e);}});
