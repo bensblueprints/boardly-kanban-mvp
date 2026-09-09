@@ -2,6 +2,8 @@
 
 The private preview now runs the owner's Codex worker on Hetzner, independently of the desktop. Four different projects can work concurrently; a project's writers remain serialized. Assigned Work continues across model sessions until completed, blocked or cancelled. Idle workers poll for explicitly queued assignments; they do not automatically start the existing backlog. Ask and Plan keep their action tools disabled.
 
+Project chat's **New chat** starts a separate conversation in Ask mode. Ask and Plan conversations can run alongside Work in the same project while capacity is available; replies within one conversation stay in order. The history selector shows active and queued conversations. Queued Work explains whether another project writer is active, a cancelled run is still stopping, or all four agents are busy. Opening another chat does not cancel or convert the original assignment. Multiple Work chats in a shared project continue to wait for one another because they use the same project files and remote connections.
+
 The owner worker uses a private cached Codex sign-in in its own persistent state directory. Customer API runs use each customer's configured funding/key and permissions. API agents can manage the scoped Boardly work and authorized SSH connections, but do not acquire the owner's shell, browser or Codex account. Rate limits, expired sign-in, exhausted funding and missing access remain real blockers. This architecture supports operation around the clock; it is not an uptime or unlimited-compute guarantee.
 
 ## Production runtime

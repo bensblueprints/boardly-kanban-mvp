@@ -23,7 +23,14 @@ export default function RunActivity({ run, online }) {
     if (feed.current && following.current && live) feed.current.scrollTop = feed.current.scrollHeight;
   }, [activities.length, lastActivity, open, live]);
   const failed = ['failed', 'interrupted', 'cancelled', 'blocked'].includes(run.status);
-  const title = run.status === 'queued' ? `Queued${run.queuePosition > 1 ? ` · position ${run.queuePosition}` : ''}` : run.status === 'running' ? run.progress || 'Codex is working' : run.status === 'completed' ? 'Work completed' : run.status==='blocked'?'Blocked · action needed':run.status==='recovering'?'Recovering cloud assignment':run.status === 'cancelled' ? 'Run stopped' : 'Run did not finish';
+  const queueReason = {
+    project_work: 'Another Work conversation is changing this project. This request will start when it finishes. Ask and Plan chats can run alongside it when an agent is available.',
+    conversation: 'An earlier request in this conversation is still active. Open a new chat to discuss something else.',
+    stopping: 'A previous run is still stopping. This request will start after the worker confirms it has stopped.',
+    capacity: 'All four agents are busy. This request will start when an agent becomes available.',
+    ready: 'Ready to start. Waiting for the next available agent.'
+  }[run.queue?.reason] || 'Waiting for an available agent to start this request.';
+  const title = run.status === 'queued' ? run.queue?.reason === 'project_work' ? 'Waiting for this project’s Work chat' : run.queue?.reason === 'stopping' ? 'Waiting for previous run to stop' : 'Queued' : run.status === 'running' ? run.progress || 'Codex is working' : run.status === 'completed' ? 'Work completed' : run.status==='blocked'?'Blocked · action needed':run.status==='recovering'?'Recovering cloud assignment':run.status === 'cancelled' ? 'Run stopped' : 'Run did not finish';
   // The completed answer is already rendered as a chat message.
   const visible = activities.filter(a => !(run.status === 'completed' && a.kind === 'update' && a.detail === run.draft));
   return <section aria-label="Codex activity" className="rounded-xl border border-zinc-800 bg-zinc-900/60 overflow-hidden mr-3">
@@ -33,7 +40,7 @@ export default function RunActivity({ run, online }) {
       {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
     </button>
     {live && <div className={`px-3 pb-3 text-xs ${run.status === 'running' && contactAge > 15000 ? 'text-amber-300' : 'text-zinc-400'}`}>
-      {run.status === 'queued' ? online ? 'Waiting for an available agent to start this request.' : 'The agent worker is offline. This request is saved in the queue.' : <><span className="block">{contactAge > 15000 ? 'Worker disconnected — this run will continue when it reconnects' : 'Worker connected'} · last contact {duration(contactAge)} ago</span><span className="block mt-1">Last activity {duration(now - lastActivity)} ago{now - lastActivity > 30000 ? ' · no new activity reported yet' : ''}</span></>}
+      {run.status === 'queued' ? online ? queueReason : 'The agent worker is offline. This request is saved in the queue.' : <><span className="block">{contactAge > 15000 ? 'Worker disconnected — this run will continue when it reconnects' : 'Worker connected'} · last contact {duration(contactAge)} ago</span><span className="block mt-1">Last activity {duration(now - lastActivity)} ago{now - lastActivity > 30000 ? ' · no new activity reported yet' : ''}</span></>}
     </div>}
     {open && <div ref={feed} onScroll={e => { const el = e.currentTarget; following.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48; }} className="max-h-80 overflow-y-auto border-t border-zinc-800 px-3 py-2 space-y-3">
       {visible.map(a => <div key={a.key} className="flex items-start gap-2 text-sm">

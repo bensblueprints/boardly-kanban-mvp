@@ -4,7 +4,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const multer = require('multer');
 const { safeText } = require('./agent-activity');
-const { MAX_AGENTS, nextProjectJob, snapshot, cleanValues } = require('./agent-scheduling');
+const { MAX_AGENTS, nextProjectJob, projectQueue, snapshot, cleanValues } = require('./agent-scheduling');
 
 function createProjectChat({ db, connections, userId, uploadsDir, environment, payments, email, ssh, github, canUseGithub=(actor)=>actor===userId, canUseSsh=(actor)=>actor===userId }) {
   const router = express.Router();
@@ -89,7 +89,9 @@ function createProjectChat({ db, connections, userId, uploadsDir, environment, p
     expireJobs();
     const cardId = req.query.card_id == null ? null : Number(req.query.card_id);
     if (cardId !== null && (!Number.isSafeInteger(cardId) || !task(req.params.boardId, cardId))) return res.status(404).json({ error: 'Task does not belong to this project' });
-    res.json(db.prepare('SELECT id,board_id,card_id,title,created_at FROM chat_threads WHERE board_id=? AND card_id IS ? ORDER BY created_at DESC,rowid DESC').all(req.params.boardId, cardId));
+    res.json(db.prepare(`SELECT t.id,t.board_id,t.card_id,t.title,t.created_at,j.status AS job_status,j.mode AS job_mode
+      FROM chat_threads t LEFT JOIN chat_jobs j ON j.id=(SELECT id FROM chat_jobs WHERE thread_id=t.id ORDER BY created_at DESC,rowid DESC LIMIT 1)
+      WHERE t.board_id=? AND t.card_id IS ? ORDER BY t.created_at DESC,t.rowid DESC`).all(req.params.boardId, cardId));
   });
   router.get('/api/boards/:boardId/chat/context',(req,res)=>{
     const id=Number(req.params.boardId),actor=req.cloudUserId||userId;
@@ -112,7 +114,7 @@ function createProjectChat({ db, connections, userId, uploadsDir, environment, p
     const runs = db.prepare('SELECT id,message_id,mode,status,progress,draft,error,created_at,started_at,updated_at,worker_host,continuation_count,blocker_card_id,blocker,next_action FROM chat_jobs WHERE thread_id=? ORDER BY created_at DESC,rowid DESC LIMIT 20').all(t.id);
     for (const run of runs) {
       run.activity = db.prepare('SELECT event_key AS key,kind,title,detail,status,created_at,updated_at FROM chat_activity WHERE job_id=? ORDER BY created_at DESC,rowid DESC LIMIT 100').all(run.id).reverse();
-      if (run.status === 'queued') run.queuePosition = db.prepare("SELECT COUNT(*) n FROM chat_jobs WHERE status IN ('queued','running') AND (created_at<? OR id=?)").get(run.created_at, run.id).n;
+      if (run.status === 'queued') run.queue = projectQueue(db, run.id);
     }
     res.json({ thread: t, task: task(t.board_id, t.card_id), messages: db.prepare('SELECT * FROM chat_messages WHERE thread_id=? ORDER BY created_at,rowid').all(t.id),
       job: runs[0] || null, runs });

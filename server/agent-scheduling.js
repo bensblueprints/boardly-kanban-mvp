@@ -6,13 +6,32 @@ function cleanValues(value, clean) {
   if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key,item]) => [key,cleanValues(item,clean)]));
   return value;
 }
+// Claims and queue explanations must agree, including a cancelled writer still stopping.
+const projectBlocker = `(r.status IN ('running','recovering') OR (r.status='cancelled' AND r.worker_id IS NOT NULL AND r.settled_at IS NULL AND r.updated_at>strftime('%s','now')*1000-604800000)) AND (r.thread_id=j.thread_id OR (rt.board_id=t.board_id AND r.mode='work' AND j.mode='work'))`;
 // Keep writers to a shared project in order; other projects and discussions can run together.
 function nextProjectJob(db, runtime) {
   return db.prepare(`SELECT j.*,t.board_id,t.card_id FROM chat_jobs j JOIN chat_threads t ON t.id=j.thread_id
     WHERE j.status='queued' AND j.runtime=? AND NOT EXISTS (
       SELECT 1 FROM chat_jobs r JOIN chat_threads rt ON rt.id=r.thread_id
-      WHERE (r.status IN ('running','recovering') OR (r.status='cancelled' AND r.worker_id IS NOT NULL AND r.settled_at IS NULL AND r.updated_at>strftime('%s','now')*1000-604800000)) AND (r.thread_id=j.thread_id OR (rt.board_id=t.board_id AND r.mode='work' AND j.mode='work')))
+      WHERE ${projectBlocker})
     ORDER BY j.created_at,j.rowid LIMIT 1`).get(runtime);
+}
+function projectQueue(db, id) {
+  const job = db.prepare("SELECT runtime FROM chat_jobs WHERE id=? AND status='queued'").get(id);
+  if (!job) return null;
+  const blocker = db.prepare(`SELECT r.status,r.thread_id=j.thread_id AS same_thread
+    FROM chat_jobs j JOIN chat_threads t ON t.id=j.thread_id
+    JOIN chat_jobs r JOIN chat_threads rt ON rt.id=r.thread_id
+    WHERE j.id=? AND ${projectBlocker} ORDER BY r.created_at,r.rowid LIMIT 1`).get(id);
+  if (blocker) return { reason: blocker.status === 'cancelled' ? 'stopping' : blocker.same_thread ? 'conversation' : 'project_work' };
+  let active = db.prepare(`SELECT
+    (SELECT COUNT(*) FROM chat_jobs WHERE runtime=? AND status='running') +
+    (SELECT COUNT(*) FROM discussion_jobs WHERE runtime=? AND status='running') AS total`).get(job.runtime, job.runtime).total;
+  // The cloud worker also serves the owner's subscription bridge in these slots.
+  if (job.runtime === 'codex' && db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='subscription_requests'").get()) {
+    active += db.prepare("SELECT COUNT(*) AS total FROM subscription_requests WHERE status='running'").get().total;
+  }
+  return { reason: active >= MAX_AGENTS ? 'capacity' : 'ready' };
 }
 function snapshot(db, ids, {github,ssh} = {}) {
   return ids.map(id => ({
@@ -34,4 +53,4 @@ function snapshot(db, ids, {github,ssh} = {}) {
 const modeInstruction = mode => mode === 'plan'
   ? 'PLAN MODE. Discuss and clarify the request, then propose a concrete plan. Ask concise questions if needed. Do not execute the plan, change tasks or files, send messages, or start agents. The user must explicitly switch to Work to authorize action.'
   : 'ASK MODE. Answer questions, explore ideas and ask for clarification. Do not change anything, execute commands, send messages or start agents. The user must explicitly switch to Work to authorize action.';
-module.exports = { cleanValues, MAX_AGENTS, nextProjectJob, snapshot, modeInstruction };
+module.exports = { cleanValues, MAX_AGENTS, nextProjectJob, projectQueue, snapshot, modeInstruction };
