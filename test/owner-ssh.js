@@ -8,12 +8,15 @@ const {Server,utils}=require('ssh2'),{fixture}=require('./member-fixture'),{crea
  const jump=await f.api('/api/account/ssh',{method:'POST',body:{...config,label:'Owner jump'}}),target=await f.api('/api/account/ssh',{method:'POST',body:{...config,label:'Owner target',jump_id:jump.id}});
  assert.ok(!JSON.stringify(target).includes(password));assert.equal((await f.api(`/api/companies/${a.company.id}/ssh`)).inherited.length,2);assert.equal((await f.api(`/api/projects/${b.project.id}/ssh`)).inherited.length,2);
  assert.equal((await f.api(`/api/account/ssh/${target.id}/test`,{method:'POST',body:{}})).connected,true);assert.equal(forwards,1);assert.equal(commands,0);
+ for(const scope of [`projects/${a.project.id}`,`companies/${b.company.id}`])assert.equal((await f.api(`/api/${scope}/ssh/${target.id}/test`,{method:'POST',body:{}})).connected,true);assert.equal(commands,0,'Inherited tests only authenticate');
  assert.equal((await f.request(`/api/account/ssh/${jump.id}`,{method:'PATCH',body:{jump_id:target.id}})).status,400,'cycles rejected');
  const member=(await f.api(`/api/companies/${a.company.id}/members`,{method:'POST',body:{email:'ssh@example.com',role:'editor'}})).member.user_id;
  const m={user:member,workspace:'user_owner'},ga=(await f.api(`/api/companies/${a.company.id}/members`)).members[0].grant_id;
  assert.equal((await f.request(`/api/projects/${a.project.id}/ssh`,m)).status,403);
  await f.api(`/api/memberships/${ga}`,{method:'PATCH',body:{owner_ssh:true}});
  assert.equal((await f.api(`/api/projects/${a.project.id}/ssh`,m)).inherited.length,2);
+ assert.equal((await f.api(`/api/projects/${a.project.id}/ssh/${target.id}/test`,{...m,method:'POST',body:{}})).connected,true);
+ assert.equal((await f.request(`/api/projects/${c.project.id}/ssh/${target.id}/test`,{...m,method:'POST',body:{}})).status,403);
  assert.equal((await f.request(`/api/projects/${c.project.id}/ssh`,m)).status,403);
  await f.api(`/api/projects/${b.project.id}/members`,{method:'POST',body:{email:'ssh@example.com',role:'editor'}});
  assert.equal((await f.api(`/api/projects/${b.project.id}/ssh`,m)).inherited.length,2,'future project grant inherits owner SSH');assert.equal((await f.request(`/api/companies/${b.company.id}/ssh`,m)).status,403,'project guest stays project-only');

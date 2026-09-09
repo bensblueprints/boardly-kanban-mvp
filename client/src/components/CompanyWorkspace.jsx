@@ -40,6 +40,9 @@ export default function CompanyWorkspace({onOpen,cloud=true}){
  const companyId=view.kind==='company'?company?.id??null:board?.company_id??null;
  const heading=view.kind==='home'?'Companies':view.kind==='company'?company?.name||'Unassigned boards':board?.name||'Board not found';
  const boards=data.boards.filter(b=>b.company_id===companyId),projects=data.projects.filter(p=>p.parent_board_id===board?.id);
+ const audioCompany=owner?(view.kind==='home'?data.companies[0]:data.companies.find(c=>c.id===companyId)):null;
+ const audioProject=(view.kind==='collection'?projects:data.projects).find(p=>owner||p.role==='editor');
+ const audioTarget=audioCompany?{kind:'company',id:audioCompany.id}:audioProject?{kind:'project',id:audioProject.id}:null;
  function newForm(kind){setForm({kind,name:'',id:null});}
  async function save(e){e.preventDefault();await act(async()=>{
    const paths={company:'/api/companies',board:'/api/company-boards',project:'/api/projects'};const body={name:form.name};
@@ -54,8 +57,8 @@ export default function CompanyWorkspace({onOpen,cloud=true}){
    <div className="flex gap-2" hidden={!owner}>{view.kind==='home'?<button className={button+' bg-indigo-600'} onClick={()=>newForm('company')}>New company</button>:view.kind==='company'?<><button className={button} onClick={()=>newForm('board')}>New board</button>{company&&<button className={button} onClick={()=>setForm({kind:'company',id:company.id,name:company.name})}>Rename company</button>}</>:board&&<><button className={button+' bg-indigo-600'} onClick={()=>newForm('project')}>New project</button><button className={button} onClick={()=>setForm({kind:'board',id:board.id,name:board.name})}>Rename board</button></>}</div>
   </div>
   {owner&&cloud&&((view.kind==='company'&&company)||(view.kind==='collection'&&board))&&<button className={button+' border-indigo-500 text-indigo-200'} onClick={()=>setShowAI(true)}>Chat with AI / Agent swarm</button>}
-  {owner&&cloud&&view.kind==='company'&&company&&<button className={button+' border-indigo-500 text-indigo-200'} onClick={()=>setShowAudio(true)}>Audio briefing</button>}
-  {showAudio&&company&&<AudioBriefing key={company.id} kind="company" id={company.id} onClose={()=>setShowAudio(false)}/>}
+  {cloud&&audioTarget&&<button className={button+' border-indigo-400 text-indigo-100'} onClick={()=>setShowAudio(audioTarget)}>Audio briefing</button>}
+  {showAudio&&<AudioBriefing key={showAudio.kind+showAudio.id} kind={showAudio.kind} id={showAudio.id} onClose={()=>setShowAudio(false)}/>}
   {showAI&&<AgentHub key={view.kind+view.id} kind={view.kind==='company'?'company':'board'} id={Number(view.id)} onClose={()=>setShowAI(false)} onOpen={onOpen}/>}
   {error&&<p role="alert" className="text-sm text-rose-300">{error}</p>}
   {form&&<form onSubmit={save} className="p-4 rounded-xl border border-indigo-500/40 bg-zinc-900 flex flex-wrap gap-3"><label className="flex-1 min-w-48"><span className="sr-only">{form.kind} name</span><input className={input+' w-full'} placeholder={`${form.kind[0].toUpperCase()+form.kind.slice(1)} name`} maxLength={200} autoFocus required value={form.name} onChange={e=>setForm({...form,name:e.target.value})}/></label><button disabled={busy} className={button+' bg-indigo-600'}>{form.id?'Save name':`Create ${form.kind}`}</button><button type="button" className={button} onClick={()=>setForm(null)}>Cancel</button></form>}

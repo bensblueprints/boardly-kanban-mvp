@@ -11,3 +11,11 @@ Shared connections can route through another owner SSH connection as a jump host
 Edit connection preserves saved credentials when fields are blank. A profile imported without a trusted fingerprint remains disabled and cannot authenticate until the owner supplies a verified fingerprint. Connection tests authenticate without running a remote command. Offline devices and invalid remote logins remain visible so their settings can be repaired.
 
 Storage adds a separate owner_ssh_connections table; scoped SSH rows and their encryption binding remain unchanged. The account_members.owner_ssh field defaults to zero. The prior company-team app ignores these additions and uses explicit column inserts, allowing rollback while preserving data. Older pre-scopes builds still require their documented membership compatibility fix.
+
+## Finding and testing shared connections
+
+Account & AI → SSH across your companies is the shared library for all current and future companies and projects in that account. Company and project SSH panels list inherited connections, including saved connections with agent access paused. Each inherited connection has a Test connection control that authenticates from Boardly using the existing pinned host and saved credentials. The test resolves inheritance and rechecks live permissions; it does not run commands or allow a scoped member to change the account connection.
+
+Project/task chat shows the number of enabled connections and how many are shared from the account. Expand the SSH summary to see their names, source and agent setting, or open SSH settings. Manage account SSH connections opens and focuses the shared library for the owner.
+
+Fresh SSH metadata is included in native and hosted Ask/Plan project snapshots, company discussions, audio summaries, and hosted Work context. Work claims identify each enabled connection's account/company/project source. This helps the AI distinguish existing saved access from a missing connection without exposing credentials. Ask and Plan describe saved configuration; only Work runs SSH commands. Network reachability and service permissions still require a real check, and paused connections remain visible without being enabled automatically.

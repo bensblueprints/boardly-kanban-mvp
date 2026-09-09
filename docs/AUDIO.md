@@ -1,6 +1,6 @@
 # Company and project audio briefings
 
-Open **Audio briefing** from a company or project, select a scope, and press **Start briefing**. **Fresh summary** asks again using current saved tasks, comments, checklists and dates. Replies are saved under the **Audio briefing** conversation in that scope. The panel can replay any of its saved replies and offers three English speaking voices.
+Open **Audio briefing** from Companies, a board overview, a company, a project, or its AI chat (including maximized chat), select a scope, and press **Start briefing**. The project shortcut sits beside Chat with AI and the toolbar wraps on narrow screens. A board overview starts with its parent company; the selector can switch to an individual project. **Fresh summary** asks again using current saved tasks, comments, checklists and dates. Replies are saved under the **Audio briefing** conversation in that scope. The panel can replay any of its saved replies and offers three English speaking voices.
 
 Press **Record question**, allow the microphone, and press **Finish recording**. Review the transcript and press **Send question**. Recording stops after one minute. Typed questions work as well. Replies always use Ask mode: speaking with the briefing AI does not edit tasks or start agents. Close the panel or change the selected scope to release the microphone and stop pending playback. A browser that blocks automatic playback shows a Play control.
 

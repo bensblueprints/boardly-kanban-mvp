@@ -6,7 +6,7 @@ const multer = require('multer');
 const { safeText } = require('./agent-activity');
 const { MAX_AGENTS, nextProjectJob, snapshot, cleanValues } = require('./agent-scheduling');
 
-function createProjectChat({ db, connections, userId, uploadsDir, environment, payments, email, ssh, github, canUseGithub=(actor)=>actor===userId }) {
+function createProjectChat({ db, connections, userId, uploadsDir, environment, payments, email, ssh, github, canUseGithub=(actor)=>actor===userId, canUseSsh=(actor)=>actor===userId }) {
   const router = express.Router();
   db.exec(`CREATE TABLE IF NOT EXISTS chat_threads (
     id TEXT PRIMARY KEY, board_id INTEGER NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
@@ -47,7 +47,8 @@ function createProjectChat({ db, connections, userId, uploadsDir, environment, p
     .run(crypto.randomUUID(), threadId, role, content, Date.now());
   const body = express.json({ limit: '1mb' });
   const githubContext=(actor,id)=>canUseGithub(actor,id)?github?.context(id)||{status:'not_connected',saved:false}:{status:'restricted',saved:null};
-  const organization = require('./organization-agents').createOrganizationAgents({db,clean,userId,hosted:()=>router.hosted,githubContext});
+  const sshContext=(actor,id)=>canUseSsh(actor,id)?ssh?.context?.(id)||{status:'not_connected',saved:false,connections:[]}:{status:'restricted',saved:null,connections:[]};
+  const organization = require('./organization-agents').createOrganizationAgents({db,clean,userId,hosted:()=>router.hosted,githubContext,sshContext});
   router.organization=organization; router.use(organization.router);
   function expireJobs() {
     db.prepare("UPDATE chat_jobs SET status='interrupted',error='Codex worker disconnected. Review the result before sending another message.',updated_at=? WHERE status='running' AND updated_at<?")
@@ -93,7 +94,7 @@ function createProjectChat({ db, connections, userId, uploadsDir, environment, p
   router.get('/api/boards/:boardId/chat/context',(req,res)=>{
     const id=Number(req.params.boardId),actor=req.cloudUserId||userId;
     if(!db.prepare('SELECT id FROM boards WHERE id=?').get(id))return res.status(404).json({error:'Project not found'});
-    res.json({github:githubContext(actor,id),can_manage_github:canUseGithub(actor,id),scope:hierarchy.scope(id)});
+    res.json({ssh:sshContext(actor,id),can_manage_ssh:canUseSsh(actor,id),github:githubContext(actor,id),can_manage_github:canUseGithub(actor,id),scope:hierarchy.scope(id)});
   });
   router.post('/api/boards/:boardId/chat/threads', body, (req, res) => {
     if (!db.prepare('SELECT id FROM boards WHERE id=?').get(req.params.boardId)) return res.status(404).json({ error: 'Project not found' });
@@ -170,7 +171,7 @@ function createProjectChat({ db, connections, userId, uploadsDir, environment, p
       require('./hierarchy').ensureProjects(db);
       const scope = hierarchy.scope(t.board_id);
       db.prepare('UPDATE chat_jobs SET company_id=? WHERE id=?').run(scope?.company_id ?? null,j.id);
-      if(j.mode!=='work')return {...j,status:'running',context:cleanValues(snapshot(db,[t.board_id],{github:id=>githubContext(j.requested_by||userId,id)}),value=>clean(t.board_id,value)),history:db.prepare('SELECT role,content FROM chat_messages WHERE thread_id=? ORDER BY created_at,rowid').all(t.id).slice(-40),prompt:db.prepare('SELECT content FROM chat_messages WHERE id=?').get(j.message_id).content};
+      if(j.mode!=='work')return {...j,status:'running',context:cleanValues(snapshot(db,[t.board_id],{github:id=>githubContext(j.requested_by||userId,id),ssh:id=>sshContext(j.requested_by||userId,id)}),value=>clean(t.board_id,value)),history:db.prepare('SELECT role,content FROM chat_messages WHERE thread_id=? ORDER BY created_at,rowid').all(t.id).slice(-40),prompt:db.prepare('SELECT content FROM chat_messages WHERE id=?').get(j.message_id).content};
       return { ...j, status: 'running', sessionId: t.codex_session_id,
         board: db.prepare('SELECT id,uuid,name,description FROM boards WHERE id=?').get(t.board_id),
         hierarchy: scope,

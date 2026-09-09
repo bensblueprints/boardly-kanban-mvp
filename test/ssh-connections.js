@@ -8,9 +8,11 @@ const {Server,utils}=require('ssh2'),{fixture}=require('./member-fixture'),{crea
  const a=await f.project('SSH Company','Allowed'),b=await f.project('Other Company','Private');
  const config={label:'QA SSH',host:'127.0.0.1',port,username:'qa',auth_type:'password',password,fingerprint,allow_agent:false};
  const c=await f.api(`/api/companies/${a.company.id}/ssh`,{method:'POST',body:config});assert.equal(c.password,undefined);assert.equal(c.encrypted,undefined);
- assert.equal((await f.api(`/api/projects/${a.project.id}/ssh`)).inherited.length,0);
+ assert.equal((await f.api(`/api/projects/${a.project.id}/ssh`)).inherited[0].allow_agent,0,'Paused inherited connections remain visible');
  await f.api(`/api/companies/${a.company.id}/ssh/${c.id}`,{method:'PATCH',body:{allow_agent:true}});
  assert.equal((await f.api(`/api/projects/${a.project.id}/ssh`)).inherited.length,1);assert.equal((await f.api(`/api/projects/${b.project.id}/ssh`)).inherited.length,0);
+ assert.equal((await f.api(`/api/projects/${a.project.id}/ssh/${c.id}/test`,{method:'POST',body:{}})).connected,true);
+ assert.equal((await f.request(`/api/projects/${b.project.id}/ssh/${c.id}/test`,{method:'POST',body:{}})).status,404,'Another company cannot test this connection');
  assert.equal((await f.api(`/api/companies/${a.company.id}/ssh/${c.id}/test`,{method:'POST',body:{}})).connected,true);assert.equal(commands,0,'connection test does not execute a command');
  const result=await connectSSH(config,{command:'fixture command'});assert.equal(result.code,0);assert.ok(result.stdout.includes('SSH fixture OK'));assert.ok(!result.stdout.includes(password));
  await assert.rejects(()=>connectSSH({...config,fingerprint:'SHA256:'+'a'.repeat(43)}),/fingerprint/);

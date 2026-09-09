@@ -389,12 +389,12 @@ export default function BoardView({ boardId, onBack, cloud = false }) {
 
       {cloud && <nav aria-label="Project tools" className="project-tools shrink-0 flex items-center gap-3 px-5 py-3 border-b border-zinc-800 bg-zinc-950/60">
         {cloud && <button onClick={() => { setChatTask(null); setChatThread(null); setShowChat(true); }} className="flex items-center gap-2 text-sm px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500"><MessageSquare size={16} /> Chat with AI</button>}
+        {!readOnly && <button onClick={() => setShowAudio(true)} className="text-sm text-indigo-100 border border-indigo-400 rounded-lg px-3 py-1.5">Audio briefing</button>}
         {cloud && <button disabled={deployBusy||readOnly} onClick={() => launchAgent()} className="text-sm text-indigo-300 border border-indigo-500/30 rounded-lg px-3 py-1.5 disabled:opacity-50">{deployBusy ? 'Starting…' : 'Deploy agent'}</button>}
         {cloud && <button onClick={() => setAssetsTab('files')} className="text-sm text-zinc-300 px-2">Files</button>}
         {cloud && <button onClick={() => setAssetsTab('links')} className="text-sm text-zinc-300 px-2">Links</button>}
         {cloud && can('ssh') && <button onClick={() => setAssetsTab('ssh')} className="text-sm text-zinc-300 px-2">SSH</button>}
         {cloud && can('github') && <button onClick={() => setAssetsTab('github')} className="text-sm text-zinc-300 px-2">GitHub</button>}
-        {cloud && !readOnly && <button onClick={() => setShowAudio(true)} className="text-sm text-indigo-200 px-2">Audio briefing</button>}
         {cloud && can('environment') && <button onClick={() => setAssetsTab('environment')} className="text-sm text-zinc-300 px-2">Environment</button>}
         {cloud && can('payments') && <button onClick={() => setAssetsTab('payments')} className="text-sm text-zinc-300 px-2">Payments</button>}
         {cloud && owner && <button onClick={() => setConnections(true)} className="text-sm text-zinc-400 hover:text-zinc-200 px-2">Connections</button>}

@@ -90,16 +90,30 @@ function createSshConnections({db,key,namespace,connector=connectSSH,tailnet}){
   return list(kind,id).find(x=>x.id===r.id);
  }
  const hierarchy=require('./hierarchy').createHierarchy(db);
- function agentList(projectId){const current=hierarchy.scope(projectId);if(!current)return[];return db.prepare(`SELECT ${columns} FROM ${all} WHERE allow_agent=1 AND (project_id=? OR company_id=? OR (company_id IS NULL AND project_id IS NULL)) ORDER BY label,id`).all(projectId,current.company_id??null);}
+ function inherited(kind,id){
+  if(kind==='owner')return[];
+  const companyId=kind==='projects'?hierarchy.scope(Number(id))?.company_id:null;
+  return [...list('owner',0),...(companyId!=null?list('companies',companyId):[])];
+ }
+ function context(projectId){
+  const connections=[...list('projects',projectId),...inherited('projects',projectId)].map(c=>({id:c.id,label:c.label,host:c.host,port:c.port,username:c.username,source:c.project_id!=null?'project':c.company_id!=null?'company':'account',allow_agent:!!c.allow_agent,has_fingerprint:!!c.fingerprint,tested_at:c.tested_at,jump_id:c.jump_id}));
+  return {saved:connections.length>0,status:connections.some(c=>c.allow_agent)?'ready':connections.length?'paused':'not_connected',connections,note:'Account SSH connections are inherited by every company and project in this workspace. Saved configuration is not a live network check. Work mode can use enabled connections; Ask and Plan can describe them but cannot connect. Do not request keys again for saved connections.'};
+ }
+ function agentList(projectId){const current=hierarchy.scope(projectId);if(!current)return[];return db.prepare(`SELECT ${columns} FROM ${all} WHERE allow_agent=1 AND (project_id=? OR company_id=? OR (company_id IS NULL AND project_id IS NULL)) ORDER BY label,id`).all(projectId,current.company_id??null).map(c=>({...c,source:c.project_id!=null?'project':c.company_id!=null?'company':'account'}));}
  function forJob(projectId,companyId,id){const current=hierarchy.scope(projectId);if(!current||current.company_id!==companyId)throw fail(403,'Project company changed; start a fresh Work run');const r=db.prepare(`SELECT * FROM ${all} WHERE id=? AND allow_agent=1 AND (project_id=? OR company_id=? OR (company_id IS NULL AND project_id IS NULL))`).get(id,projectId,companyId);if(!r)throw fail(403,'SSH is not enabled for this project');chain(r,true);return {...r,...decrypt(r),encrypted:undefined};}
  const router=express.Router();router.use(express.json({limit:'100kb'}));
  router.use((req,res,next)=>{if(/^\/api\/account\/ssh(?:\/|$)/.test(req.path)){if(!req.workspaceIsOwner)return res.status(403).json({error:'Only the account owner can manage shared SSH connections'});req.url=req.url.replace('/api/account/ssh','/api/owner/0/ssh');}else if(/^\/api\/owner(?:\/|$)/.test(req.path))return res.status(404).json({error:'Not found'});next();});
- router.get('/api/:kind(companies|projects|owner)/:id/ssh',(req,res)=>{scope(req.params.kind,req.params.id);res.json({connections:list(req.params.kind,req.params.id),inherited:req.params.kind==='projects'?agentList(Number(req.params.id)).filter(c=>c.project_id===null):req.params.kind==='companies'?list('owner',0).filter(c=>c.allow_agent):[]});});
+ router.get('/api/:kind(companies|projects|owner)/:id/ssh',(req,res)=>{scope(req.params.kind,req.params.id);res.json({connections:list(req.params.kind,req.params.id),inherited:inherited(req.params.kind,req.params.id),can_manage_account:!!req.workspaceIsOwner});});
  router.post('/api/:kind(companies|projects|owner)/:id/ssh',async(req,res,next)=>{try{let network;if(req.body.tailnet_device_id){if(!tailnet)throw fail(503,'Tailscale is not configured');const peer=await tailnet.device(req.cloudUserId,req.body.tailnet_device_id);network={account:req.cloudUserId,device:peer.id};req.body.host=peer.dns_name||peer.addresses[0];}req.revalidateMember?.();res.status(201).json(save(req.params.kind,req.params.id,req.body,undefined,network));}catch(e){next(e);}});
  router.patch('/api/:kind(companies|projects|owner)/:id/ssh/:connectionId',(req,res)=>res.json(save(req.params.kind,req.params.id,req.body,req.params.connectionId)));
  router.delete('/api/:kind(companies|projects|owner)/:id/ssh/:connectionId',(req,res)=>{const r=row(req.params.kind,req.params.id,req.params.connectionId);db.prepare(`DELETE FROM ${table(req.params.kind)} WHERE id=?`).run(r.id);res.json({ok:true});});
- router.post('/api/:kind(companies|projects|owner)/:id/ssh/:connectionId/test',async(req,res,next)=>{try{const r=row(req.params.kind,req.params.id,req.params.connectionId),result=await execute({...r,...decrypt(r)},{valid:()=>{try{req.revalidateMember?.();return row(req.params.kind,req.params.id,r.id).updated_at===r.updated_at;}catch{return false;}}});req.revalidateMember?.();db.prepare(`UPDATE ${table(req.params.kind)} SET tested_at=? WHERE id=? AND updated_at=?`).run(Date.now(),r.id,r.updated_at);res.json(result);}catch(e){next(e);}});
+ router.post('/api/:kind(companies|projects|owner)/:id/ssh/:connectionId/test',async(req,res,next)=>{try{
+  const resolve=()=>{scope(req.params.kind,req.params.id);const shared=inherited(req.params.kind,req.params.id).find(c=>c.id===req.params.connectionId);return shared?row(shared.company_id==null?'owner':'companies',shared.company_id||0,shared.id):row(req.params.kind,req.params.id,req.params.connectionId);};
+  const r=resolve(),valid=()=>{try{req.revalidateMember?.();return resolve().updated_at===r.updated_at;}catch{return false;}};
+  const result=await execute({...r,...decrypt(r)},{valid});if(!valid())throw fail(403,'SSH permission was removed');
+  db.prepare(`UPDATE ${r.company_id==null&&r.project_id==null?'owner_ssh_connections':'ssh_connections'} SET tested_at=? WHERE id=? AND updated_at=?`).run(Date.now(),r.id,r.updated_at);res.json(result);
+ }catch(e){next(e);}});
  router.use((e,req,res,next)=>e.status?res.status(e.status).json({error:e.message}):next(e));
- return{router,agentList,forJob,save,list,execute,redact:input=>{let text=input;for(const r of db.prepare(`SELECT * FROM ${all}`).all())text=redact(text,decrypt(r));return text;}};
+ return{router,agentList,forJob,save,list,context,execute,redact:input=>{let text=input;for(const r of db.prepare(`SELECT * FROM ${all}`).all())text=redact(text,decrypt(r));return text;}};
 }
 module.exports={createSshConnections,connectSSH};
