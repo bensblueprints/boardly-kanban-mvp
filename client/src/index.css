@@ -41,4 +41,6 @@ html, body, #root { height: 100%; }
 [data-layout="stacked"] > .workspace-divider { cursor: row-resize; }
 [data-layout="stacked"] > .workspace-divider span { height: 3px; width: 32px; }
 .coding-pane { overscroll-behavior: contain; }
+.coding-pane-maximized { position: fixed; inset: 0; z-index: 60; height: 100dvh; }
+.coding-pane-maximized > header { position: sticky; top: 0; z-index: 1; background: #09090b; }
 .coding-pane > *, .coding-pane article { min-width: 0; overflow-wrap: anywhere; }
