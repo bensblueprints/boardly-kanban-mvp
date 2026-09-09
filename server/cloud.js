@@ -183,7 +183,7 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
     req.aiRuntime=req.workspaceIsOwner&&subscription?'codex':'api';
     req.aiFunding=subscription?'owner_subscription':'owner_api';
     req.personalAiAllowed=subscription?req.tenant.subscription.online():mode==='key'||(mode==='card'&&personal.summary(payer).billing_ready);
-    if(req.aiRuntime==='api'&&req.method==='POST'&&(/^\/api\/chat\/threads\/[^/]+\/messages$/.test(req.path)||/^\/api\/boards\/\d+\/agent$/.test(req.path)||/^\/api\/agents\/(company|board)\/\d+\/swarms$/.test(req.path)||/^\/api\/discussions\/threads\/[^/]+\/messages$/.test(req.path))){
+    if(req.aiRuntime==='api'&&req.method==='POST'&&(/^\/api\/chat\/threads\/[^/]+\/messages$/.test(req.path)||/^\/api\/boards\/\d+\/agent$/.test(req.path)||/^\/api\/agents\/(company|board)\/\d+\/swarms$/.test(req.path)||/^\/api\/discussions\/threads\/[^/]+\/messages$/.test(req.path)||/^\/api\/audio\/(project|company|board)\/\d+\/work$/.test(req.path))){
       if(subscription&&!req.personalAiAllowed)throw Object.assign(Error('The company owner’s subscription worker is offline. Ask the owner to reconnect it.'),{status:503});
       if(!subscription)try{await personal.authorize(payer);}catch(e){if(!req.workspaceIsOwner)throw Object.assign(Error('Company AI funding is unavailable. Ask the company owner to check Account & AI.'),{status:e.status||503});throw e;}
     }

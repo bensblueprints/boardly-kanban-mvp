@@ -26,6 +26,20 @@ function createAudioRoutes({ config = {}, memberships, request = fetch }) {
   router.use(base, (req, res, next) => {
     try { authorize(req); res.set('Cache-Control', 'private, no-store'); next(); } catch (e) { next(e); }
   });
+  router.post(base + '/work', express.json({ limit: '16kb' }), (req, res, next) => {
+    try {
+      const { kind, id } = authorize(req);
+      if (!req.workspaceIsOwner && !req.personalAiAllowed) throw fail(403, 'Ask the company owner to connect AI funding first');
+      res.status(202).json(req.tenant.chat.audioWork.start({kind,id,actor:req.cloudUserId,runtime:req.aiRuntime||'codex',body:req.body}));
+    } catch (error) { next(error); }
+  });
+  router.get(base + '/work', (req, res, next) => {
+    try {
+      const { kind, id } = authorize(req);
+      if (typeof req.query.thread_id !== 'string' || req.query.thread_id.length > 100) throw fail(400, 'Choose a briefing conversation');
+      res.json(req.tenant.chat.audioWork.list({kind,id,actor:req.cloudUserId,threadId:req.query.thread_id}));
+    } catch (error) { next(error); }
+  });
   async function provider(path, init, signal) {
     if (!config.url) throw fail(503, 'Audio is not connected yet');
     const response = await request(config.url.replace(/\/$/, '') + path, {

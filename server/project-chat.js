@@ -50,6 +50,7 @@ function createProjectChat({ db, connections, userId, uploadsDir, environment, p
   const sshContext=(actor,id)=>canUseSsh(actor,id)?ssh?.context?.(id)||{status:'not_connected',saved:false,connections:[]}:{status:'restricted',saved:null,connections:[]};
   const organization = require('./organization-agents').createOrganizationAgents({db,clean,userId,hosted:()=>router.hosted,githubContext,sshContext});
   router.organization=organization; router.use(organization.router);
+  router.audioWork=require('./audio-work').createAudioWork({db,userId,clean,enqueue:()=>router.hosted.enqueue()});
   function expireJobs() {
     db.prepare("UPDATE chat_jobs SET status='interrupted',error='Codex worker disconnected. Review the result before sending another message.',updated_at=? WHERE status='running' AND updated_at<?")
       .run(Date.now(), Date.now() - 7 * 86400000);

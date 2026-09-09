@@ -146,6 +146,12 @@ export default function BoardView({ boardId, onBack, cloud = false }) {
   const importRef = useRef(null);
 
   const load = useCallback(() => api.get(`/api/boards/${boardId}`).then(setBoard).catch(() => onBack()), [boardId]);
+  useEffect(()=>{
+    if(!cloud)return;
+    let active=true;
+    const open=async()=>{const match=location.hash.match(/^#\/board\/(\d+)\?(.*)$/);if(!match||Number(match[1])!==Number(boardId))return;const id=new URLSearchParams(match[2]).get('chat');if(!id)return;try{const data=await api.get('/api/chat/threads/'+encodeURIComponent(id));if(active&&data.thread.board_id===Number(boardId)){setChatTask(data.task);setChatThread(id);setShowChat(true);load();}}catch(e){if(active)setAgentError(e.message);}};
+    open();window.addEventListener('hashchange',open);return()=>{active=false;window.removeEventListener('hashchange',open);};
+  },[boardId,cloud]);
   useEffect(() => { load(); }, [load]);
   useEffect(()=>{
     if(!cloud)return;let active=true,pending=false;
@@ -400,7 +406,7 @@ export default function BoardView({ boardId, onBack, cloud = false }) {
         {cloud && owner && <button onClick={() => setConnections(true)} className="text-sm text-zinc-400 hover:text-zinc-200 px-2">Connections</button>}
         {can('members')&&<button onClick={()=>setMembers(true)} className="text-sm text-zinc-300 px-2">Members</button>}{readOnly&&<span className="text-xs text-zinc-500">View-only access</span>}
       </nav>}
-      {cloud && showAudio && <AudioBriefing key={board.id} kind="project" id={board.id} onClose={() => setShowAudio(false)} />}
+      {cloud && showAudio && <AudioBriefing key={board.id} kind="project" id={board.id} onClose={() => {setShowAudio(false);load();}} />}
       {members&&can('members')&&<Members kind="projects" id={board.id} onClose={()=>setMembers(false)}/>}
       {cloud && connections && <CloudConnections onClose={() => setConnections(false)} />}
 
