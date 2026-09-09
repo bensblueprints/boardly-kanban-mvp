@@ -10,6 +10,7 @@ import CardModal from './CardModal.jsx';
 import CoachPanel from './CoachPanel.jsx';
 import ProjectChat from './ProjectChat.jsx';
 import AudioBriefing from './AudioBriefing.jsx';
+import AiActions from './AiActions.jsx';
 import SplitWorkspace from './SplitWorkspace.jsx';
 import CloudConnections from './CloudConnections.jsx';
 import Members from './Members.jsx';
@@ -388,8 +389,7 @@ export default function BoardView({ boardId, onBack, cloud = false }) {
       </header>
 
       {cloud && <nav aria-label="Project tools" className="project-tools shrink-0 flex items-center gap-3 px-5 py-3 border-b border-zinc-800 bg-zinc-950/60">
-        {cloud && <button onClick={() => { setChatTask(null); setChatThread(null); setShowChat(true); }} className="flex items-center gap-2 text-sm px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500"><MessageSquare size={16} /> Chat with AI</button>}
-        {!readOnly && <button onClick={() => setShowAudio(true)} className="text-sm text-indigo-100 border border-indigo-400 rounded-lg px-3 py-1.5">Audio briefing</button>}
+        <AiActions onChat={() => { setChatTask(null); setChatThread(null); setShowChat(true); }} onAudio={() => setShowAudio(true)} audioDisabled={readOnly}/>
         {cloud && <button disabled={deployBusy||readOnly} onClick={() => launchAgent()} className="text-sm text-indigo-300 border border-indigo-500/30 rounded-lg px-3 py-1.5 disabled:opacity-50">{deployBusy ? 'Starting…' : 'Deploy agent'}</button>}
         {cloud && <button onClick={() => setAssetsTab('files')} className="text-sm text-zinc-300 px-2">Files</button>}
         {cloud && <button onClick={() => setAssetsTab('links')} className="text-sm text-zinc-300 px-2">Links</button>}
@@ -562,6 +562,7 @@ export default function BoardView({ boardId, onBack, cloud = false }) {
         {openCardId && (
           <CardModal
             onChat={cloud ? openTaskChat : undefined}
+            onAudio={cloud ? () => setShowAudio(true) : undefined}
             onDeployAgent={cloud&&!readOnly ? launchAgent : undefined}
             cardId={openCardId}
             board={board}

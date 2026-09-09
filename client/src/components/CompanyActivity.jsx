@@ -1,9 +1,10 @@
 import React,{useEffect,useState} from 'react';
 import {Activity,AlertTriangle,ArrowUpRight,Network} from 'lucide-react';
 import {api} from '../api.js';
+import AiActions from './AiActions.jsx';
 const active=(a,now)=>a.status==='running'&&now-a.updated_at<15000;
 const label=(a,now)=>a.status==='running'?(active(a,now)?a.progress||'Replying':'Waiting for worker'):a.status==='queued'?'Queued':a.status==='blocked'?'Blocked · action needed':a.status==='recovering'?'Recovering':a.status==='failed'?'Needs attention':'Interrupted';
-export default function CompanyActivity({companyId,onOpen,onChat}){
+export default function CompanyActivity({companyId,onOpen,onChat,onAudio}){
  const [data,setData]=useState(null),[error,setError]=useState(''),[selected,setSelected]=useState(null),[now,setNow]=useState(Date.now());
  useEffect(()=>{let mounted=true;const load=async()=>{if(mounted)setNow(Date.now());try{const d=await api.get(`/api/agents/company/${companyId}/dashboard`);if(mounted){setData(d);setError('');}}catch(e){if(mounted)setError(e.message);}};load();const timer=setInterval(load,2500);return()=>{mounted=false;clearInterval(timer);};},[companyId]);
  if(!data)return <section className="rounded-2xl border border-zinc-800 p-6 text-zinc-400">{error||'Loading company activity…'}</section>;
@@ -15,7 +16,7 @@ export default function CompanyActivity({companyId,onOpen,onChat}){
  const visibleBlockers=data.blockers.filter(b=>!selected||b.board_id===selected);
  return <section aria-label="Company activity dashboard" className="space-y-5 rounded-2xl border border-zinc-800 bg-zinc-950/50 p-4 sm:p-6">
   <style>{`@keyframes boardly-flow{to{stroke-dashoffset:-40}}@keyframes boardly-pulse{50%{opacity:.35}}.boardly-flow{stroke-dasharray:7 13;animation:boardly-flow 1.5s linear infinite}.boardly-pulse{animation:boardly-pulse 1.8s ease-in-out infinite}@media(prefers-reduced-motion:reduce){.boardly-flow,.boardly-pulse{animation:none}}`}</style>
-  <header className="flex flex-wrap gap-3 justify-between"><div><h2 className="font-semibold text-lg flex gap-2 items-center"><Network className="text-indigo-400" size={20}/>Company activity</h2><p className="text-xs text-zinc-400 mt-2">Live connections between your company, boards and project agents.</p></div><button onClick={onChat} className="rounded-lg border border-indigo-500/40 px-3 py-2 text-sm text-indigo-200">Ask, plan or start a swarm</button></header>
+  <header className="flex flex-wrap gap-3 justify-between"><div><h2 className="font-semibold text-lg flex gap-2 items-center"><Network className="text-indigo-400" size={20}/>Company activity</h2><p className="text-xs text-zinc-400 mt-2">Live connections between your company, boards and project agents.</p></div><AiActions chatLabel="Ask, plan or start a swarm" onChat={onChat} onAudio={onAudio}/></header>
   <div className="grid grid-cols-3 gap-3">{[[working.length,'Working','text-yellow-300'],[waiting.length,'Queued / waiting','text-amber-300'],[data.blockers.length,'Blockers','text-rose-300']].map(([n,title,color])=><div key={title} className="rounded-xl border border-zinc-800 bg-zinc-900 p-3"><strong className={`block text-2xl ${color}`}>{n}</strong><span className="text-xs text-zinc-400">{title}</span></div>)}</div>
   {error&&<p role="alert" className="text-xs text-amber-300">Live update paused: {error}</p>}
   <div className="rounded-xl bg-zinc-950 border border-zinc-800 overflow-x-auto"><svg viewBox={`0 0 900 ${height}`} className="w-full min-w-[650px]" role="img" aria-label="Company connected to boards and their project agents">

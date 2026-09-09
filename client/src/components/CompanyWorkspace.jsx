@@ -5,6 +5,7 @@ import {useAccess} from '../access.jsx';
 import Members from './Members.jsx';
 import AgentHub from './AgentHub.jsx';
 import AudioBriefing from './AudioBriefing.jsx';
+import AiActions from './AiActions.jsx';
 import SshConnections from './SshConnections.jsx';
 import GithubConnection from './GithubConnection.jsx';
 import CompaniesOverview from './CompaniesOverview.jsx';
@@ -40,9 +41,11 @@ export default function CompanyWorkspace({onOpen,cloud=true}){
  const companyId=view.kind==='company'?company?.id??null:board?.company_id??null;
  const heading=view.kind==='home'?'Companies':view.kind==='company'?company?.name||'Unassigned boards':board?.name||'Board not found';
  const boards=data.boards.filter(b=>b.company_id===companyId),projects=data.projects.filter(p=>p.parent_board_id===board?.id);
- const audioCompany=owner?(view.kind==='home'?data.companies[0]:data.companies.find(c=>c.id===companyId)):null;
- const audioProject=(view.kind==='collection'?projects:data.projects).find(p=>owner||p.role==='editor');
- const audioTarget=audioCompany?{kind:'company',id:audioCompany.id}:audioProject?{kind:'project',id:audioProject.id}:null;
+ const canOpenAI=owner&&cloud&&((view.kind==='company'&&company)||(view.kind==='collection'&&board));
+ const scopedProjects=view.kind==='collection'?projects:view.kind==='company'?data.projects.filter(p=>boards.some(b=>b.id===p.parent_board_id)):data.projects;
+ const audioProject=scopedProjects.find(p=>owner||p.role==='editor');
+ const audioCompany=owner?(view.kind==='home'?data.companies[0]:view.kind==='company'?company:null):null;
+ const audioTarget=owner&&view.kind==='collection'&&board?{kind:'board',id:board.id}:audioCompany?{kind:'company',id:audioCompany.id}:audioProject?{kind:'project',id:audioProject.id}:null;
  function newForm(kind){setForm({kind,name:'',id:null});}
  async function save(e){e.preventDefault();await act(async()=>{
    const paths={company:'/api/companies',board:'/api/company-boards',project:'/api/projects'};const body={name:form.name};
@@ -56,8 +59,7 @@ export default function CompanyWorkspace({onOpen,cloud=true}){
   <div className="flex flex-wrap justify-between gap-4 items-start"><div><h1 className="text-2xl font-bold">{heading}</h1><p className="text-sm text-zinc-400 mt-2">{view.kind==='home'?'Companies contain boards. Boards organize projects and their tasks.':view.kind==='company'?'Boards, projects and shared company email.':'Each project has its own tasks, AI chat, files and settings.'}</p></div>
    <div className="flex gap-2" hidden={!owner}>{view.kind==='home'?<button className={button+' bg-indigo-600'} onClick={()=>newForm('company')}>New company</button>:view.kind==='company'?<><button className={button} onClick={()=>newForm('board')}>New board</button>{company&&<button className={button} onClick={()=>setForm({kind:'company',id:company.id,name:company.name})}>Rename company</button>}</>:board&&<><button className={button+' bg-indigo-600'} onClick={()=>newForm('project')}>New project</button><button className={button} onClick={()=>setForm({kind:'board',id:board.id,name:board.name})}>Rename board</button></>}</div>
   </div>
-  {owner&&cloud&&((view.kind==='company'&&company)||(view.kind==='collection'&&board))&&<button className={button+' border-indigo-500 text-indigo-200'} onClick={()=>setShowAI(true)}>Chat with AI / Agent swarm</button>}
-  {cloud&&audioTarget&&<button className={button+' border-indigo-400 text-indigo-100'} onClick={()=>setShowAudio(audioTarget)}>Audio briefing</button>}
+  {canOpenAI?<AiActions chatLabel="Chat with AI / Agent swarm" onChat={()=>setShowAI(true)} onAudio={()=>setShowAudio(audioTarget)}/>:cloud&&audioTarget&&<button className={button+' border-indigo-400 text-indigo-100'} onClick={()=>setShowAudio(audioTarget)}>Audio briefing</button>}
   {showAudio&&<AudioBriefing key={showAudio.kind+showAudio.id} kind={showAudio.kind} id={showAudio.id} onClose={()=>setShowAudio(false)}/>}
   {showAI&&<AgentHub key={view.kind+view.id} kind={view.kind==='company'?'company':'board'} id={Number(view.id)} onClose={()=>setShowAI(false)} onOpen={onOpen}/>}
   {error&&<p role="alert" className="text-sm text-rose-300">{error}</p>}
@@ -67,7 +69,7 @@ export default function CompanyWorkspace({onOpen,cloud=true}){
   {view.kind==='company'&&<><div className="flex flex-wrap gap-4 border-b border-zinc-800"><button className={`pb-3 text-sm ${tab==='boards'?'border-b-2 border-indigo-400 text-indigo-300':'text-zinc-400'}`} onClick={()=>setTab('boards')}>Boards</button>{company&&cloud&&canChat&&<button className={`pb-3 text-sm ${tab==='chat'?'border-b-2 border-indigo-400 text-indigo-300':'text-zinc-400'}`} onClick={()=>setTab('chat')}>Team chat</button>}{company&&cloud&&owner&&<button className={`pb-3 text-sm flex gap-2 items-center ${tab==='emails'?'border-b-2 border-indigo-400 text-indigo-300':'text-zinc-400'}`} onClick={()=>setTab('emails')}><Mail size={16}/>Emails</button>}{company&&cloud&&canCompany('ssh')&&<button className={`pb-3 text-sm ${tab==='ssh'?'border-b-2 border-indigo-400 text-indigo-300':'text-zinc-400'}`} onClick={()=>setTab('ssh')}>SSH</button>}{company&&cloud&&canCompany('github')&&<button className={`pb-3 text-sm ${tab==='chat'?<CompanyChat key={company.id} companyId={company.id}/>:tab==='github'?'border-b-2 border-indigo-400 text-indigo-300':'text-zinc-400'}`} onClick={()=>setTab('github')}>GitHub</button>}</div>
    {company&&cloud&&canCompany('members')&&<button className={button} onClick={()=>setShowMembers(true)}>Members</button>}{showMembers&&company&&canCompany('members')&&<Members kind="companies" id={company.id} onClose={()=>setShowMembers(false)}/>}
    {tab==='chat'?<CompanyChat key={company.id} companyId={company.id}/>:tab==='github'?<GithubConnection kind="companies" id={company.id}/>:tab==='ssh'?<SshConnections kind="companies" id={company.id}/>:tab==='emails'?<CompanyEmails key={company.id} companyId={company.id}/>:<><div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">{boards.map(b=><article key={b.id} className="rounded-xl border border-zinc-800 bg-zinc-900 overflow-hidden"><button className="p-5 w-full text-left hover:bg-zinc-800/40" onClick={()=>navigate(`#/collection/${b.id}`)}><KanbanSquare className="text-indigo-400 mb-3"/><h2 className="font-semibold">{b.name}</h2><p className="text-xs text-zinc-500 mt-2">{data.projects.filter(p=>p.parent_board_id===b.id).length} projects</p></button><div hidden={!owner} className="px-5 pb-4"><label className="text-xs text-zinc-500">Company<select aria-label={`Company for ${b.name}`} disabled={busy} className={input+' w-full mt-1'} value={b.company_id??''} onChange={e=>act(()=>api.patch(`/api/company-boards/${b.id}`,{company_id:e.target.value?Number(e.target.value):null}))}><option value="">Unassigned</option>{data.companies.map(c=><option value={c.id} key={c.id}>{c.name}</option>)}</select></label></div></article>)}</div>{!boards.length&&<p className="text-sm text-zinc-400">No boards here yet. Create a board or move one here from Unassigned boards.</p>}
-   {company&&cloud&&owner&&<CompanyActivity key={company.id} companyId={company.id} onOpen={onOpen} onChat={()=>setShowAI(true)}/>}
+   {company&&cloud&&owner&&<CompanyActivity key={company.id} companyId={company.id} onOpen={onOpen} onChat={()=>setShowAI(true)} onAudio={()=>setShowAudio({kind:'company',id:company.id})}/>}
    {company&&owner&&<button className="text-xs text-zinc-500 hover:text-rose-300" onClick={()=>act(async()=>{if(!confirm(`Delete ${company.name}? Its boards and projects will move to Unassigned. Connected email accounts will be removed.`))return;await api.del(`/api/companies/${company.id}`);navigate('#/');})}>Delete company</button>}</>}
   </>}
   {view.kind==='collection'&&board&&<><div hidden={!owner} className="flex flex-wrap items-end gap-3"><label className="text-sm text-zinc-400">Company<select aria-label="Board company" className={input+' block mt-1'} disabled={busy} value={board.company_id??''} onChange={e=>act(()=>api.patch(`/api/company-boards/${board.id}`,{company_id:e.target.value?Number(e.target.value):null}))}><option value="">Unassigned</option>{data.companies.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></label><span className="text-xs text-zinc-500 pb-2">Moving this board moves all of its projects.</span></div>

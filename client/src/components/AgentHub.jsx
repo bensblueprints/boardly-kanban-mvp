@@ -1,10 +1,12 @@
 import React,{useEffect,useState} from 'react';
-import {X,MessageSquare,Users,Square} from 'lucide-react';
+import {X,MessageSquare,Users,Square,Headphones} from 'lucide-react';
 import {api} from '../api.js';
+import AudioBriefing from './AudioBriefing.jsx';
 const button='rounded-lg border border-zinc-700 px-3 py-2 text-sm hover:bg-zinc-800 disabled:opacity-40';
 const field='w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm';
 const modes=[['ask','Ask','Answers and clarification'],['plan','Plan','Discuss steps without acting'],['work','Work','Start project agents']];
 export default function AgentHub({kind,id,onClose,onOpen}){
+ const [showAudio,setShowAudio]=useState(false);
  const [data,setData]=useState(null),[mode,setMode]=useState(''),[input,setInput]=useState(''),[selected,setSelected]=useState(''),[thread,setThread]=useState(null),[assignments,setAssignments]=useState({}),[busy,setBusy]=useState(false),[error,setError]=useState(''),[online,setOnline]=useState(false);
  const [requestKey,setRequestKey]=useState(()=>crypto.randomUUID());
  const base=`/api/agents/${kind}/${id}`;
@@ -23,6 +25,8 @@ export default function AgentHub({kind,id,onClose,onOpen}){
   }catch(e){setError(e.message);}finally{setBusy(false);}}
  return <section role="dialog" aria-label={`${kind} AI`} className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-3 sm:p-6"><div className="w-full max-w-4xl max-h-full flex flex-col rounded-2xl border border-zinc-700 bg-zinc-900 shadow-2xl">
   <header className="flex items-center gap-3 p-5 border-b border-zinc-800"><MessageSquare className="text-indigo-300"/><div className="flex-1"><h2 className="font-semibold text-lg">AI · {data?.scope.name||'Loading…'}</h2><p className="text-xs text-zinc-400">{kind==='company'?'Company-wide':'Board'} conversations and agents · {online?'Connected':'Agent worker offline — requests will wait'}</p></div><button onClick={onClose} aria-label="Close AI"><X/></button></header>
+  <div className="shrink-0 px-5 py-3 border-b border-zinc-800"><button type="button" onClick={()=>setShowAudio(true)} className={button+' flex items-center gap-2 border-indigo-400 text-indigo-100'}><Headphones size={17}/>Audio briefing</button></div>
+  {showAudio&&<AudioBriefing key={kind+id} kind={kind} id={id} onClose={()=>setShowAudio(false)}/>}
   <div className="overflow-y-auto p-5 space-y-5">
    <fieldset><legend className="text-sm font-medium mb-3">How would you like to work?</legend><div className="grid grid-cols-3 gap-2">{modes.map(([value,label,description])=><button key={value} type="button" aria-pressed={mode===value} onClick={()=>setMode(value)} className={button+` text-left ${mode===value?'border-indigo-400 bg-indigo-500/20':''}`}><strong className="block">{label}</strong><span className="block text-xs text-zinc-400 mt-1">{description}</span></button>)}</div></fieldset>
    {mode!=='work'&&<><div className="flex gap-2"><select aria-label="Company conversation" className={field} value={selected} onChange={e=>{setSelected(e.target.value);setThread(null);}}><option value="">New conversation</option>{data?.threads.map(t=><option key={t.id} value={t.id}>{t.title}</option>)}</select><button className={button} onClick={()=>{setSelected('');setThread(null);}}>New</button></div>

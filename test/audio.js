@@ -55,6 +55,28 @@ let f, server, db, releasePending;
   response = await f.request(`/api/audio/company/${a.company.id}/speech`, { method: 'POST', body: { reply_id: run } }); assert.equal(response.status, 200); await response.arrayBuffer();
   assert.equal((await f.request(`/api/audio/company/${b.company.id}/speech`, { method: 'POST', body: { reply_id: run } })).status, 404);
   assert.equal((await f.request(`/api/audio/company/${a.company.id}/status`, { user: member.user_id })).status, 403);
+  // Board audio must use that board's projects, not its entire parent company.
+  const sibling = await f.api('/api/company-boards', { method: 'POST', body: { company_id: a.company.id, name: 'Other board in Company A' } });
+  await f.api('/api/projects', { method: 'POST', body: { parent_board_id: sibling.id, name: 'Unrelated sibling project' } });
+  const boardBase = `/api/audio/board/${a.board.id}`;
+  assert.equal((await f.api(boardBase + '/status')).available, true);
+  for (const actor of [member.user_id, viewer.user_id, outsider.user_id]) assert.ok([403, 404].includes((await f.request(boardBase + '/status', { user: actor })).status));
+  assert.equal((await f.request('/api/audio/board/999999/status')).status, 404);
+  const boardThread = await f.api(`/api/agents/board/${a.board.id}/threads`, { method: 'POST', body: { title: 'Audio briefing' } });
+  const asked = await f.api(`/api/discussions/threads/${boardThread.id}/messages`, { method: 'POST', body: { mode: 'ask', content: 'Summarize this board' } });
+  const store = require('../server/connections').createConnections(f.root), key = store.issue('user_owner', 'Board audio QA', 'worker'); store.close();
+  const worker = async (route, body = {}) => { const r = await fetch(f.base + route, { method: 'POST', headers: { authorization: `Bearer ${key.token}`, 'content-type': 'application/json' }, body: JSON.stringify(body) }); assert.ok(r.ok); return r.json(); };
+  const claimed = (await worker('/api/worker/claim')).job;
+  assert.equal(claimed.id, asked.id); assert.equal(claimed.mode, 'ask'); assert.equal(claimed.context.scope.kind, 'board');
+  assert.deepEqual(claimed.context.projects.map(p => p.project.id), [a.project.id]);
+  assert.ok(!JSON.stringify(claimed.context).includes('Unrelated sibling project'));
+  await worker(`/api/worker/discussions/${asked.id}`, { status: 'completed', text: `Project A needs approval. ${secret}` });
+  response = await f.request(boardBase + '/speech', { method: 'POST', body: { reply_id: asked.id } }); assert.equal(response.status, 200); await response.arrayBuffer();
+  assert.ok(!seen.at(-1).body.includes(secret));
+  assert.equal((await f.request(boardBase + '/speech', { method: 'POST', body: { reply_id: run } })).status, 404, 'company replies cannot be used as board replies');
+  assert.equal((await f.request(`/api/audio/company/${a.company.id}/speech`, { method: 'POST', body: { reply_id: asked.id } })).status, 404, 'board replies cannot be used as company replies');
+  assert.equal((await f.request(`/api/audio/board/${sibling.id}/speech`, { method: 'POST', body: { reply_id: asked.id } })).status, 404);
+  console.log('PASS: board summary claims only its own projects, saved board audio, board/company reply separation, redaction and member denial');
   // Revocation while speech is being generated must prevent delivery.
   let release; delay = new Promise(r => { release = r; releasePending = r; }); const started = new Promise(r => { received = r; });
   const pending = f.request(base + '/speech', { user: member.user_id, method: 'POST', body: { reply_id: reply } }); await started;

@@ -7,16 +7,16 @@ const voices = [{ id: 'af_heart', name: 'Heart · American English' }, { id: 'am
 
 function createAudioRoutes({ config = {}, memberships, request = fetch }) {
   const router = express.Router(), active = new Set(), rates = new Map();
-  const base = '/api/audio/:kind(project|company)/:scopeId';
+  const base = '/api/audio/:kind(project|company|board)/:scopeId';
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 12 * 1024 * 1024, files: 1, fields: 2 } });
   function authorize(req) {
     const id = Number(req.params.scopeId), db = req.tenant.app.db, kind = req.params.kind;
-    if (!Number.isSafeInteger(id) || id < 1) throw fail(404, 'Company or project not found');
-    const scope = db.prepare(`SELECT id FROM ${kind === 'company' ? 'companies' : 'boards'} WHERE id=?`).get(id);
-    if (!scope) throw fail(404, 'Company or project not found');
+    if (!Number.isSafeInteger(id) || id < 1) throw fail(404, 'Company, board or project not found');
+    const scope = db.prepare(`SELECT id FROM ${kind === 'company' ? 'companies' : kind === 'board' ? 'company_boards' : 'boards'} WHERE id=?`).get(id);
+    if (!scope) throw fail(404, 'Company, board or project not found');
     if (!req.workspaceIsOwner) {
-      // Company AI follows the existing owner-only company discussion access.
-      if (kind === 'company') throw fail(403, 'Company AI is managed by the account owner');
+      // Company and board audio follow the same owner-only discussion boundary.
+      if (kind !== 'project') throw fail(403, 'Company and board AI are managed by the account owner');
       const access = accessForMember(db, memberships.grants(req.workspaceOwnerId, req.cloudUserId));
       if (!access.project(id)) throw fail(404, 'Project not found');
       if (access.project(id) !== 'editor') throw fail(403, 'This project is shared with view-only access');
@@ -83,9 +83,9 @@ function createAudioRoutes({ config = {}, memberships, request = fetch }) {
     if (typeof reply_id !== 'string' || reply_id.length > 100 || !voices.some(v => v.id === voice)) throw fail(400, 'Choose a saved AI reply and voice');
     const row = kind === 'project'
       ? db.prepare("SELECT m.content FROM chat_messages m JOIN chat_threads t ON t.id=m.thread_id WHERE m.id=? AND t.board_id=? AND m.role='assistant'").get(reply_id, id)
-      : db.prepare("SELECT j.draft AS content FROM discussion_jobs j JOIN discussion_threads t ON t.id=j.thread_id WHERE j.id=? AND t.scope_type='company' AND t.scope_id=? AND j.status='completed'").get(reply_id, id);
-    if (!row) throw fail(404, 'Saved AI reply not found in this company or project');
-    const ids = kind === 'project' ? [id] : req.tenant.chat.organization.scope('company', id).projects.map(p => p.id);
+      : db.prepare("SELECT j.draft AS content FROM discussion_jobs j JOIN discussion_threads t ON t.id=j.thread_id WHERE j.id=? AND t.scope_type=? AND t.scope_id=? AND j.status='completed'").get(reply_id, kind, id);
+    if (!row) throw fail(404, 'Saved AI reply not found in this company, board or project');
+    const ids = kind === 'project' ? [id] : req.tenant.chat.organization.scope(kind, id).projects.map(p => p.id);
     let text = safeText(row.content);
     for (const projectId of ids) text = req.tenant.environment.redact(projectId, req.tenant.payments.redact(projectId, text));
     text = req.tenant.github.redact(req.tenant.ssh.redact(req.tenant.email.clean(text)));

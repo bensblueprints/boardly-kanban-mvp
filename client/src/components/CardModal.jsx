@@ -6,6 +6,7 @@ import {
   Archive, Trash2, Plus, Pencil, Download, RotateCcw
 } from 'lucide-react';
 import CompanyChat from './CompanyChat.jsx';
+import AiActions from './AiActions.jsx';
 import { api } from '../api.js';
 
 const LABEL_COLORS = ['#ef4444', '#f59e0b', '#22c55e', '#14b8a6', '#3b82f6', '#8b5cf6', '#ec4899', '#64748b'];
@@ -24,7 +25,7 @@ function Section({ icon: Icon, title, action, children }) {
   );
 }
 
-export default function CardModal({ cardId, board, onClose, onBoardChange, onDeployAgent, onChat }) {
+export default function CardModal({ cardId, board, onClose, onBoardChange, onDeployAgent, onChat, onAudio }) {
   const readOnly=board.permissions?.role==='viewer';
   const [teamChat,setTeamChat]=useState(false);
   const [card, setCard] = useState(null);
@@ -42,7 +43,7 @@ export default function CardModal({ cardId, board, onClose, onBoardChange, onDep
   useEffect(() => { load(); }, [cardId]);
 
   useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape' && !e.target.closest('textarea, input')) onClose(); };
+    const onKey = (e) => { if (e.key === 'Escape' && !e.target.closest('textarea, input, dialog[open]')) onClose(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
@@ -129,7 +130,7 @@ export default function CardModal({ cardId, board, onClose, onBoardChange, onDep
         className="w-full max-w-2xl bg-zinc-900 border border-zinc-800 rounded-2xl shadow-2xl"
       >
         {/* header */}
-        {onChat && <div className="px-6 pt-4 flex flex-wrap gap-2"><button onClick={() => onChat(card)} className="px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-sm">Chat about this task</button>{onDeployAgent && <button onClick={() => onDeployAgent(card)} className="px-3 py-2 rounded-lg border border-indigo-500/40 text-indigo-200 text-sm">Deploy agent on this task</button>}</div>}
+        {onChat && <div className="px-6 pt-4 flex flex-wrap gap-2"><AiActions chatLabel="Chat about this task" onChat={() => onChat(card)} onAudio={onAudio} audioDisabled={readOnly} audioTitle="Hear a summary of this project and its tasks"/>{onDeployAgent && <button onClick={() => onDeployAgent(card)} className="px-3 py-2 rounded-lg border border-indigo-500/40 text-indigo-200 text-sm">Deploy agent on this task</button>}</div>}
         <div className="flex items-start gap-3 p-5 pb-2">
           <div className="flex-1 min-w-0">
             <input
