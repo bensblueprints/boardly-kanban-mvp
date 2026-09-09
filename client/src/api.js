@@ -22,6 +22,12 @@ async function req(method, url, body) {
 }
 
 export const api = {
+  audio: async (url, body, signal) => {
+    const token = tokenProvider ? await tokenProvider() : null;
+    const response = await fetch(url, { method: 'POST', signal, headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), ...(workspaceId ? { 'x-boardly-workspace': workspaceId } : {}) }, body: JSON.stringify(body) });
+    if (!response.ok) { const data = await response.json().catch(() => ({})); throw Object.assign(new Error(data.error || 'Audio could not be loaded.'), { status: response.status }); }
+    return response.blob();
+  },
   download: async (url, name) => {
     const token = tokenProvider ? await tokenProvider() : null;
     const response = await fetch(url, { headers: {...(token?{authorization:`Bearer ${token}`} : {}),...(workspaceId?{'x-boardly-workspace':workspaceId}:{})} });

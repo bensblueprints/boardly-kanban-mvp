@@ -79,7 +79,7 @@ function createOrganizationAgents({db, clean, userId, hosted, githubContext}) {
     if(req.aiRuntime==='api')hosted().enqueue();res.status(202).json(details(data.request_key));
   });
   router.post('/api/swarms/:id/cancel',(req,res)=>{details(req.params.id);db.prepare("UPDATE chat_jobs SET status='cancelled',progress='Swarm stopped',updated_at=? WHERE swarm_id=? AND status IN ('queued','running')").run(Date.now(),req.params.id);res.json(details(req.params.id));});
-  router.post('/api/agents/:kind(company|board)/:id/threads',(req,res)=>{const s=scope(req.params.kind,req.params.id),id=crypto.randomUUID();db.prepare('INSERT INTO discussion_threads VALUES (?,?,?,?,?)').run(id,s.kind,s.id,'New conversation',Date.now());res.status(201).json(getThread(id));});
+  router.post('/api/agents/:kind(company|board)/:id/threads',(req,res)=>{const s=scope(req.params.kind,req.params.id),id=crypto.randomUUID();db.prepare('INSERT INTO discussion_threads VALUES (?,?,?,?,?)').run(id,s.kind,s.id,scrub(s,String(req.body?.title||'New conversation').trim().slice(0,100))||'New conversation',Date.now());res.status(201).json(getThread(id));});
   router.get('/api/discussions/threads/:id',(req,res)=>{const t=getThread(req.params.id);res.json({thread:t,runs:db.prepare('SELECT id,mode,prompt,draft,status,error,created_at,started_at,updated_at FROM discussion_jobs WHERE thread_id=? ORDER BY created_at,rowid').all(t.id)});});
   router.post('/api/discussions/threads/:id/messages',(req,res)=>{
     const t=getThread(req.params.id),s=scope(t.scope_type,t.scope_id),{content,mode}=req.body;

@@ -16,11 +16,13 @@ function nextProjectJob(db, runtime) {
 }
 function snapshot(db, ids, {github} = {}) {
   return ids.map(id => ({
+    captured_at: new Date().toISOString(),
     project: db.prepare('SELECT id,name,description FROM boards WHERE id=?').get(id),
     scope: require('./hierarchy').createHierarchy(db).scope(id),
     ...(github?{github:github(id)}:{}),
     lists: db.prepare('SELECT id,name FROM lists WHERE board_id=? AND archived=0').all(id),
-    tasks: db.prepare(`SELECT c.id,c.title,c.description,l.name AS status FROM cards c JOIN lists l ON l.id=c.list_id
+    task_counts: db.prepare(`SELECT l.name AS status,COUNT(c.id) AS total FROM lists l LEFT JOIN cards c ON c.list_id=l.id AND c.archived=0 WHERE l.board_id=? AND l.archived=0 GROUP BY l.id ORDER BY l.position`).all(id),
+    tasks: db.prepare(`SELECT c.id,c.title,c.description,c.due_date,c.updated_at,l.name AS status FROM cards c JOIN lists l ON l.id=c.list_id
       WHERE l.board_id=? AND c.archived=0 AND l.archived=0 ORDER BY c.position LIMIT 200`).all(id).map(c => ({...c,
       checklists: db.prepare('SELECT i.text,i.done FROM checklist_items i JOIN checklists x ON x.id=i.checklist_id WHERE x.card_id=? ORDER BY x.position,i.position LIMIT 100').all(c.id),
       comments: db.prepare('SELECT author,body,created_at FROM comments WHERE card_id=? ORDER BY id DESC LIMIT 5').all(c.id)})),

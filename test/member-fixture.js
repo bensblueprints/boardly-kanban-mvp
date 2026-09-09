@@ -1,9 +1,9 @@
 const crypto=require('node:crypto'),fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const assert=require('node:assert/strict');
 const {createCloudApp}=require('../server/cloud');
-async function fixture({publicAccess=false,providerRequest,billing,openaiApiKey,tailnet,githubRequest}={}){
+async function fixture({publicAccess=false,providerRequest,billing,openaiApiKey,tailnet,githubRequest,audio}={}){
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'boardly-members-')),keys=crypto.generateKeyPairSync('rsa',{modulusLength:2048});
- const config={dataDir:root,origin:'https://boardly.example.com',ownerId:'user_owner',ownerOnly:!publicAccess,freeEnabled:true,planSlugs:[],publishableKey:'pk_test_'+Buffer.from('boardly-test.clerk.accounts.dev$').toString('base64'),secretKey:'sk_test_fake',jwtKey:keys.publicKey.export({type:'spki',format:'pem'}),billing,openaiApiKey,tailnet};
+ const config={dataDir:root,origin:'https://boardly.example.com',ownerId:'user_owner',ownerOnly:!publicAccess,freeEnabled:true,planSlugs:[],publishableKey:'pk_test_'+Buffer.from('boardly-test.clerk.accounts.dev$').toString('base64'),secretKey:'sk_test_fake',jwtKey:keys.publicKey.export({type:'spki',format:'pem'}),billing,openaiApiKey,tailnet,audio};
  const users=[{id:'user_owner',emailAddresses:[{emailAddress:'owner@example.com',verification:{status:'verified'}}]}];
  const identity={users:{async getUserList({emailAddress}){return{data:users.filter(u=>u.emailAddresses.some(e=>emailAddress.includes(e.emailAddress)))};},async createUser(data){assert.deepEqual(data.emailAddressIdentificationStatus,['reserved']);const u={id:'user_member'+users.length,emailAddresses:[{emailAddress:data.emailAddress[0],verification:{status:'unverified'}}]};users.push(u);return u;}},billing:{async getUserBillingSubscription(){throw Object.assign(Error('No subscription'),{status:404});}}};
  const app=createCloudApp(config,{identityClient:identity,providerRequest,githubRequest}),server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));const base=`http://127.0.0.1:${server.address().port}`;

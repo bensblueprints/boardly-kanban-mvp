@@ -40,6 +40,7 @@ function readCloudConfig(env = process.env) {
     publishableKey: env.CLERK_PUBLISHABLE_KEY, secretKey: env.CLERK_SECRET_KEY,
     jwtKey: env.CLERK_JWT_KEY || undefined,
     storageLimitBytes, freeEnabled: true, openaiApiKey: env.BOARDLY_OPENAI_API_KEY || '',
+    audio: { url: env.BOARDLY_AUDIO_URL || '', token: env.BOARDLY_AUDIO_TOKEN_FILE ? fs.readFileSync(env.BOARDLY_AUDIO_TOKEN_FILE, 'utf8').trim() : env.BOARDLY_AUDIO_TOKEN || '' },
     billing:{portalConfiguration:env.STRIPE_PORTAL_CONFIGURATION_ID,secretKey:env.STRIPE_SECRET_KEY,webhookSecret:env.STRIPE_WEBHOOK_SECRET,serialPrice:env.STRIPE_SERIAL_PRICE_ID,agencyPrice:env.STRIPE_AGENCY_PRICE_ID,seatPrice:env.STRIPE_SEAT_PRICE_ID,aiPrice:env.STRIPE_AI_PRICE_ID,meterEvent:env.STRIPE_AI_METER_EVENT},
   };
 }
@@ -192,6 +193,7 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
   app.get('/api/account/plan',(req,res)=>res.json({plan:req.accountPlan,owner:req.workspaceIsOwner,usage:{...memberships.usage(req.workspaceOwnerId),companies:req.tenant.app.db.prepare('SELECT COUNT(*) AS n FROM companies').get().n,storage_bytes:require('./project-assets').storageUsage(req.tenant.app.db).usedBytes},plans:Object.values(PLANS),billing_ready:personal.billing.ready(),extra_user_monthly_price:9,company_limit:req.accountPlan.companies,user_limit:req.accountPlan.users}));
   app.use(require('./member-routes').createMemberRoutes({memberships,identity,origin:config.origin}));
   app.use(require('./company-chat').createCompanyChatRoutes({memberships}));
+  app.use(require('./audio').createAudioRoutes({config:config.audio, memberships}));
   app.use((req,res,next)=>{
     if(!req.tenant||req.workspaceIsOwner)return next();
     require('./member-access').memberGuard({db:req.tenant.app.db,memberships,ownerId:req.workspaceOwnerId,userId:req.cloudUserId})(req,res,next);

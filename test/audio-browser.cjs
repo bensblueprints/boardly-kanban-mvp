@@ -1,0 +1,51 @@
+const assert=require('node:assert/strict'),path=require('node:path'),http=require('node:http'),fs=require('node:fs');
+const {fixture}=require('./member-fixture');
+const {chromium}=require('/home/ben/.npm/_npx/e41f203b7505f1fb/node_modules/playwright');
+let f,vite,browser,page,voiceServer;
+(async()=>{
+ const clip=fs.readFileSync('/home/ben/.local/share/boardly-ops/audio-sample-20260909.mp3');let speechCalls=0,transcriptions=0,slow=false;
+ voiceServer=http.createServer(async(req,res)=>{
+  if(req.url==='/v1/models'){res.setHeader('content-type','application/json');res.end(JSON.stringify({data:['speaches-ai/Kokoro-82M-v1.0-ONNX','Systran/faster-whisper-small.en'].map(id=>({id}))}));return;}
+  const chunks=[];for await(const chunk of req)chunks.push(chunk);
+  assert.equal(req.headers.authorization,'Bearer voice-fixture');
+  if(req.url==='/v1/audio/speech'){speechCalls++;if(slow)await new Promise(r=>setTimeout(r,1500));res.setHeader('content-type','audio/mpeg');res.end(clip);}
+  else{transcriptions++;assert.ok(Buffer.concat(chunks).length>100);res.setHeader('content-type','application/json');res.end(JSON.stringify({text:'Which task should I prioritize next?'}));}
+ }).listen(0,'127.0.0.1');await new Promise(r=>voiceServer.once('listening',r));
+ f=await fixture({audio:{url:`http://127.0.0.1:${voiceServer.address().port}`,token:'voice-fixture'}});
+ const a=await f.project('Studio Company','Website'),b=await f.api('/api/projects',{method:'POST',body:{name:'Newsletter',parent_board_id:a.board.id}}),outside=await f.project('Private Company','Outside');
+ const card=await f.api(`/api/lists/${a.list.id}/cards`,{method:'POST',body:{title:'Approve the homepage',due_date:'2026-09-10'}});
+ await f.api(`/api/cards/${card.id}/comments`,{method:'POST',body:{body:'Homepage is ready; upload product photographs next.',author:'Ben'}});
+ const store=require('../server/connections').createConnections(f.root),key=store.issue('user_owner','Audio fixture worker','worker');store.close();
+ const worker=async(route,body={})=>{const r=await fetch(f.base+route,{method:'POST',headers:{authorization:'Bearer '+key.token,'content-type':'application/json'},body:JSON.stringify(body)});assert.ok(r.ok,await r.clone().text());return r.json();};
+ async function answer(text,company=false){const {job}=await worker('/api/worker/claim');assert.ok(job);assert.equal(job.mode,'ask');assert.ok(job.prompt.includes('Voice briefing instructions:'));assert.ok(!JSON.stringify(job.context).includes('Private Company'));const projects=company?job.context.projects:job.context;assert.equal(projects.length,company?2:1);assert.equal(projects.find(p=>p.project.id===a.project.id).tasks.find(t=>t.id===card.id).due_date,'2026-09-10');assert.ok(projects.find(p=>p.project.id===a.project.id).tasks.find(t=>t.id===card.id).comments[0].body.includes('photographs'));await worker(`/api/worker/${company?'discussions':'jobs'}/${job.id}`,{status:'completed',text});}
+ const token=f.token('user_owner'),repo=path.resolve(__dirname,'..'),{createServer}=await import('vite'),react=(await import('@vitejs/plugin-react')).default,tailwind=(await import('@tailwindcss/vite')).default;
+ vite=await createServer({configFile:false,root:repo+'/client',plugins:[react(),tailwind(),{
+  name:'audio-qa',resolveId(id){if(id==='/qa-entry.jsx')return '\0audio-qa';},load(id){if(id==='\0audio-qa')return `import React from 'react';import {createRoot} from 'react-dom/client';import WorkspaceSession from '/src/WorkspaceSession.jsx';import '/src/index.css';const getToken=async()=>${JSON.stringify(token)};createRoot(document.getElementById('root')).render(React.createElement(WorkspaceSession,{userId:'user_owner',getToken,onLogout:()=>{}}));`;},configureServer(s){s.middlewares.use('/qa',async(q,r)=>{r.setHeader('content-type','text/html');r.end(await s.transformIndexHtml('/qa','<html class="dark"><body class="bg-zinc-950 text-zinc-100"><div id="root"></div><script type="module" src="/qa-entry.jsx"></script></body></html>'));});}
+ }],server:{host:'127.0.0.1',port:0,proxy:{'/api':{target:f.base,configure:p=>p.on('proxyReq',q=>q.setHeader('origin',f.config.origin))}}}});await vite.listen();
+ browser=await chromium.launch({executablePath:'/usr/bin/google-chrome',headless:true,args:['--no-sandbox','--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream','--use-file-for-fake-audio-capture=/home/ben/.local/share/boardly-ops/audio-microphone-fixture-20260909.wav']});
+ page=await browser.newPage({viewport:{width:1440,height:1000}});const errors=[];page.on('pageerror',e=>errors.push(e.message));
+ await page.addInitScript(()=>{const original=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);window.qaStreams=[];navigator.mediaDevices.getUserMedia=async options=>{const stream=await original(options);window.qaStreams.push(stream);return stream;};});
+ await page.goto(vite.resolvedUrls.local[0]+`qa#/board/${a.project.id}`);
+ await page.getByRole('button',{name:'Audio briefing',exact:true}).click();const dialog=page.getByRole('dialog',{name:'Audio AI briefing'});
+ await dialog.getByRole('button',{name:'Start briefing',exact:true}).click();await page.getByText('Waiting for AI…',{exact:true}).waitFor();
+ await answer('Website: approve the homepage by September tenth, then upload product photographs. Would you like to discuss the photos?');
+ await dialog.getByText(/Website: approve the homepage/).waitFor();await page.waitForFunction(()=>{const a=document.querySelector('dialog audio');return a?.duration>1&&!a.paused;});assert.ok(speechCalls>0);
+ await dialog.getByLabel('Stop audio').click();
+ await dialog.getByRole('button',{name:'Record question',exact:true}).click();await dialog.getByText('Listening…',{exact:true}).waitFor();await page.waitForTimeout(500);await dialog.getByRole('button',{name:'Finish recording',exact:true}).click();
+ await page.waitForFunction(()=>document.querySelector('textarea[aria-label="Audio AI question"]')?.value==='Which task should I prioritize next?');assert.equal(transcriptions,1);assert.ok(await page.evaluate(()=>window.qaStreams.every(s=>s.getTracks().every(t=>t.readyState==='ended'))));
+ await dialog.getByRole('button',{name:'Send question',exact:true}).click();await page.getByText('Waiting for AI…',{exact:true}).waitFor();await answer('Start with the homepage approval. The photos can follow.');await dialog.getByText('Start with the homepage approval. The photos can follow.',{exact:true}).waitFor();
+ await page.waitForFunction(()=>document.querySelector('dialog audio')?.duration>1);await dialog.getByLabel('Stop audio').click();
+ await page.screenshot({path:'/home/ben/.local/share/boardly-ops/audio-briefing-desktop-20260909.png'});
+ await dialog.getByLabel('Close audio briefing').click();await page.getByRole('button',{name:'Audio briefing',exact:true}).click();await dialog.getByText('Start with the homepage approval. The photos can follow.',{exact:true}).waitFor();
+ assert.ok(await dialog.locator('audio').evaluate(a=>!a.getAttribute('src')),'History does not autoplay when reopened');
+ slow=true;await dialog.getByLabel('Listen to this reply').first().click();await dialog.getByText('Preparing audio…').waitFor();
+ await dialog.getByLabel('Briefing company or project').selectOption(`company:${a.company.id}`);await dialog.getByRole('button',{name:'Start briefing',exact:true}).click();await page.getByText('Waiting for AI…',{exact:true}).waitFor();
+ await answer('Studio Company: Website needs homepage approval and photographs. Newsletter needs its first task defined. Which project should we discuss?',true);slow=false;
+ await dialog.getByText(/Studio Company: Website needs/).waitFor();await page.waitForFunction(()=>document.querySelector('dialog audio')?.duration>1);await dialog.getByLabel('Stop audio').click();
+ for(const size of [{width:390,height:844},{width:320,height:568}]){await page.setViewportSize(size);assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'No horizontal overflow');const box=await dialog.boundingBox();assert.ok(box.x>=0&&box.y>=0&&box.width<=size.width&&box.height<=size.height);await dialog.getByRole('button',{name:'Record question',exact:true}).scrollIntoViewIfNeeded();}
+ await page.screenshot({path:'/home/ben/.local/share/boardly-ops/audio-briefing-mobile-20260909.png'});
+ await dialog.getByRole('button',{name:'Record question',exact:true}).click();await dialog.getByText('Listening…',{exact:true}).waitFor();await dialog.getByLabel('Briefing company or project').selectOption(`project:${b.id}`);await dialog.getByRole('button',{name:'Start briefing',exact:true}).waitFor();assert.ok(await page.evaluate(()=>window.qaStreams.every(s=>s.getTracks().every(t=>t.readyState==='ended'))),'Scope change releases microphone');
+ await dialog.getByRole('button',{name:'Record question',exact:true}).click();await dialog.getByText('Listening…',{exact:true}).waitFor();await dialog.press('Escape');assert.equal(await page.locator('dialog[open]').count(),0);assert.ok(await page.evaluate(()=>window.qaStreams.every(s=>s.getTracks().every(t=>t.readyState==='ended'))),'Closing releases microphone');
+ await page.setViewportSize({width:1440,height:1000});await page.goto(vite.resolvedUrls.local[0]+`qa#/company/${a.company.id}`);await page.getByRole('button',{name:'Audio briefing',exact:true}).click();await dialog.getByText(/Studio Company: Website needs/).waitFor();assert.equal(await dialog.getByLabel('Briefing company or project').inputValue(),`company:${a.company.id}`);
+ assert.deepEqual(errors,[]);console.log('PASS: project/company entry points, fresh scoped Ask context with dates/comments, saved history, actual audio playback, microphone recording/transcription/review/follow-up, scope switch cancellation, mobile layouts and close cleanup');
+})().catch(async e=>{console.error(e);if(page){console.error((await page.locator('body').innerText()).slice(0,3500));await page.screenshot({path:'/home/ben/.local/share/boardly-ops/audio-browser-failure-20260909.png'}).catch(()=>{});}process.exitCode=1;}).finally(async()=>{if(browser)await browser.close();if(vite)await vite.close();if(f)await f.close();if(voiceServer)await new Promise(r=>voiceServer.close(r));});

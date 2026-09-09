@@ -44,3 +44,4 @@ html, body, #root { height: 100%; }
 .coding-pane-maximized { position: fixed; inset: 0; z-index: 60; height: 100dvh; }
 .coding-pane-maximized > header { position: sticky; top: 0; z-index: 1; background: #09090b; }
 .coding-pane > *, .coding-pane article { min-width: 0; overflow-wrap: anywhere; }
+.audio-briefing-dialog { width: calc(100% - 1rem); height: min(calc(100dvh - 1rem), 56rem); max-width: 64rem; max-height: none; overflow: hidden; color-scheme: dark; }

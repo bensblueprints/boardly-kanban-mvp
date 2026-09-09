@@ -4,6 +4,7 @@ import {api} from '../api.js';
 import {useAccess} from '../access.jsx';
 import Members from './Members.jsx';
 import AgentHub from './AgentHub.jsx';
+import AudioBriefing from './AudioBriefing.jsx';
 import SshConnections from './SshConnections.jsx';
 import GithubConnection from './GithubConnection.jsx';
 import CompaniesOverview from './CompaniesOverview.jsx';
@@ -16,6 +17,7 @@ const navigate=path=>{location.hash=path;};
 function route(){const m=location.hash.match(/^#\/(company|collection)\/([\w-]+)/);return m?{kind:m[1],id:m[2]}:{kind:'home'};}
 export default function CompanyWorkspace({onOpen,cloud=true}){
  const [showAI,setShowAI]=useState(false);
+ const [showAudio,setShowAudio]=useState(false);
  const access=useAccess(),owner=access.workspaceOwner!==false;const [showMembers,setShowMembers]=useState(false);
  const [data,setData]=useState(null),[view,setView]=useState(route),[requestedTab,setTab]=useState('boards'),[error,setError]=useState(''),[form,setForm]=useState(null),[busy,setBusy]=useState(false);
  const load=()=>api.get('/api/hierarchy').then(setData);
@@ -23,7 +25,7 @@ export default function CompanyWorkspace({onOpen,cloud=true}){
   let active=true,pending=false;
   const refresh=async()=>{if(!active||pending)return;pending=true;try{const next=await api.get('/api/hierarchy');if(active){setData(next);setError('');}}catch(e){if(active)setError(e.message);}finally{pending=false;}};
   const visible=()=>{if(document.visibilityState==='visible')refresh();};
-  const changed=()=>{setView(route());setShowAI(false);setForm(null);setTab('boards');setError('');refresh();};
+  const changed=()=>{setView(route());setShowAI(false);setShowAudio(false);setForm(null);setTab('boards');setError('');refresh();};
   refresh();const timer=setInterval(visible,3000);
   window.addEventListener('hashchange',changed);window.addEventListener('focus',refresh);document.addEventListener('visibilitychange',visible);
   return()=>{active=false;clearInterval(timer);window.removeEventListener('hashchange',changed);window.removeEventListener('focus',refresh);document.removeEventListener('visibilitychange',visible);};
@@ -52,6 +54,8 @@ export default function CompanyWorkspace({onOpen,cloud=true}){
    <div className="flex gap-2" hidden={!owner}>{view.kind==='home'?<button className={button+' bg-indigo-600'} onClick={()=>newForm('company')}>New company</button>:view.kind==='company'?<><button className={button} onClick={()=>newForm('board')}>New board</button>{company&&<button className={button} onClick={()=>setForm({kind:'company',id:company.id,name:company.name})}>Rename company</button>}</>:board&&<><button className={button+' bg-indigo-600'} onClick={()=>newForm('project')}>New project</button><button className={button} onClick={()=>setForm({kind:'board',id:board.id,name:board.name})}>Rename board</button></>}</div>
   </div>
   {owner&&cloud&&((view.kind==='company'&&company)||(view.kind==='collection'&&board))&&<button className={button+' border-indigo-500 text-indigo-200'} onClick={()=>setShowAI(true)}>Chat with AI / Agent swarm</button>}
+  {owner&&cloud&&view.kind==='company'&&company&&<button className={button+' border-indigo-500 text-indigo-200'} onClick={()=>setShowAudio(true)}>Audio briefing</button>}
+  {showAudio&&company&&<AudioBriefing key={company.id} kind="company" id={company.id} onClose={()=>setShowAudio(false)}/>}
   {showAI&&<AgentHub key={view.kind+view.id} kind={view.kind==='company'?'company':'board'} id={Number(view.id)} onClose={()=>setShowAI(false)} onOpen={onOpen}/>}
   {error&&<p role="alert" className="text-sm text-rose-300">{error}</p>}
   {form&&<form onSubmit={save} className="p-4 rounded-xl border border-indigo-500/40 bg-zinc-900 flex flex-wrap gap-3"><label className="flex-1 min-w-48"><span className="sr-only">{form.kind} name</span><input className={input+' w-full'} placeholder={`${form.kind[0].toUpperCase()+form.kind.slice(1)} name`} maxLength={200} autoFocus required value={form.name} onChange={e=>setForm({...form,name:e.target.value})}/></label><button disabled={busy} className={button+' bg-indigo-600'}>{form.id?'Save name':`Create ${form.kind}`}</button><button type="button" className={button} onClick={()=>setForm(null)}>Cancel</button></form>}
