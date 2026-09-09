@@ -119,6 +119,7 @@ function openDb(dataDir) {
   installSyncTracking(db);
   require('./hierarchy').installHierarchy(db);
   require('./project-assets').installProjectAssets(db);
+  require('./project-computers').installComputers(db);
 
   return db;
 }

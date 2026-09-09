@@ -16,6 +16,7 @@ import CloudConnections from './CloudConnections.jsx';
 import Members from './Members.jsx';
 import {useAccess} from '../access.jsx';
 import ProjectAssets from './ProjectAssets.jsx';
+import ProjectComputers from './ProjectComputers.jsx';
 
 function dueState(due) {
   if (!due) return null;
@@ -131,6 +132,7 @@ export default function BoardView({ boardId, onBack, cloud = false }) {
   const [showCoach, setShowCoach] = useState(false);
   const [showChat, setShowChat] = useState(false);
   const [showAudio, setShowAudio] = useState(false);
+  const [showComputers, setShowComputers] = useState(false);
   const [connections, setConnections] = useState(false);
   const [assetsTab, setAssetsTab] = useState(null);
   const [chatThread, setChatThread] = useState(null);
@@ -398,6 +400,7 @@ export default function BoardView({ boardId, onBack, cloud = false }) {
         <AiActions onChat={() => { setChatTask(null); setChatThread(null); setShowChat(true); }} onAudio={() => setShowAudio(true)} audioDisabled={readOnly}/>
         {cloud && <button disabled={deployBusy||readOnly} onClick={() => launchAgent()} className="text-sm text-indigo-300 border border-indigo-500/30 rounded-lg px-3 py-1.5 disabled:opacity-50">{deployBusy ? 'Starting…' : 'Deploy agent'}</button>}
         {cloud && <button onClick={() => setAssetsTab('files')} className="text-sm text-zinc-300 px-2">Files</button>}
+        {cloud && <button onClick={() => setShowComputers(true)} className="text-sm text-zinc-300 px-2">Computer use</button>}
         {cloud && <button onClick={() => setAssetsTab('links')} className="text-sm text-zinc-300 px-2">Links</button>}
         {cloud && can('ssh') && <button onClick={() => setAssetsTab('ssh')} className="text-sm text-zinc-300 px-2">SSH</button>}
         {cloud && can('github') && <button onClick={() => setAssetsTab('github')} className="text-sm text-zinc-300 px-2">GitHub</button>}
@@ -407,6 +410,7 @@ export default function BoardView({ boardId, onBack, cloud = false }) {
         {can('members')&&<button onClick={()=>setMembers(true)} className="text-sm text-zinc-300 px-2">Members</button>}{readOnly&&<span className="text-xs text-zinc-500">View-only access</span>}
       </nav>}
       {cloud && showAudio && <AudioBriefing key={board.id} kind="project" id={board.id} onClose={() => {setShowAudio(false);load();}} />}
+      {cloud && showComputers && <ProjectComputers key={board.id} board={board} onClose={() => setShowComputers(false)} />}
       {members&&can('members')&&<Members kind="projects" id={board.id} onClose={()=>setMembers(false)}/>}
       {cloud && connections && <CloudConnections onClose={() => setConnections(false)} />}
 

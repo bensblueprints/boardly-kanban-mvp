@@ -194,6 +194,7 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
   app.use(require('./member-routes').createMemberRoutes({memberships,identity,origin:config.origin}));
   app.use(require('./company-chat').createCompanyChatRoutes({memberships}));
   app.use(require('./audio').createAudioRoutes({config:config.audio, memberships}));
+  app.use(require('./project-computers').createComputerRoutes({memberships}));
   app.use((req,res,next)=>{
     if(!req.tenant||req.workspaceIsOwner)return next();
     require('./member-access').memberGuard({db:req.tenant.app.db,memberships,ownerId:req.workspaceOwnerId,userId:req.cloudUserId})(req,res,next);
