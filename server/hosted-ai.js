@@ -1,6 +1,7 @@
 const crypto=require('node:crypto');
 const fs=require('node:fs');
 const path=require('node:path');
+const projectFolders=require('./project-folders');
 const {safeText:baseSafeText}=require('./agent-activity');
 const {MAX_AGENTS,nextProjectJob,snapshot,modeInstruction}=require('./agent-scheduling');
 function createHostedAI({db,uploadsDir,personal,canEdit,canUse=()=>false,retain,release,storageLimit,organization,ssh,github}){
@@ -14,7 +15,9 @@ function createHostedAI({db,uploadsDir,personal,canEdit,canUse=()=>false,retain,
   create_task:{description:'Create a task in a list in this project.',properties:{list_id:{type:'integer'},title:{type:'string'},description:{type:'string'}}},
   update_task:{description:'Update a task in this project. Read it first; preserve its existing context.',properties:{id:{type:'integer'},title:{type:'string'},description:{type:'string'},list_id:{type:'integer'}}},
   read_file:{description:'Read a text file stored in this project, up to 50 KB.',properties:{id:{type:'integer'}}},
-  save_file:{description:'Save a new text file in this project. Existing files are preserved.',properties:{name:{type:'string'},content:{type:'string'}}},
+  save_file:{description:'Save a new text file in this project. Existing files are preserved.',properties:{name:{type:'string'},content:{type:'string'},folder_id:{type:['integer','null']}}},
+  create_folder:{description:'Create a folder inside this project. Use null parent_id for the Files root.',properties:{name:{type:'string'},parent_id:{type:['integer','null']}}},
+  move_file:{description:'Move an existing file within this project. Use null folder_id for the Files root.',properties:{id:{type:'integer'},folder_id:{type:['integer','null']}}},
  };
  definitions.report_blocker={description:'Pause the current assignment only after independent authorized work is complete, recording the exact blocker and required next action.',properties:{blocker:{type:'string'},next_action:{type:'string'},summary:{type:'string'}}};
  definitions.list_ssh_connections={description:'List SSH connections explicitly enabled for this project.',properties:{}};
@@ -37,7 +40,7 @@ function createHostedAI({db,uploadsDir,personal,canEdit,canUse=()=>false,retain,
   const task=id=>{const c=db.prepare('SELECT c.* FROM cards c JOIN lists l ON l.id=c.list_id WHERE c.id=? AND l.board_id=?').get(integer(id),boardId);if(!c)throw Error('Task not found in this project');return c;};
   const list=id=>{if(!db.prepare('SELECT id FROM lists WHERE id=? AND board_id=?').get(integer(id),boardId))throw Error('List not found in this project');};
   const text=(v,max)=>{if(typeof v!=='string'||v.length>max)throw Error('Text exceeds the allowed length');return safeText(v);};
-  if(name==='get_project')return{project:db.prepare('SELECT id,name,description FROM boards WHERE id=?').get(boardId),lists:db.prepare('SELECT id,name FROM lists WHERE board_id=? AND archived=0').all(boardId),tasks:db.prepare('SELECT c.id,c.title,c.list_id,c.due_date FROM cards c JOIN lists l ON l.id=c.list_id WHERE l.board_id=? AND c.archived=0 LIMIT 300').all(boardId),files:db.prepare('SELECT id,name,size,mime FROM project_files WHERE board_id=? LIMIT 100').all(boardId),links:db.prepare('SELECT title,url,description FROM project_links WHERE board_id=? LIMIT 100').all(boardId)};
+  if(name==='get_project')return{project:db.prepare('SELECT id,name,description FROM boards WHERE id=?').get(boardId),lists:db.prepare('SELECT id,name FROM lists WHERE board_id=? AND archived=0').all(boardId),tasks:db.prepare('SELECT c.id,c.title,c.list_id,c.due_date FROM cards c JOIN lists l ON l.id=c.list_id WHERE l.board_id=? AND c.archived=0 LIMIT 300').all(boardId),files:projectFolders.listFiles(db,boardId).slice(0,100).map(({id,name,size,mime,folder_id,folder_path})=>({id,name,size,mime,folder_id,folder_path})),folders:projectFolders.listFolders(db,boardId),links:db.prepare('SELECT title,url,description FROM project_links WHERE board_id=? LIMIT 100').all(boardId)};
   if(name==='read_task'){const c=task(args.id);return{...c,checklists:db.prepare('SELECT * FROM checklists WHERE card_id=?').all(c.id).map(x=>({...x,items:db.prepare('SELECT * FROM checklist_items WHERE checklist_id=?').all(x.id)})),comments:db.prepare('SELECT author,body FROM comments WHERE card_id=? ORDER BY id DESC LIMIT 30').all(c.id)};}
   if(name==='create_task'||name==='update_task')return db.transaction(()=>{
    list(args.list_id);const title=text(args.title,500).trim(),description=text(args.description,30000);if(!title)throw Error('A task needs a title');
@@ -50,10 +53,17 @@ function createHostedAI({db,uploadsDir,personal,canEdit,canUse=()=>false,retain,
    if(!f?.filename||f.size>50000||!(/^(text\/|application\/(json|xml))/.test(f.mime||'')||/\.(md|txt|csv|json|js|css|html|py|yaml|yml)$/i.test(f.name)))throw Error('Select a text file up to 50 KB in this project');
    return{name:f.name,content:safeText(fs.readFileSync(path.join(uploadsDir,path.basename(f.filename)),'utf8'))};
   }
+  if(name==='create_folder')return projectFolders.createFolder(db,boardId,args.name,args.parent_id);
+  if(name==='move_file'){
+   if(!db.prepare('SELECT id FROM project_files WHERE id=? AND board_id=?').get(integer(args.id),boardId))throw Error('File not found');
+   if(!Object.hasOwn(args,'folder_id'))throw Error('Choose a destination folder');
+   return projectFolders.moveFile(db,args.id,args.folder_id);
+  }
   if(name==='save_file'){
+   const folder=projectFolders.folderId(db,boardId,args.folder_id);
    const name=text(args.name,200).replace(/[\/\\\x00-\x1f]/g,'_').trim(),content=text(args.content,50000);if(!name)throw Error('A file needs a name');
    const size=Buffer.byteLength(content),filename='project-'+crypto.randomUUID(),target=path.join(uploadsDir,filename);
-   try{return db.transaction(()=>{const limit=storageLimit();if(limit!==null&&require('./project-assets').storageUsage(db).usedBytes+size>limit)throw Error('This account has reached its storage allowance');fs.writeFileSync(target,content,{flag:'wx',mode:0o600});const id=db.prepare('INSERT INTO project_files(uuid,board_id,name,filename,size,mime,created_at) VALUES (?,?,?,?,?,?,?)').run(crypto.randomUUID(),boardId,name,filename,size,'text/plain',Date.now()).lastInsertRowid;return{id:Number(id),name,size};})();}catch(e){fs.rmSync(target,{force:true});throw e;}
+   try{return db.transaction(()=>{const limit=storageLimit();if(limit!==null&&require('./project-assets').storageUsage(db).usedBytes+size>limit)throw Error('This account has reached its storage allowance');fs.writeFileSync(target,content,{flag:'wx',mode:0o600});const id=db.prepare('INSERT INTO project_files(uuid,board_id,name,filename,size,mime,created_at,folder_id) VALUES (?,?,?,?,?,?,?,?)').run(crypto.randomUUID(),boardId,name,filename,size,'text/plain',Date.now(),folder).lastInsertRowid;return{id:Number(id),name,size,folder_id:folder};})();}catch(e){fs.rmSync(target,{force:true});throw e;}
   }
   throw Error('Tool is unavailable');
  }

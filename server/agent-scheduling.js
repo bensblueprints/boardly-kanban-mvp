@@ -46,7 +46,7 @@ function snapshot(db, ids, {github,ssh} = {}) {
       WHERE l.board_id=? AND c.archived=0 AND l.archived=0 ORDER BY c.position LIMIT 200`).all(id).map(c => ({...c,
       checklists: db.prepare('SELECT i.text,i.done FROM checklist_items i JOIN checklists x ON x.id=i.checklist_id WHERE x.card_id=? ORDER BY x.position,i.position LIMIT 100').all(c.id),
       comments: db.prepare('SELECT author,body,created_at FROM comments WHERE card_id=? ORDER BY id DESC LIMIT 5').all(c.id)})),
-    files: db.prepare('SELECT id,name,url FROM project_files WHERE board_id=? LIMIT 100').all(id),
+    files: require('./project-folders').listFiles(db,id).slice(0,100).map(({id,name,url,folder_id,folder_path})=>({id,name,url,folder_id,folder_path})),
     links: db.prepare('SELECT title,url,description FROM project_links WHERE board_id=? LIMIT 100').all(id)
   }));
 }

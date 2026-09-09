@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const express = require('express');
 const multer = require('multer');
+const folders = require('./project-folders');
 
 function installProjectAssets(db) {
   db.exec(`CREATE TABLE IF NOT EXISTS project_files (
@@ -15,6 +16,7 @@ function installProjectAssets(db) {
     id INTEGER PRIMARY KEY AUTOINCREMENT, board_id INTEGER NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
     title TEXT NOT NULL, url TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL
   );`);
+  folders.installFolders(db);
 }
 function safeUrl(value) {
   const u = new URL(String(value));
@@ -26,10 +28,11 @@ function storageUsage(db, limit = null) {
   const attachments = db.prepare('SELECT COALESCE(SUM(size),0) AS bytes FROM attachments').get().bytes;
   return { usedBytes: files + attachments, limitBytes: limit, unlimited: limit === null, billingEnabled: false };
 }
-function addFileLink(db, boardId, name, url) {
+function addFileLink(db, boardId, name, url, folder = null) {
   if (!db.prepare('SELECT id FROM boards WHERE id=?').get(boardId)) throw Error('Project not found');
-  const info = db.prepare('INSERT INTO project_files (uuid,board_id,name,url,created_at) VALUES (?,?,?,?,?)')
-    .run(crypto.randomUUID(), boardId, String(name).trim().slice(0, 250), safeUrl(url), Date.now());
+  const destination = folders.folderId(db, boardId, folder);
+  const info = db.prepare('INSERT INTO project_files (uuid,board_id,name,url,created_at,folder_id) VALUES (?,?,?,?,?,?)')
+    .run(crypto.randomUUID(), boardId, String(name).trim().slice(0, 250), safeUrl(url), Date.now(), destination);
   return db.prepare('SELECT * FROM project_files WHERE id=?').get(info.lastInsertRowid);
 }
 function addProjectLink(db, boardId, title, url, description = '') {
@@ -43,7 +46,23 @@ function createProjectAssets({ db, uploadsDir, limitBytes = null }) {
   const router = express.Router(), json = express.json({ limit: '16kb' });
   const exists = (req, res, next) => db.prepare('SELECT id FROM boards WHERE id=?').get(req.params.boardId) ? next() : res.status(404).json({ error: 'Project not found' });
   router.get('/api/storage', (req, res) => res.json(storageUsage(db, req.accountPlan ? req.accountPlan.storage_bytes : limitBytes)));
-  router.get('/api/boards/:boardId/files', exists, (req, res) => res.json({ files: db.prepare('SELECT * FROM project_files WHERE board_id=? ORDER BY created_at DESC,id DESC').all(req.params.boardId), storage: storageUsage(db, req.accountPlan ? req.accountPlan.storage_bytes : limitBytes) }));
+  router.get('/api/boards/:boardId/files', exists, (req, res) => res.json({ files: folders.listFiles(db, req.params.boardId), folders: folders.listFolders(db, req.params.boardId), storage: storageUsage(db, req.accountPlan ? req.accountPlan.storage_bytes : limitBytes) }));
+  router.get('/api/boards/:boardId/folders', exists, (req, res) => res.json(folders.listFolders(db, req.params.boardId)));
+  router.post('/api/boards/:boardId/folders', exists, json, (req, res, next) => {
+    try { res.status(201).json(folders.createFolder(db, req.params.boardId, req.body?.name, req.body?.parent_id)); } catch (e) { next(e); }
+  });
+  router.patch('/api/project-folders/:id', json, (req, res, next) => {
+    try { res.json(folders.renameFolder(db, req.params.id, req.body?.name)); } catch (e) { next(e); }
+  });
+  router.delete('/api/project-folders/:id', (req, res, next) => {
+    try { res.json(folders.deleteFolder(db, req.params.id)); } catch (e) { next(e); }
+  });
+  router.patch('/api/project-files/:id', json, (req, res, next) => {
+    try {
+      if (!Object.hasOwn(req.body || {}, 'folder_id')) throw Object.assign(Error('Choose a destination folder'), { status: 400 });
+      res.json(folders.moveFile(db, req.params.id, req.body.folder_id));
+    } catch (e) { next(e); }
+  });
   const storage = multer.diskStorage({ destination: uploadsDir, filename: (req, file, cb) => cb(null, 'project-' + crypto.randomUUID()) });
   router.post('/api/boards/:boardId/files', exists, (req, res, next) => {
     const quota = req.accountPlan ? req.accountPlan.storage_bytes : limitBytes;
@@ -56,9 +75,10 @@ function createProjectAssets({ db, uploadsDir, limitBytes = null }) {
       try {
         const row = db.transaction(() => {
           req.revalidateMember?.();
+          const destination = folders.folderId(db, req.params.boardId, req.body?.folder_id);
           if (quota !== null && storageUsage(db).usedBytes + req.file.size > quota) { const e = Error('Your storage allowance is full'); e.status = 413; throw e; }
-          const result = db.prepare('INSERT INTO project_files (uuid,board_id,name,filename,size,mime,created_at) VALUES (?,?,?,?,?,?,?)')
-            .run(crypto.randomUUID(), req.params.boardId, req.file.originalname.slice(0, 250), req.file.filename, req.file.size, req.file.mimetype, Date.now());
+          const result = db.prepare('INSERT INTO project_files (uuid,board_id,name,filename,size,mime,created_at,folder_id) VALUES (?,?,?,?,?,?,?,?)')
+            .run(crypto.randomUUID(), req.params.boardId, req.file.originalname.slice(0, 250), req.file.filename, req.file.size, req.file.mimetype, Date.now(), destination);
           return db.prepare('SELECT * FROM project_files WHERE id=?').get(result.lastInsertRowid);
         })();
         res.status(201).json(row);
@@ -68,8 +88,8 @@ function createProjectAssets({ db, uploadsDir, limitBytes = null }) {
   router.post('/api/boards/:boardId/file-links', exists, json, (req, res) => {
     try {
       if (typeof req.body?.name !== 'string' || !req.body.name.trim()) throw Error('Enter a file name');
-      res.status(201).json(addFileLink(db, req.params.boardId, req.body.name, req.body.url));
-    } catch (e) { res.status(400).json({ error: e.message }); }
+      res.status(201).json(addFileLink(db, req.params.boardId, req.body.name, req.body.url, req.body.folder_id));
+    } catch (e) { res.status(e.status || 400).json({ error: e.message }); }
   });
   router.get('/api/project-files/:id/download', (req, res) => {
     const row = db.prepare('SELECT * FROM project_files WHERE id=?').get(req.params.id);

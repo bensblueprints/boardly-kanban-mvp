@@ -105,24 +105,31 @@ function createBoardlyServer({ db, uploadsDir }) {
 
   // Project assets are shared with the cloud UI, within this workspace only.
   const { addFileLink, addProjectLink, storageUsage } = require('../server/project-assets');
+  const projectFolders = require('../server/project-folders');
   tool('list_project_files', 'List uploaded and linked files for a project', { board_id: z.number().int() }, ({ board_id }) => {
     mustGet(q.board, board_id, 'Board');
-    return db.prepare('SELECT id,uuid,name,url,size,mime,created_at FROM project_files WHERE board_id=? ORDER BY id').all(board_id);
+    return projectFolders.listFiles(db, board_id).map(({id,uuid,name,url,size,mime,created_at,folder_id,folder_path})=>({id,uuid,name,url,size,mime,created_at,folder_id,folder_path}));
   });
-  tool('add_project_file_link', 'Link an external file to a project', { board_id: z.number().int(), name: z.string().min(1), url: z.string() }, ({ board_id, name, url }) => addFileLink(db, board_id, name, url));
+  tool('list_project_folders', 'List project folders with their parent IDs and paths', { board_id: z.number().int() }, ({ board_id }) => { mustGet(q.board, board_id, 'Board'); return projectFolders.listFolders(db, board_id); });
+  tool('create_project_folder', 'Create a folder in project Files, optionally inside another folder', { board_id: z.number().int(), name: z.string(), parent_id: z.number().int().nullable().optional() }, ({ board_id, name, parent_id }) => projectFolders.createFolder(db, board_id, name, parent_id));
+  tool('rename_project_folder', 'Rename a project folder without changing its files', { folder_id: z.number().int(), name: z.string() }, ({ folder_id, name }) => projectFolders.renameFolder(db, folder_id, name));
+  tool('delete_project_folder', 'Delete an empty project folder; refuses folders containing files or subfolders', { folder_id: z.number().int() }, ({ folder_id }) => projectFolders.deleteFolder(db, folder_id));
+  tool('move_project_file', 'Move an existing file within its project; folder_id null moves it to the Files root', { file_id: z.number().int(), folder_id: z.number().int().nullable() }, ({ file_id, folder_id }) => projectFolders.moveFile(db, file_id, folder_id));
+  tool('add_project_file_link', 'Link an external file to a project', { board_id: z.number().int(), name: z.string().min(1), url: z.string(), folder_id: z.number().int().nullable().optional() }, ({ board_id, name, url, folder_id }) => addFileLink(db, board_id, name, url, folder_id));
   tool('add_project_link', 'Save an associated URL in the project Links section', { board_id: z.number().int(), title: z.string().min(1), url: z.string(), description: z.string().optional() }, ({ board_id, title, url, description }) => addProjectLink(db, board_id, title, url, description));
   tool('list_project_links', 'List the URLs associated with a project', { board_id: z.number().int() }, ({ board_id }) => {
     mustGet(q.board, board_id, 'Board');
     return db.prepare('SELECT * FROM project_links WHERE board_id=? ORDER BY id').all(board_id);
   });
-  tool('add_project_file', 'Save a generated text/code/document file in a project (up to 1 MB of text)', { board_id: z.number().int(), name: z.string().min(1).max(250), content: z.string().max(1000000) }, ({ board_id, name, content }) => {
+  tool('add_project_file', 'Save a generated text/code/document file in a project (up to 1 MB of text)', { board_id: z.number().int(), name: z.string().min(1).max(250), content: z.string().max(1000000), folder_id: z.number().int().nullable().optional() }, ({ board_id, name, content, folder_id }) => {
     mustGet(q.board, board_id, 'Board');
+    const destination = projectFolders.folderId(db, board_id, folder_id);
     const uuid = require('crypto').randomUUID(), filename = 'project-' + uuid;
     const size = Buffer.byteLength(content);
     fs.writeFileSync(path.join(uploadsDir, filename), content, { mode: 0o600 });
     try {
-      const r = db.prepare('INSERT INTO project_files (uuid,board_id,name,filename,size,mime,created_at) VALUES (?,?,?,?,?,?,?)').run(uuid, board_id, name, filename, size, 'text/plain', Date.now());
-      return { id: Number(r.lastInsertRowid), name, size };
+      const r = db.prepare('INSERT INTO project_files (uuid,board_id,name,filename,size,mime,created_at,folder_id) VALUES (?,?,?,?,?,?,?,?)').run(uuid, board_id, name, filename, size, 'text/plain', Date.now(), destination);
+      return { id: Number(r.lastInsertRowid), name, size, folder_id: destination };
     } catch (e) { fs.rmSync(path.join(uploadsDir, filename), { force: true }); throw e; }
   });
   tool('read_project_file', 'Read an uploaded text project file (up to 100 KB); linked or binary files return their download reference', { file_id: z.number().int() }, ({ file_id }) => {

@@ -185,7 +185,7 @@ function createProjectChat({ db, connections, userId, uploadsDir, environment, p
         environment: environment?.values(t.board_id) || {},
         payments: payments?.summary(t.board_id) || null,
         history: db.prepare('SELECT role,content FROM chat_messages WHERE thread_id=? ORDER BY created_at,rowid').all(t.id).slice(-40),
-        files: db.prepare('SELECT id,uuid,name,url,size FROM project_files WHERE board_id=?').all(t.board_id),
+        files: require('./project-folders').listFiles(db,t.board_id).map(({id,uuid,name,url,size,folder_id,folder_path})=>({id,uuid,name,url,size,folder_id,folder_path})),
         links: db.prepare('SELECT title,url,description FROM project_links WHERE board_id=?').all(t.board_id),
         prompt: db.prepare('SELECT content FROM chat_messages WHERE id=?').get(j.message_id).content+(j.resume_note?'\nLatest user clarification: '+j.resume_note:'') };
     })();

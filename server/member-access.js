@@ -54,8 +54,8 @@ function memberGuard({db,memberships,ownerId,userId}){
    }
    if((match=route.match(/^\/api\/boards\/(\d+)(?:\/(.*))?$/))){
     projectId=Number(match[1]);const suffix=match[2]||'';
-    const read=['','cards','activity','archived','export','files','links','chat/threads','chat/context'];
-    const edits=['lists','lists/reorder','labels','files','file-links','links','chat/threads','agent'];
+    const read=['','cards','activity','archived','export','files','folders','links','chat/threads','chat/context'];
+    const edits=['lists','lists/reorder','labels','files','folders','file-links','links','chat/threads','agent'];
     if(write&&suffix==='agent'&&!req.personalAiAllowed)throw fail(402,'Ask the company owner to connect AI funding');
     if(method==='GET'?!read.includes(suffix):!edits.includes(suffix))throw fail(403,'This setting is managed by the account owner');
     if(method==='POST'&&suffix==='lists/reorder'&&Array.isArray(req.body?.order))for(const id of req.body.order){if(find('SELECT board_id FROM lists WHERE id=?',id)!==projectId)throw fail(404,'List not found');}
@@ -72,6 +72,7 @@ function memberGuard({db,memberships,ownerId,userId}){
    else if((match=route.match(/^\/api\/checklist-items\/(\d+)$/)))projectId=find('SELECT l.board_id FROM checklist_items i JOIN checklists x ON x.id=i.checklist_id JOIN cards c ON c.id=x.card_id JOIN lists l ON l.id=c.list_id WHERE i.id=?',match[1]);
    else if((match=route.match(/^\/api\/(comments|attachments)\/(\d+)$/)))projectId=find(`SELECT l.board_id FROM ${match[1]} x JOIN cards c ON c.id=x.card_id JOIN lists l ON l.id=c.list_id WHERE x.id=?`,match[2]);
    else if((match=route.match(/^\/api\/project-(files|links)\/(\d+)(?:\/download)?$/)))projectId=find(`SELECT board_id FROM project_${match[1]} WHERE id=?`,match[2]);
+   else if((match=route.match(/^\/api\/project-folders\/(\d+)$/)))projectId=find('SELECT board_id FROM project_folders WHERE id=?',match[1]);
    else if(method==='GET'&&(match=route.match(/^\/uploads\/([^/]+)$/))){
     const filename=decodeURIComponent(req.path.slice('/uploads/'.length));
     projectId=find('SELECT l.board_id FROM attachments a JOIN cards c ON c.id=a.card_id JOIN lists l ON l.id=c.list_id WHERE a.filename=?',filename)||find('SELECT board_id FROM project_files WHERE filename=?',filename);
