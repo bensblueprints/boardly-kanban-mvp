@@ -1,0 +1,13 @@
+.git
+node_modules
+vendor
+dist
+release
+data
+cloud-data
+.env
+.env.*
+*.log
+
+.boardly
+.codex

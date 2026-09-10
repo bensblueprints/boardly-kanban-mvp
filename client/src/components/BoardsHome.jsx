@@ -1,14 +1,19 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { KanbanSquare, Plus, Star, Trash2, LogOut, Upload, Layers, StickyNote, Plug, Cloud } from 'lucide-react';
+import { Plus, Star, Trash2, LogOut, Upload, Download, Layers, StickyNote, Plug, Cloud } from 'lucide-react';
 import { api } from '../api.js';
 import McpPanel from './McpPanel.jsx';
 import SyncPanel from './SyncPanel.jsx';
+import CloudConnections from './CloudConnections.jsx';
+import {useAccess} from '../access.jsx';
+import BrandLogo from './BrandLogo.jsx';
+import CompanyWorkspace from './CompanyWorkspace.jsx';
 
 const COLORS = ['#6366f1', '#8b5cf6', '#ec4899', '#ef4444', '#f59e0b', '#22c55e', '#14b8a6', '#3b82f6', '#64748b'];
 const EMOJIS = ['📋', '🚀', '🎯', '💼', '🛠️', '🎨', '📦', '🧠', '🔥', '🌱', '🏠', '✍️'];
 
-export default function BoardsHome({ onOpen, onLogout }) {
+export default function BoardsHome({ onOpen, onLogout, cloud = false }) {
+  const owner=useAccess().workspaceOwner!==false;
   const [boards, setBoards] = useState(null);
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
@@ -18,6 +23,7 @@ export default function BoardsHome({ onOpen, onLogout }) {
   const [showMcp, setShowMcp] = useState(false);
   const [mcpRunning, setMcpRunning] = useState(false);
   const [showSync, setShowSync] = useState(false);
+  const [connectionTab, setConnectionTab] = useState(null);
   const [syncEnabled, setSyncEnabled] = useState(false);
 
   const load = () => api.get('/api/boards').then(setBoards);
@@ -25,11 +31,11 @@ export default function BoardsHome({ onOpen, onLogout }) {
 
   // Drives the green dot on the AI button so the header reflects MCP state.
   const loadMcp = () => api.get('/api/mcp').then((s) => setMcpRunning(s.running)).catch(() => {});
-  useEffect(() => { loadMcp(); }, []);
+  useEffect(() => { if (!cloud) loadMcp(); }, [cloud]);
 
   // Drives the green dot on the Sync button so the header reflects sync state.
   const loadSync = () => api.get('/api/sync/status').then((s) => setSyncEnabled(s.enabled)).catch(() => {});
-  useEffect(() => { loadSync(); }, []);
+  useEffect(() => { if (!cloud) loadSync(); }, [cloud]);
 
   async function create(e) {
     e.preventDefault();
@@ -66,14 +72,13 @@ export default function BoardsHome({ onOpen, onLogout }) {
 
   return (
     <div className="min-h-full">
+      <style>{`button[hidden]{display:none!important}`}</style>
+      {cloud && connectionTab && <CloudConnections initialTab={connectionTab} onClose={() => setConnectionTab(null)} />}
       <header className="border-b border-zinc-800/80 bg-zinc-950/80 backdrop-blur sticky top-0 z-10">
-        <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <KanbanSquare className="w-6 h-6 text-indigo-400" />
-            <span className="font-bold text-lg">Boardly</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 min-h-16 py-3 flex flex-wrap gap-3 items-center justify-between">
+          {!cloud && <a href="#/" aria-label="Boardly workspace home" className="text-lg"><BrandLogo size={32}/></a>}
+          <div className="flex flex-wrap items-center gap-2">
+            <button hidden={!owner}
               onClick={() => importRef.current?.click()}
               className="flex items-center gap-1.5 text-sm text-zinc-400 hover:text-zinc-100 px-3 py-1.5 rounded-lg hover:bg-zinc-800 transition-colors"
             >
@@ -82,7 +87,7 @@ export default function BoardsHome({ onOpen, onLogout }) {
             <input ref={importRef} type="file" accept=".json,application/json" className="hidden"
               onChange={(e) => { importBoard(e.target.files[0]); e.target.value = ''; }} />
             <button
-              onClick={() => setShowSync(true)}
+              hidden={cloud&&!owner} onClick={() => cloud ? setConnectionTab('sync') : setShowSync(true)}
               className="flex items-center gap-1.5 text-sm text-zinc-400 hover:text-zinc-100 px-3 py-1.5 rounded-lg hover:bg-zinc-800 transition-colors"
             >
               <span className="relative flex">
@@ -94,7 +99,7 @@ export default function BoardsHome({ onOpen, onLogout }) {
               Sync
             </button>
             <button
-              onClick={() => setShowMcp(true)}
+              hidden={cloud&&!owner} onClick={() => cloud ? setConnectionTab('mcp') : setShowMcp(true)}
               className="flex items-center gap-1.5 text-sm text-zinc-400 hover:text-zinc-100 px-3 py-1.5 rounded-lg hover:bg-zinc-800 transition-colors"
             >
               <span className="relative flex">
@@ -103,8 +108,9 @@ export default function BoardsHome({ onOpen, onLogout }) {
                   <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-emerald-400" />
                 )}
               </span>
-              AI
+              {cloud ? 'MCP' : 'AI'}
             </button>
+            {cloud && owner && <button onClick={() => setConnectionTab('downloads')} className="flex items-center gap-1.5 text-sm text-zinc-400 hover:text-zinc-100 px-3 py-1.5 rounded-lg hover:bg-zinc-800"><Download size={16} /> Desktop app</button>}
             <button
               onClick={onLogout}
               className="flex items-center gap-1.5 text-sm text-zinc-400 hover:text-zinc-100 px-3 py-1.5 rounded-lg hover:bg-zinc-800 transition-colors"
@@ -115,10 +121,11 @@ export default function BoardsHome({ onOpen, onLogout }) {
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-6 py-10">
+      {cloud ? <CompanyWorkspace onOpen={onOpen} cloud={cloud} /> : <main className="max-w-6xl mx-auto px-6 py-10">
         <h1 className="text-2xl font-bold mb-1">Your boards</h1>
-        <p className="text-sm text-zinc-500 mb-8">Every project, one flat price. Zero per-seat math.</p>
+        <p className="text-sm text-zinc-500 mb-8">{cloud ? 'Your projects and next steps.' : 'Every project, one flat price. Zero per-seat math.'}</p>
 
+        {cloud && <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-4"><div><p className="text-sm font-medium">Your projects, on every computer</p><p className="text-xs text-zinc-500 mt-1">Download Boardly desktop and sync it with this workspace.</p></div><button onClick={() => setConnectionTab('downloads')} className="text-sm text-indigo-300 hover:text-indigo-200 flex items-center gap-2"><Download size={16} /> Get the desktop app</button></div>}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           <AnimatePresence>
             {(boards || []).map((b) => (
@@ -209,7 +216,7 @@ export default function BoardsHome({ onOpen, onLogout }) {
         {boards && boards.length === 0 && !creating && (
           <p className="text-zinc-600 text-sm mt-8">No boards yet — create your first one above.</p>
         )}
-      </main>
+      </main>}
 
       <AnimatePresence>
         {showMcp && (

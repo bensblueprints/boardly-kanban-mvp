@@ -1,0 +1,206 @@
+const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
+const { StreamableHTTPClientTransport } = require('@modelcontextprotocol/sdk/client/streamableHttp.js');
+const { createCloudApp } = require('../server/cloud');
+const { createConnections } = require('../server/connections');
+const { createApp } = require('../server/app');
+const root = fs.mkdtempSync(path.join(os.tmpdir(), 'boardly-integrations-'));
+const keys = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+const config = { dataDir: path.join(root, 'cloud'), origin: 'https://boardly.example.com', ownerId: 'user_owner', ownerOnly: true, planSlugs: [],
+  publishableKey: 'pk_test_' + Buffer.from('boardly-test.clerk.accounts.dev$').toString('base64'), secretKey: 'sk_test_fake', jwtKey: keys.publicKey.export({ type: 'spki', format: 'pem' }) };
+const now = Math.floor(Date.now() / 1000);
+const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT', kid: 'local-test' })).toString('base64url');
+const claims = Buffer.from(JSON.stringify({ iss: 'https://boardly-test.clerk.accounts.dev', sub: config.ownerId, sid: 'sess_test', iat: now, nbf: now - 10, exp: now + 600, azp: config.origin, v: 2, fva: [0, -1] })).toString('base64url');
+const unsigned = `${header}.${claims}`;
+const session = `${unsigned}.${crypto.sign('RSA-SHA256', Buffer.from(unsigned), keys.privateKey).toString('base64url')}`;
+const listeners = [], apps = [];
+async function listen(app) { const s = app.listen(0, '127.0.0.1'); await new Promise(r => s.once('listening', r)); listeners.push(s); return `http://127.0.0.1:${s.address().port}`; }
+async function run() {
+  const cloud = createCloudApp(config); apps.push(cloud);
+  let base = await listen(cloud);
+  const request = (route, token = session, method = 'GET', data) => fetch(base + route, { method, headers: { authorization: `Bearer ${token}`, ...(data !== undefined ? { 'content-type': 'application/json' } : {}) }, body: data === undefined ? undefined : JSON.stringify(data) });
+  async function api(route, token = session, method = 'GET', data) { const r = await request(route, token, method, data); const d = await r.json(); assert.ok(r.ok, `${method} ${route}: ${r.status} ${JSON.stringify(d)}`); return d; }
+  const mint = (scope, name) => api('/api/connections', session, 'POST', { scope, name });
+  const mcp = await mint('mcp', 'Test client');
+  const sync = await mint('sync', 'Test desktop');
+  const listed = await api('/api/connections');
+  assert.ok(!JSON.stringify(listed).includes(mcp.token));
+  assert.equal((await request('/api/boards', mcp.token)).status, 403);
+  assert.equal((await request('/mcp', sync.token, 'POST', {})).status, 403);
+  assert.equal((await request('/api/connections', sync.token)).status, 403);
+  assert.equal((await request('/api/worker/claim', session, 'POST', {})).status, 403);
+  const client = new Client({ name: 'cloud-integration-test', version: '1' });
+  try {
+    await client.connect(new StreamableHTTPClientTransport(new URL(base + '/mcp'), { requestInit: { headers: { authorization: `Bearer ${mcp.token}` } } }));
+    const result = await client.callTool({ name: 'create_board', arguments: { name: 'MCP creates this board' } });
+    assert.equal(result.isError, undefined);
+    assert.equal((await api('/api/boards'))[0].name, 'MCP creates this board');
+  } finally { await client.close(); }
+  const board = (await api('/api/boards'))[0];
+  const list = await api(`/api/boards/${board.id}/lists`, session, 'POST', { name: 'To Do' });
+  const card = await api(`/api/lists/${list.id}/cards`, session, 'POST', { title: 'From the web' });
+
+  const desktop = createApp({ dataDir: path.join(root, 'desktop'), adminPassword: 'test-only' });
+  desktop.stopSync(); apps.push(desktop);
+  const local = await listen(desktop);
+  const login = await fetch(local + '/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password: 'test-only' }) });
+  const cookie = login.headers.get('set-cookie').split(';')[0];
+  const localApi = async (route, method = 'GET', body) => { const r = await fetch(local + route, { method, headers: { cookie, ...(body instanceof FormData ? {} : { 'content-type': 'application/json' }) }, body: body instanceof FormData ? body : body === undefined ? undefined : JSON.stringify(body) }); const d = await r.json(); assert.ok(r.ok, JSON.stringify(d)); return d; };
+  const engine = process.env.BOARDLY_TEST_LEGACY_ENGINE ? require(process.env.BOARDLY_TEST_LEGACY_ENGINE).createSyncEngine({ db: desktop.db, uploadsDir: path.join(root, 'desktop', 'uploads') }) : desktop.syncEngine;
+  engine.configure({ serverUrl: base, token: sync.token });
+  async function round() { const r = await engine.syncNow(); assert.ok(r, engine.status().lastError); await new Promise(r => setTimeout(r, 8)); }
+  await round();
+  let localBoards = await localApi('/api/boards');
+  assert.equal(localBoards[0].uuid, board.uuid);
+  const lb = await localApi(`/api/boards/${localBoards[0].id}`);
+  const lc = lb.lists[0].cards[0];
+  assert.equal(lc.title, 'From the web');
+  await localApi(`/api/cards/${lc.id}`, 'PATCH', { title: 'Offline desktop edit' });
+  await round();
+  assert.equal((await api(`/api/cards/${card.id}`)).title, 'Offline desktop edit');
+  await api(`/api/cards/${card.id}`, session, 'PATCH', { title: 'Cloud edit returns to desktop' });
+  await round();
+  assert.equal((await localApi(`/api/cards/${lc.id}`)).title, 'Cloud edit returns to desktop');
+  const form = new FormData(); form.set('file', new Blob(['attachment bytes'], { type: 'text/plain' }), 'notes.txt');
+  await localApi(`/api/cards/${lc.id}/attachments`, 'POST', form);
+  await round();
+  const uploaded = (await api(`/api/cards/${card.id}`)).attachments[0];
+  const attachment = await request('/uploads/' + uploaded.filename);
+  assert.equal(await attachment.text(), 'attachment bytes');
+  await api(`/api/cards/${card.id}`, session, 'DELETE');
+  await round();
+  assert.equal((await fetch(local + `/api/cards/${lc.id}`, { headers: { cookie } })).status, 404);
+  console.log('PASS: account-scoped MCP, two-way web/desktop sync, attachment bytes and deletion');
+
+  const fileForm = new FormData(); fileForm.set('file', new Blob(['project file content'], { type: 'text/plain' }), 'project-notes.txt');
+  const fileResponse = await fetch(base + `/api/boards/${board.id}/files`, { method: 'POST', headers: { authorization: `Bearer ${session}` }, body: fileForm });
+  assert.equal(fileResponse.status, 201); const projectFile = await fileResponse.json();
+  assert.equal(await (await request(`/api/project-files/${projectFile.id}/download`)).text(), 'project file content');
+  assert.equal((await fetch(base + `/api/project-files/${projectFile.id}/download`)).status, 401);
+  const fileList = await api(`/api/boards/${board.id}/files`); assert.equal(fileList.storage.unlimited, true);
+  assert.equal(fileList.storage.usedBytes, Buffer.byteLength('project file content'));
+  await api(`/api/boards/${board.id}/file-links`, session, 'POST', { name: 'Source audio', url: 'https://example.com/audio' });
+  const link = await api(`/api/boards/${board.id}/links`, session, 'POST', { title: 'Website', url: 'https://example.com' });
+  assert.equal((await request(`/api/boards/${board.id}/links`, session, 'POST', { title: 'Bad', url: 'javascript:alert(1)' })).status, 400);
+  assert.equal((await api(`/api/boards/${board.id}/links`))[0].id, link.id);
+  const launched = await api(`/api/boards/${board.id}/agent`, session, 'POST', { instruction: 'Inspect only' });
+  assert.ok(launched.threadId);
+  await api(`/api/chat/jobs/${launched.jobId}/cancel`, session, 'POST', {});
+  assert.equal((await request(`/api/boards/${board.id}/agent`, session, 'POST', { card_id: 999999 })).status, 404);
+  await api(`/api/project-files/${projectFile.id}`, session, 'DELETE');
+  assert.equal((await request(`/api/project-files/${projectFile.id}/download`)).status, 404);
+  console.log('PASS: project files/links, authenticated downloads, unlimited owner allowance, safe URLs and project agent launch');
+
+  const thread = await api(`/api/boards/${board.id}/chat/threads`, session, 'POST', { title: 'Integration check' });
+  const chatJob = await api(`/api/chat/threads/${thread.id}/messages`, session, 'POST', { mode:'work', content: 'Inspect this project' });
+  assert.equal((await request(`/api/chat/threads/${thread.id}/messages`, session, 'POST', { mode:'work', content: 'duplicate' })).status, 409);
+  const store = createConnections(config.dataDir); const worker = store.issue(config.ownerId, 'Test worker', 'worker'); store.close();
+  const claimed = (await api('/api/worker/claim', worker.token, 'POST', {})).job;
+  assert.equal(claimed.id, chatJob.id); assert.equal(claimed.board.id, board.id);
+  assert.equal((await request('/api/boards', worker.token)).status, 403);
+  const runningActivity = { key: 'item_1', kind: 'command', title: 'Running tests and checks', detail: '', status: 'running' };
+  await api(`/api/worker/jobs/${claimed.id}`, worker.token, 'POST', { activity: [runningActivity] });
+  const firstActivity = (await api(`/api/chat/threads/${thread.id}`)).job.activity;
+  assert.equal(firstActivity.length, 1); assert.equal(firstActivity[0].status, 'running');
+  await api(`/api/worker/jobs/${claimed.id}`, worker.token, 'POST', { activity: [runningActivity] });
+  assert.deepEqual((await api(`/api/chat/threads/${thread.id}`)).job.activity, firstActivity, 'Heartbeats do not fabricate new activity');
+  await api(`/api/worker/jobs/${claimed.id}`, worker.token, 'POST', { activity: [{ ...runningActivity, detail: 'Exit code 0', status: 'completed' }] });
+  await api(`/api/worker/jobs/${claimed.id}`, worker.token, 'POST', { status: 'completed', text: 'Verified project result', sessionId: crypto.randomUUID() });
+  let history = await api(`/api/chat/threads/${thread.id}`);
+  assert.equal(history.messages.length, 2); assert.equal(history.messages[1].content, 'Verified project result');
+  assert.equal(history.job.activity.length, 1); assert.equal(history.job.activity[0].status, 'completed');
+  assert.equal(history.job.activity[0].created_at, firstActivity[0].created_at); assert.ok(history.job.started_at);
+  const next = await api(`/api/chat/threads/${thread.id}/messages`, session, 'POST', { mode:'work', content: 'Continue' });
+  const resumed = (await api('/api/worker/claim', worker.token, 'POST', {})).job;
+  assert.ok(resumed.sessionId); assert.equal(resumed.id, next.id);
+  assert.deepEqual((await api(`/api/chat/threads/${thread.id}`)).job.activity, []);
+  await api(`/api/chat/jobs/${next.id}/cancel`, session, 'POST', {});
+  assert.equal((await api(`/api/worker/jobs/${next.id}`, worker.token, 'POST', {status:'cancelled'})).status, 'cancelled');
+
+  const secondBoard = await api('/api/boards', session, 'POST', { name: 'Separate project' });
+  const taskCard = await api(`/api/lists/${list.id}/cards`, session, 'POST', { title: 'Task conversation scope', description: 'Keep this task context' });
+  const secret = 'test-only-secret-' + crypto.randomUUID();
+  await api(`/api/boards/${board.id}/environment/SERVICE_API_KEY`, session, 'PUT', { value: secret });
+  await api(`/api/boards/${secondBoard.id}/environment/SERVICE_API_KEY`, session, 'PUT', { value: 'different-test-only-secret' });
+  for (const name of ['PATH', 'NODE_OPTIONS', 'HOME', 'CODEX_HOME', 'LD_PRELOAD', 'BOARDLY_TOKEN', 'bad-name']) {
+    assert.equal((await request(`/api/boards/${board.id}/environment/${name}`, session, 'PUT', { value: 'invalid' })).status, 400);
+  }
+  assert.equal((await request(`/api/boards/${board.id}/environment`, worker.token)).status, 403);
+  assert.equal((await fetch(base + `/api/boards/${board.id}/environment`)).status, 401);
+  const envList = await api(`/api/boards/${board.id}/environment`);
+  assert.deepEqual(Object.keys(envList[0]).sort(), ['name', 'updated_at']);
+  assert.ok(!JSON.stringify(envList).includes(secret));
+  assert.equal((await request(`/api/boards/${secondBoard.id}/chat/threads`, session, 'POST', { card_id: taskCard.id })).status, 404);
+  assert.equal((await request(`/api/boards/${secondBoard.id}/chat/threads?card_id=${taskCard.id}`)).status, 404);
+  const taskThread = await api(`/api/boards/${board.id}/chat/threads`, session, 'POST', { card_id: taskCard.id });
+  assert.ok(!(await api(`/api/boards/${board.id}/chat/threads`)).some(t => t.id === taskThread.id));
+  assert.equal((await api(`/api/boards/${board.id}/chat/threads?card_id=${taskCard.id}`))[0].id, taskThread.id);
+  await api(`/api/chat/threads/${taskThread.id}/messages`, session, 'POST', { mode:'work', content: `Read the project file; do not disclose ${secret}` });
+  const taskJob = (await api('/api/worker/claim', worker.token, 'POST', {})).job;
+  assert.equal(taskJob.task.id, taskCard.id); assert.equal(taskJob.environment.SERVICE_API_KEY, secret);
+  assert.ok(!taskJob.prompt.includes(secret)); assert.ok(!JSON.stringify(taskJob.history).includes(secret));
+  const uploadFor = async boardId => {
+    const form = new FormData(); form.set('file', new Blob(['scoped project bytes']), 'scoped.txt');
+    const r = await fetch(base + `/api/boards/${boardId}/files`, { method: 'POST', headers: { authorization: `Bearer ${session}` }, body: form });
+    assert.equal(r.status, 201); return r.json();
+  };
+  const ownFile = await uploadFor(board.id), otherFile = await uploadFor(secondBoard.id);
+  assert.equal(await (await request(`/api/worker/jobs/${taskJob.id}/files/${ownFile.id}`, worker.token)).text(), 'scoped project bytes');
+  assert.equal((await request(`/api/worker/jobs/${taskJob.id}/files/${otherFile.id}`, worker.token)).status, 404);
+  const outputForm = new FormData(); outputForm.set('file', new Blob(['generated output']), 'result.txt');
+  assert.equal((await fetch(base + `/api/worker/jobs/${taskJob.id}/outputs`, { method: 'POST', headers: { authorization: `Bearer ${worker.token}` }, body: outputForm })).status, 201);
+  const otherStore = createConnections(config.dataDir), otherWorker = otherStore.issue(config.ownerId, 'Unassigned worker', 'worker'); otherStore.close();
+  assert.equal((await request(`/api/worker/jobs/${taskJob.id}`, otherWorker.token, 'POST', { activity: [runningActivity] })).status, 404);
+  await api(`/api/worker/jobs/${taskJob.id}`, worker.token, 'POST', { status: 'completed', text: `Do not expose ${secret}`, progress: secret,
+    activity: [{ key: 'item_2', kind: 'update', title: 'Progress update', detail: `Do not expose ${secret}`, status: 'completed' },
+      { key: 'item_3', kind: 'reasoning', title: 'Private reasoning', detail: secret, status: 'completed' }] });
+  const taskHistory = await api(`/api/chat/threads/${taskThread.id}`);
+  assert.ok(!JSON.stringify(taskHistory).includes(secret)); assert.match(taskHistory.messages.at(-1).content, /REDACTED/);
+  assert.equal(taskHistory.job.activity.length, 1); assert.match(taskHistory.job.activity[0].detail, /REDACTED/);
+  assert.equal((await request(`/api/worker/jobs/${taskJob.id}/files/${ownFile.id}`, worker.token)).status, 404);
+  const { workspacePath } = require('../server/cloud');
+  const dbFile = path.join(workspacePath(config.dataDir, config.ownerId), 'app.db');
+  for (const file of [dbFile, dbFile + '-wal']) if (fs.existsSync(file)) assert.ok(!fs.readFileSync(file).includes(Buffer.from(secret)));
+  assert.equal(fs.statSync(path.join(config.dataDir, 'project-secrets.key')).mode & 0o777, 0o600);
+  console.log('PASS: task-specific history, project-scoped files/outputs and variables, encrypted storage, reserved settings and secret redaction');
+  await api('/api/connections/' + mcp.id, session, 'DELETE');
+  assert.equal((await request('/mcp', mcp.token, 'POST', {})).status, 401);
+  const raw = fs.readFileSync(path.join(config.dataDir, 'connections.db'));
+  assert.ok(!raw.includes(Buffer.from(mcp.token)));
+  const inFlight=await api(`/api/chat/threads/${thread.id}/messages`,session,'POST',{ mode:'work', content:'Preserve this active job across the server restart'});
+  assert.equal((await api('/api/worker/claim',worker.token,'POST',{})).job.id,inFlight.id);
+  const queuedThread=await api(`/api/boards/${board.id}/chat/threads`,session,'POST',{title:'Restart queue'});
+  const queued=await api(`/api/chat/threads/${queuedThread.id}/messages`,session,'POST',{ mode:'work', content:'Keep this queued job'});
+  await new Promise(r => listeners.shift().close(r)); apps.shift().closeWorkspaces();
+  const restarted = createCloudApp(config); apps.push(restarted); base = await listen(restarted);
+  assert.equal((await api(`/api/worker/jobs/${inFlight.id}`,worker.token,'POST',{progress:'Reconnected after app restart'})).status,'running');
+  assert.equal((await api('/api/worker/claim',worker.token,'POST',{})).job,null);
+  await api(`/api/worker/jobs/${inFlight.id}`,worker.token,'POST',{status:'completed',text:'Active worker survived restart'});
+  assert.equal((await api('/api/worker/claim',worker.token,'POST',{})).job.id,queued.id);
+  await api(`/api/chat/jobs/${queued.id}/cancel`,session,'POST',{});
+  await api(`/api/worker/jobs/${queued.id}`,worker.token,'POST',{status:'cancelled'});
+  console.log('PASS: in-flight worker ownership, heartbeat and queued jobs survive an application restart');
+  history = await api(`/api/chat/threads/${thread.id}`);
+  assert.equal(history.messages[1].content, 'Verified project result');
+  assert.equal(history.runs.find(r => r.id === claimed.id).activity[0].detail, 'Exit code 0');
+  assert.deepEqual((await api(`/api/chat/threads/${taskThread.id}`)).job.activity, taskHistory.job.activity);
+  assert.equal((await request('/mcp', mcp.token, 'POST', {})).status, 401);
+  assert.ok((await api('/api/connections')).connections.some(c => c.id === sync.id));
+  assert.equal((await api(`/api/boards/${board.id}/environment`))[0].name, 'SERVICE_API_KEY');
+  await api(`/api/chat/threads/${taskThread.id}/messages`, session, 'POST', { mode:'work', content: 'After restart' });
+  const restartJob = (await api('/api/worker/claim', worker.token, 'POST', {})).job;
+  assert.equal(restartJob.environment.SERVICE_API_KEY, secret); assert.equal(restartJob.task.id, taskCard.id);
+  await api(`/api/chat/jobs/${restartJob.id}/cancel`, session, 'POST', {});
+  await api(`/api/boards/${board.id}/environment/SERVICE_API_KEY`, session, 'DELETE');
+  assert.deepEqual(await api(`/api/boards/${board.id}/environment`), []);
+  console.log('PASS: persistent project threads, queue, resume, cancellation, key scoping, revocation and restart');
+}
+run().catch(e => { console.error(e); process.exitCode = 1; }).finally(async () => {
+  for (const s of listeners) await new Promise(r => s.close(r));
+  for (const a of apps) { if (a.closeWorkspaces) a.closeWorkspaces(); else { a.stopSync(); a.db.close(); } }
+  fs.rmSync(root, { recursive: true, force: true });
+});

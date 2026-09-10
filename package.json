@@ -1,7 +1,7 @@
 {
   "name": "boardly",
   "version": "1.9.0",
-  "description": "Self-hosted kanban board. Pay once, own it forever — no Trello per-seat subscription.",
+  "description": "Self-hosted kanban board. Pay once, own it forever \u2014 no Trello per-seat subscription.",
   "author": "Ben (bensblueprints) <ben@onetimesuite.com>",
   "homepage": "https://boardly.onetimesuite.com",
   "license": "MIT",
@@ -15,29 +15,50 @@
     "test": "node test/smoke.js",
     "test:mcp": "node test/mcp.js",
     "test:mcp-http": "node test/mcp-http.js",
-    "test:all": "node test/smoke.js && node test/mcp.js && node test/mcp-http.js && node test/coach.js",
+    "test:all": "node test/smoke.js && node test/mcp.js && node test/mcp-http.js && node test/coach.js && node test/cloud.js && node test/markdown.js && node test/agent-activity.js && node test/cloud-integrations.js && node test/project-payments.js && node test/company-email.js && node test/company-imap.js && node test/memberships.js && node test/shared-companies.js && node test/member-scopes.js && node test/member-scope-migration.js && node test/member-scope-agents.js && node test/company-chat.js && node test/owner-funding.js && node test/personal-ai.js && npm run test:audio && npm run test:files && npm run test:computers && npm run test:agents && npm run test:github && npm run test:overview && npm run test:chatgpt",
     "dist": "npm run build && electron-builder --win nsis",
     "dist:mac": "npm run build && electron-builder --mac dmg",
     "dist:linux": "npm run build && electron-builder --linux AppImage deb",
     "test:coach": "node test/coach.js",
     "test:convergence": "node test/sync-convergence.js",
-    "test:sync": "node test/sync-tracking.js && node test/sync-engine.js && node sync-server/test/sync-server.test.js && node test/sync-convergence.js"
+    "test:sync": "node test/sync-tracking.js && node test/sync-engine.js && node sync-server/test/sync-server.test.js && node test/sync-convergence.js",
+    "start:cloud": "node server/cloud-index.js",
+    "test:cloud": "node test/cloud.js",
+    "test:computers": "node test/project-computers.js",
+    "test:files": "node test/project-folders.js",
+    "test:audio": "node test/audio.js && node test/audio-work.js",
+    "test:integrations": "node test/cloud-integrations.js",
+    "test:payments": "node test/project-payments.js",
+    "test:companies": "node test/company-email.js && node test/company-imap.js",
+    "test:members": "node test/memberships.js && node test/shared-companies.js && node test/member-scopes.js && node test/member-scope-migration.js && node test/member-scope-agents.js && node test/company-chat.js && node test/owner-funding.js && node test/personal-ai.js",
+    "test:agents": "node test/swarms.js && node test/chat-concurrency.js && node test/ssh-connections.js && node test/owner-ssh.js && node test/ssh-chat-context.js && node test/ssh-broker.js && node test/cloud-agents.js && node test/tailnet.js && node test/cloud-api-agents.js",
+    "test:github": "node test/github-connections.js && node test/account-github.js && node test/github-repositories.js && node test/github-chat-persistence.js && node test/github-broker.js && node test/github-workers.js",
+    "test:overview": "node test/company-overview.js",
+    "test:chatgpt": "node test/chatgpt.js"
   },
   "dependencies": {
+    "@clerk/backend": "3.17.1",
+    "@clerk/express": "2.1.66",
+    "@clerk/react": "6.15.1",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "better-sqlite3": "^12.2.0",
     "cookie-parser": "^1.4.7",
     "express": "^4.21.2",
+    "imapflow": "1.7.8",
+    "mailparser": "3.9.22",
     "multer": "^1.4.5-lts.2",
+    "ssh2": "1.17.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@hello-pangea/dnd": "^17.0.0",
     "@tailwindcss/vite": "^4.1.0",
     "@vitejs/plugin-react": "^4.4.0",
+    "dompurify": "3.4.15",
     "electron": "^33.4.0",
     "electron-builder": "^25.1.8",
     "framer-motion": "^11.18.2",
+    "jsdom": "30.0.1",
     "lucide-react": "^0.474.0",
     "marked": "^15.0.6",
     "react": "^18.3.1",
@@ -84,5 +105,8 @@
     "asarUnpack": [
       "vendor/**"
     ]
+  },
+  "overrides": {
+    "qs": "6.16.0"
   }
 }

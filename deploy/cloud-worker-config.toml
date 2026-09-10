@@ -1,0 +1,9 @@
+model = "gpt-6-astra"
+approval_policy = "never"
+sandbox_mode = "workspace-write"
+[sandbox_workspace_write]
+network_access = true
+[mcp_servers.boardly]
+url = "https://boardly.onetimesuite.com/mcp"
+http_headers_helper = "/app/scripts/cloud-mcp-headers.cjs"
+startup_timeout_sec = 20

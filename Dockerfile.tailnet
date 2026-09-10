@@ -1,0 +1,10 @@
+FROM golang:1.26-bookworm AS build
+WORKDIR /src
+COPY services/tailnet/go.mod ./
+RUN go mod download
+COPY services/tailnet/ ./
+RUN go mod tidy && CGO_ENABLED=0 go build -trimpath -o /tailnet .
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY --from=build /tailnet /tailnet
+ENV TAILNET_STATE_DIR=/state
+ENTRYPOINT ["/tailnet"]
