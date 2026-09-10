@@ -8,6 +8,7 @@ import {
 import CompanyChat from './CompanyChat.jsx';
 import AiActions from './AiActions.jsx';
 import { api } from '../api.js';
+import AttachmentImage from './AttachmentImage.jsx';
 
 const LABEL_COLORS = ['#ef4444', '#f59e0b', '#22c55e', '#14b8a6', '#3b82f6', '#8b5cf6', '#ec4899', '#64748b'];
 
@@ -329,13 +330,14 @@ export default function CardModal({ cardId, board, onClose, onBoardChange, onDep
               {card.attachments.map((a) => (
                 <div key={a.id} className="flex items-center gap-3 bg-zinc-950/70 border border-zinc-800 rounded-lg px-3 py-2">
                   {/^image\//.test(a.mime)
-                    ? <img src={`/uploads/${a.filename}`} alt="" className="w-10 h-10 rounded object-cover shrink-0" />
+                    ? <AttachmentImage src={`/uploads/${a.filename}`} alt="" className="w-10 h-10 rounded object-cover shrink-0" />
                     : <div className="w-10 h-10 rounded bg-zinc-800 flex items-center justify-center shrink-0"><Paperclip className="w-4 h-4 text-zinc-500" /></div>}
                   <div className="flex-1 min-w-0">
                     <p className="text-sm text-zinc-200 truncate">{a.original_name}</p>
                     <p className="text-[11px] text-zinc-600">{(a.size / 1024).toFixed(1)} KB</p>
                   </div>
                   <a href={`/uploads/${a.filename}`} download={a.original_name}
+                    onClick={async event => { event.preventDefault(); try { await api.download(`/uploads/${a.filename}`, a.original_name); } catch (error) { window.alert(error.message); } }}
                     className="p-1.5 rounded hover:bg-zinc-800 text-zinc-500 hover:text-zinc-200" title="Download">
                     <Download className="w-4 h-4" />
                   </a>

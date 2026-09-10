@@ -1,4 +1,6 @@
 let tokenProvider = null;
+let downloadProvider = null;
+export function setDownloadProvider(provider) { downloadProvider = provider; }
 let workspaceId=null;
 export function setWorkspaceId(id){workspaceId=id;}
 export function setTokenProvider(provider) { tokenProvider = provider; }
@@ -27,6 +29,18 @@ async function req(method, url, body) {
 }
 
 export const api = {
+  blob: async (url, signal) => {
+    const token = tokenProvider ? await tokenProvider() : null;
+    const response = await fetch(url, { signal, headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), ...(workspaceId ? { 'x-boardly-workspace': workspaceId } : {}) } });
+    if (!response.ok) throw new Error('File could not be loaded.');
+    return response.blob();
+  },
+  saveText: async (content, name) => {
+    if (downloadProvider) return downloadProvider(null, name, workspaceId, content);
+    const url = URL.createObjectURL(new Blob([content], { type: 'text/markdown;charset=utf-8' }));
+    const anchor = document.createElement('a'); anchor.href = url; anchor.download = name; anchor.click();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  },
   audio: async (url, body, signal) => {
     const token = tokenProvider ? await tokenProvider() : null;
     const response = await fetch(url, { method: 'POST', signal, headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), ...(workspaceId ? { 'x-boardly-workspace': workspaceId } : {}) }, body: JSON.stringify(body) });
@@ -34,6 +48,7 @@ export const api = {
     return response.blob();
   },
   download: async (url, name) => {
+    if (downloadProvider) return downloadProvider(url, name, workspaceId);
     const token = tokenProvider ? await tokenProvider() : null;
     const response = await fetch(url, { headers: {...(token?{authorization:`Bearer ${token}`} : {}),...(workspaceId?{'x-boardly-workspace':workspaceId}:{})} });
     if (!response.ok) throw new Error('File download failed. Try again.');

@@ -25,6 +25,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         app: resolve("client/index.html"),
+        mobile: resolve("client/mobile/index.html"),
         marketing: resolve("client/marketing.js"),
       },
       output: {

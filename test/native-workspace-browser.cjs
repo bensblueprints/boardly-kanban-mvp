@@ -1,0 +1,38 @@
+const assert=require('node:assert/strict'),path=require('node:path');
+const {fixture}=require('./member-fixture');
+const {chromium}=require('/home/ben/.npm/_npx/e41f203b7505f1fb/node_modules/playwright');
+let f,vite,browser;
+(async()=>{
+ f=await fixture({publicAccess:true});const project=await f.project('Mobile company','Mobile project');
+ await f.api('/api/onboarding',{method:'PUT',body:{step:4,status:'completed'}});
+ const task=await f.api(`/api/lists/${project.list.id}/cards`,{method:'POST',body:{title:'Review mobile project'}});
+ const repo=path.resolve(__dirname,'..'),{createServer}=await import('vite'),react=(await import('@vitejs/plugin-react')).default,tailwind=(await import('@tailwindcss/vite')).default;
+ vite=await createServer({configFile:false,root:repo+'/client',plugins:[react(),tailwind()],server:{host:'127.0.0.1',port:0,proxy:{'/api':{target:f.base,configure:p=>p.on('proxyReq',q=>q.setHeader('origin',f.config.origin))},'/uploads':{target:f.base,configure:p=>p.on('proxyReq',q=>q.setHeader('origin',f.config.origin))}}}});await vite.listen();
+ browser=await chromium.launch({executablePath:'/usr/bin/google-chrome',headless:true,args:['--no-sandbox']});
+ const context=await browser.newContext({viewport:{width:390,height:844}}),page=await context.newPage(),errors=[];page.on('pageerror',error=>errors.push(error.message));
+ await context.addInitScript(({token,userId})=>{
+  window.__nativeCalls=[];
+  window.ReactNativeWebView={postMessage(raw){const message=JSON.parse(raw);window.__nativeCalls.push({type:message.type,name:message.name,url:message.url});let data;
+   if(message.type==='ready')data={userId,workspaceId:userId};else if(message.type==='token')data=token;else data={shared:true};
+   setTimeout(()=>window.dispatchEvent(new MessageEvent('boardly:native',{data:JSON.stringify({id:message.id,nonce:message.nonce,data})})),0);
+  }};
+ },{token:f.token('user_owner'),userId:'user_owner'});
+ await page.goto(vite.resolvedUrls.local[0]+'mobile/#/board/'+project.project.id);
+ await page.getByText('Review mobile project',{exact:true}).waitFor();
+ assert.ok(await page.evaluate(()=>__nativeCalls.some(call=>call.type==='token')),'API tokens are requested from native session');
+ assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'Workspace fits mobile');
+ await page.getByRole('button',{name:'Help & tutorial',exact:true}).click();
+ await page.getByRole('dialog',{name:'Boardly tutorial'}).waitFor();await page.getByRole('button',{name:'Download tutorial',exact:true}).click();
+ await page.waitForFunction(()=>__nativeCalls.some(call=>call.type==='shareText'&&call.name==='Boardly-tutorial.md'));
+ await page.getByRole('button',{name:'Close tutorial',exact:true}).click();
+ const upload=new FormData();upload.set('file',new Blob([Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aZ3sAAAAASUVORK5CYII=','base64')],{type:'image/png'}),'pixel.png');
+ await f.api('/api/cards/'+task.id+'/attachments',{method:'POST',body:upload});
+ await page.getByText('Review mobile project',{exact:true}).click();
+ await page.getByText('pixel.png',{exact:true}).waitFor();
+ await page.waitForFunction(()=>[...document.images].some(image=>image.src.startsWith('blob:')&&image.complete&&image.naturalWidth>0));
+ await page.getByTitle('Download',{exact:true}).click();await page.waitForFunction(()=>__nativeCalls.some(call=>call.type==='download'&&call.name==='pixel.png'));
+ assert.deepEqual(errors,[]);
+ await page.screenshot({path:'/home/ben/.local/share/boardly-ops/mobile-workspace-fixture-20260910.png'});
+ const plain=await browser.newPage();await plain.goto(vite.resolvedUrls.local[0]+'mobile/');await plain.getByText('Open this workspace in the Boardly mobile app.',{exact:true}).waitFor();
+ console.log('PASS: native token handshake, authenticated mobile workspace and image previews, tutorial/file share requests, mobile layout and browser fallback');
+})().catch(error=>{console.error(error);process.exitCode=1;}).finally(async()=>{if(browser)await browser.close();if(vite)await vite.close();if(f)await f.close();});
