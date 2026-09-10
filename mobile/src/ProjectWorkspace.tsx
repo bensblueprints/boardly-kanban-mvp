@@ -21,7 +21,9 @@ export default function ProjectWorkspace({ route, workspaceId, userId, title, on
     web.current?.injectJavaScript(`if(location.origin===${JSON.stringify(ORIGIN)}&&location.pathname==='/mobile/'&&window.__BOARDLY_NATIVE_DOC===${JSON.stringify(nonce)}){window.dispatchEvent(new MessageEvent('boardly:native',{data:${JSON.stringify(message)}}));}true;`);
   }
   async function receive(event: WebViewMessageEvent) {
-    if (!isWorkspaceUrl(event.nativeEvent.url) || !isWorkspaceUrl(currentUrl.current) || event.nativeEvent.data.length > 250000) return;
+    // Android's WebMessageListener reports the source origin; iOS reports the full URL.
+    const source = event.nativeEvent.url;
+    if (!(source === ORIGIN || source === ORIGIN + '/' || isWorkspaceUrl(source)) || !isWorkspaceUrl(currentUrl.current) || event.nativeEvent.data.length > 250000) return;
     let message: { type: string; id: string; nonce: string; url?: string; name?: string; workspaceId?: string; content?: string };
     try { message = JSON.parse(event.nativeEvent.data); } catch { return; }
     if (!message || typeof message !== 'object' || typeof message.id !== 'string' || typeof message.nonce !== 'string' || !['ready', 'token', 'signout', 'download', 'shareText'].includes(message.type)) return;
