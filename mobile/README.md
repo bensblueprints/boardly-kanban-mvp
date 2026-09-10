@@ -18,7 +18,7 @@ Android package and iOS bundle identifier: `com.boardlyagent.app`. Native Clerk 
 
 The server must publish the matching `/mobile/` frontend entry. Native session tokens are requested when needed and passed only to that trusted, current document. They never go in a URL or ordinary device storage. Existing tenant selection and membership checks remain enforced by the cloud API. File and attachment requests include authenticated headers. Share files are removed from the app cache after the share sheet closes.
 
-The Android prebuild plugin makes WebView debugging follow the application's `FLAG_DEBUGGABLE`, overriding the dependency's React library build flag. Device QA found that the dependency's default otherwise exposed a debug socket in a signed release. The patch fails explicitly if an upgraded dependency changes the affected code. Release QA must confirm that no WebView debugging socket is available.
+The app explicitly disables WebView debugging in release builds. Inspect this on a production Android system image or physical device: Chromium forces inspection on Android `userdebug`/`eng` system images even when a non-debuggable app disables it. Our API 36 emulator uses such a system image; its debug socket does not indicate that the APK is debuggable.
 
 GitHub Actions builds Apple Silicon iOS simulator and unsigned iPhone device apps. App Store/TestFlight distribution and installable iPhone builds additionally require the appropriate Apple signing account and provisioning profile; Google Play distribution requires its developer account and a private upload key. Neither unsigned archive is an installable iPhone IPA.
 
