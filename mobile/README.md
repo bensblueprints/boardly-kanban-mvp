@@ -20,4 +20,6 @@ The server must publish the matching `/mobile/` frontend entry. Native session t
 
 GitHub Actions builds an Apple Silicon iOS simulator app. App Store/TestFlight distribution and installable iPhone builds additionally require the appropriate Apple signing account and provisioning profile; Google Play distribution requires its developer account and a private upload key. The simulator archive is not an installable iPhone IPA.
 
+Android release builds require `BOARDLY_KEYSTORE_PATH`, `BOARDLY_KEYSTORE_PASSWORD`, `BOARDLY_KEY_ALIAS` and `BOARDLY_KEY_PASSWORD` in the build environment. Keep the keystore and its passwords outside the repository with a private backup. The signing plugin deliberately fails a release build without these values; it never substitutes the public Android debug key. After prebuild, run `./gradlew assembleRelease bundleRelease -PreactNativeArchitectures=arm64-v8a,x86_64` from `android/`. Release builds bundle JavaScript and run without Metro.
+
 Root tests: `node test/native-workspace-browser.cjs` and `node test/chatgpt-onboarding-browser.cjs`. These verify the web portion with isolated test accounts. Device testing and release-signing evidence are tracked on Boardly project 2, card 330.

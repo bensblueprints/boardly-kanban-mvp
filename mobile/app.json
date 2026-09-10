@@ -40,7 +40,8 @@
       ],
       "expo-secure-store",
       "expo-web-browser",
-      "expo-sharing"
+      "expo-sharing",
+      "./plugins/with-release-signing.cjs"
     ],
     "scheme": "boardly",
     "backgroundColor": "#0c0e12"
