@@ -1,20 +1,21 @@
 import React,{useEffect,useState} from 'react';
 import {api} from '../api.js';
 const button='rounded-lg border border-zinc-700 px-3 py-2 text-sm hover:bg-zinc-800 disabled:opacity-40';
-export default function ComputerUseAssignment({kind='projects',id}){
+export default function ComputerUseAssignment({kind='projects',id,onOpenAccount}){
  const [state,setState]=useState(null),[rentals,setRentals]=useState(null),[ids,setIds]=useState([]),[allow,setAllow]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');const base=`/api/${kind}/${id}/computeruse`;
  function accept(value){setState(value);setIds(value.rental_ids);setAllow(value.allow_agent);}
  const load=()=>api.get(base).then(accept);
  useEffect(()=>{let active=true;setState(null);setRentals(null);setError('');api.get(base).then(s=>{if(active)accept(s);}).catch(e=>{if(active)setError(e.message);});return()=>{active=false;};},[base]);
+ useEffect(()=>{const changed=()=>{setRentals(null);load().catch(e=>setError(e.message));};window.addEventListener('boardly-computeruse-changed',changed);return()=>window.removeEventListener('boardly-computeruse-changed',changed);},[base]);
  async function act(fn){setBusy(true);setError('');setNotice('');try{await fn();await load();}catch(e){setError(e.message);}finally{setBusy(false);}}
- const account=()=>window.dispatchEvent(new CustomEvent('boardly-account',{detail:{section:'computeruse'}}));
+ const account=()=>{onOpenAccount?.();window.dispatchEvent(new CustomEvent('boardly-account',{detail:{section:'computeruse'}}));};
  return <section className="space-y-4"><h3 className="font-semibold">{kind==='companies'?'Company computers':'Project computers'}</h3><p className="text-sm text-zinc-400">{kind==='companies'?'Choose the computers this company’s projects can use. Projects can override this assignment.':'Use the company’s computers or choose a separate assignment for this project.'} Assignments do not create an additional rental or change its billing.</p>
  {error&&<p role="alert" className="text-sm text-rose-300">{error}</p>}{notice&&<p role="status" className="text-sm text-emerald-300">{notice}</p>}
  {state&&<><p className="text-sm text-zinc-400">{state.inherited?'Inherited from company':state.explicit?'Assigned here':'No computers assigned'}{state.rental_ids.length?` · ${state.rental_ids.length} computer(s)`:''}</p>
  {!state.saved?<div className="space-y-3"><p className="text-sm text-amber-200">{state.can_manage_account?'Connect ComputerUse in account settings first.':'Ask the account owner to connect ComputerUse in account settings.'}</p>{state.can_manage_account&&<button className={button} onClick={account}>Open ComputerUse settings</button>}</div>:<>
  {state.rental_ids.map(r=><p key={r} className="text-sm break-all">{r}</p>)}
  <button className={button} disabled={busy} onClick={()=>act(async()=>{setRentals((await api.get(base+'/rentals')).rentals);})}>Load available rentals</button>
- {rentals&&<form className="space-y-3" onSubmit={e=>{e.preventDefault();act(async()=>{await api.put(base,{rental_ids:ids,allow_agent:allow});setNotice(ids.length?'Computer assignment saved.':'No computers assigned here. Company inheritance is disabled for this project.');});}}>
+ {rentals&&<form className="space-y-3" onSubmit={e=>{e.preventDefault();act(async()=>{await api.put(base,{rental_ids:ids,allow_agent:allow});setNotice(ids.length?'Computer assignment saved.':kind==='projects'?'Computer use disabled for this project.':'No computers assigned to this company.');});}}>
  <fieldset className="space-y-2"><legend className="text-sm mb-2">Choose one or more active computers</legend>{rentals.length?rentals.map(r=><label className="flex items-start gap-2 text-sm" key={r.id}><input type="checkbox" disabled={busy||r.state!=='active'} checked={ids.includes(r.id)} onChange={e=>setIds(e.target.checked?[...ids,r.id]:ids.filter(x=>x!==r.id))}/><span>{r.plan==='creator'?'16 GB Creator':'8 GB Standard'} · {r.id} · {r.state}</span></label>):<p className="text-sm text-zinc-400">No rentals are available in this account yet.</p>}</fieldset>
  {ids.some(id=>!rentals.some(r=>r.id===id&&r.state==='active'))&&<p className="text-xs text-amber-200">An assigned computer is no longer available. <button type="button" className="underline" onClick={()=>setIds(ids.filter(id=>rentals.some(r=>r.id===id&&r.state==='active')))}>Remove unavailable selections</button></p>}
  <label className="flex gap-2 text-sm"><input type="checkbox" disabled={busy} checked={allow} onChange={e=>setAllow(e.target.checked)}/>Allow permitted Work agents to inspect these computers</label>
