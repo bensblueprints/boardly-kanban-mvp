@@ -1,4 +1,5 @@
 const SCOPE_CATALOG = [
+  { id: 'computers', name: 'Computer use', description: 'Assign account-owned ComputerUse rentals and let Work agents inspect enabled computers. The API key remains with the owner.' },
   { id: 'ssh', name: 'SSH', description: 'Manage SSH connections and let their Work agents use enabled servers.' },
   { id: 'github', name: 'GitHub', description: 'Manage repositories and let their Work agents read and push using enabled connections.' },
   { id: 'environment', name: 'Environment', description: 'Add, replace and remove project environment variables. Saved values stay hidden.' },
