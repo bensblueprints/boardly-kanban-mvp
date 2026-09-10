@@ -1,0 +1,16 @@
+{
+  "name": "boardly-sync-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Standalone sync server for Boardly cloud sync (paid add-on)",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "node test/sync-server.test.js && node test/whop.test.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.11.1",
+    "express": "^4.22.2",
+    "nodemailer": "^6.9.16"
+  }
+}

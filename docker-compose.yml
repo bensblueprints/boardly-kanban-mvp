@@ -1,0 +1,15 @@
+services:
+  boardly:
+    build: .
+    ports:
+      - "5315:5315"
+    environment:
+      - PORT=5315
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin}
+      - DATA_DIR=/data
+    volumes:
+      - boardly-data:/data
+    restart: unless-stopped
+
+volumes:
+  boardly-data:

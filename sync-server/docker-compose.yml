@@ -1,0 +1,36 @@
+# Boardly sync-server + Caddy (automatic HTTPS via Let's Encrypt).
+# Prereqs on the VPS: docker + docker compose plugin, DNS A record for
+# $DOMAIN pointing at the server, ports 80/443 open.
+#
+#   cp .env.example .env   # fill in Whop values
+#   DOMAIN=sync.example.com docker compose up -d
+services:
+  sync-server:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATA_DIR: /data
+      PORT: 5400
+    volumes:
+      - sync-data:/data
+    expose:
+      - "5400"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN=sync.example.com}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  sync-data:
+  caddy-data:
+  caddy-config:
