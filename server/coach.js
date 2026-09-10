@@ -5,7 +5,7 @@
 // model lives on another machine on the LAN, so the endpoints are configurable
 // rather than hardcoded to localhost.
 //
-// Requests are proxied through the boredly server (not fetched from the
+// Requests are proxied through the Boardly server (not fetched from the
 // renderer) so the config lives in one place and there's no CORS dance.
 
 const path = require('path');
@@ -215,7 +215,7 @@ function renderCardBrief(brief, question) {
   return out.join('\n');
 }
 
-const SYSTEM_PROMPT = `You are the user's build coach inside boredly, a kanban app.
+const SYSTEM_PROMPT = `You are the user's build coach inside Boardly, a kanban app.
 
 The user is shipping a catalogue of small software products and gets overwhelmed by how much is outstanding. A specific card has already been chosen for them. Your only job is to turn its next unfinished step into something they can actually start right now.
 

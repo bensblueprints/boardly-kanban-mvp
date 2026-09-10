@@ -34,7 +34,7 @@ export default function WorkspaceSession({ userId, getToken, onLogout }) {
         rememberWorkspace(userId, workspaceId);
         setAccess(previous => JSON.stringify(previous) === JSON.stringify(result) ? previous : result);
       } catch {
-        if (active) setAccess(previous => previous || { allowed: false, retry: true, error: 'boredly could not connect. Please try again.' });
+        if (active) setAccess(previous => previous || { allowed: false, retry: true, error: 'Boardly could not connect. Please try again.' });
       } finally { busy = false; }
     }
     const visible = () => { if (document.visibilityState === 'visible') refresh(); };

@@ -30,7 +30,7 @@ export default function ProjectPayments({ board }) {
       {owner&&<form onSubmit={saveBudget} className="rounded-xl border border-zinc-700 p-4 space-y-3">
         <h4 className="text-sm font-medium">Project spending budget</h4>
         <div className="grid grid-cols-3 gap-3"><label className="text-xs text-zinc-400">Currency<select aria-label="Budget currency" value={currency} onChange={e => setCurrency(e.target.value)} className={inputStyle + ' mt-1'}>{Object.keys(data.currencies).map(c => <option key={c}>{c}</option>)}</select></label><label className="col-span-2 text-xs text-zinc-400">Total project limit<input aria-label="Project spending limit" required inputMode="decimal" value={budget} onChange={e => setBudget(e.target.value)} className={inputStyle + ' mt-1'} /></label></div>
-        <p className="text-xs text-zinc-500">Lifetime budget shared by all cards in this project. Checkout requests above the remaining amount are blocked by boredly. This does not change your bank’s card limit or cover purchases made outside boredly.</p>
+        <p className="text-xs text-zinc-500">Lifetime budget shared by all cards in this project. Checkout requests above the remaining amount are blocked by Boardly. This does not change your bank’s card limit or cover purchases made outside Boardly.</p>
         <label className="flex gap-2 items-start text-sm text-zinc-300"><input type="checkbox" checked={allow} onChange={e => setAllow(e.target.checked)} className="mt-1" />Allow this project’s agent to use enabled cards for purchases I request, within this budget.</label>
         <button disabled={busy} className="rounded-lg px-4 py-2 text-sm bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50">Save spending settings</button>
       </form>}

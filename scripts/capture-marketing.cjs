@@ -6,6 +6,7 @@ const {chromium}=require(process.env.BOARDLY_PLAYWRIGHT_MODULE||'playwright');
  const f=await fixture();let vite,browser,desktop;
  const output=path.resolve('client/public/landing/screenshots');fs.mkdirSync(output,{recursive:true});
  try{
+  await f.api('/api/onboarding',{method:'PUT',body:{step:0,status:'skipped'}});
   const p=await f.project('Northstar Studio','Website launch');
   await f.api('/api/company-boards/'+p.board.id,{method:'PATCH',body:{name:'Studio operations'}});
   await f.api('/api/projects',{method:'POST',body:{name:'Client onboarding',parent_board_id:p.board.id}});
@@ -42,7 +43,7 @@ const {chromium}=require(process.env.BOARDLY_PLAYWRIGHT_MODULE||'playwright');
   }
   await f.api('/api/cards/'+featured.id+'/comments',{method:'POST',body:{author:'Alex',body:'The page structure is approved. The next step is the mobile review and checkout check.'}});
   const {createServer}=await import('vite'),react=(await import('@vitejs/plugin-react')).default,tailwind=(await import('@tailwindcss/vite')).default;
-  vite=await createServer({configFile:false,root:path.resolve('client'),plugins:[react(),tailwind(),{name:'marketing-capture',resolveId(id){if(id==='/capture-entry.jsx')return '\0capture.jsx';},load(id){if(id==='\0capture.jsx')return `import React from 'react';import{createRoot}from'react-dom/client';import{Workspace}from'/src/App.jsx';import{setTokenProvider}from'/src/api.js';import'/src/index.css';setTokenProvider(async()=>${JSON.stringify(f.token('user_owner'))});createRoot(document.getElementById('root')).render(React.createElement(Workspace,{cloud:true,onLogout:()=>{}}));`;},configureServer(s){s.middlewares.use('/capture',async(q,r)=>{r.setHeader('content-type','text/html');r.end(await s.transformIndexHtml('/capture','<!doctype html><html class="dark"><head><title>boredly</title></head><body class="bg-zinc-950 text-zinc-100"><div id="root"></div><script type="module" src="/capture-entry.jsx"></script></body></html>'));});}}],server:{host:'127.0.0.1',port:0,proxy:{'/api':{target:f.base,configure:p=>p.on('proxyReq',q=>q.setHeader('origin',f.config.origin))}}}});
+  vite=await createServer({configFile:false,root:path.resolve('client'),plugins:[react(),tailwind(),{name:'marketing-capture',resolveId(id){if(id==='/capture-entry.jsx')return '\0capture.jsx';},load(id){if(id==='\0capture.jsx')return `import React from 'react';import{createRoot}from'react-dom/client';import{Workspace}from'/src/App.jsx';import{setTokenProvider}from'/src/api.js';import'/src/index.css';setTokenProvider(async()=>${JSON.stringify(f.token('user_owner'))});createRoot(document.getElementById('root')).render(React.createElement(Workspace,{cloud:true,onLogout:()=>{}}));`;},configureServer(s){s.middlewares.use('/capture',async(q,r)=>{r.setHeader('content-type','text/html');r.end(await s.transformIndexHtml('/capture','<!doctype html><html class="dark"><head><title>Boardly</title></head><body class="bg-zinc-950 text-zinc-100"><div id="root"></div><script type="module" src="/capture-entry.jsx"></script></body></html>'));});}}],server:{host:'127.0.0.1',port:0,proxy:{'/api':{target:f.base,configure:p=>p.on('proxyReq',q=>q.setHeader('origin',f.config.origin))}}}});
   await vite.listen();const url=vite.resolvedUrls.local[0]+'capture';
   browser=await chromium.launch({executablePath:'/usr/bin/google-chrome',headless:true});
   const page=await browser.newPage({viewport:{width:1440,height:780},deviceScaleFactor:1});const errors=[];page.on('pageerror',e=>errors.push(e.message));
@@ -55,6 +56,6 @@ const {chromium}=require(process.env.BOARDLY_PLAYWRIGHT_MODULE||'playwright');
    demoDb.prepare('UPDATE chat_jobs SET updated_at=? WHERE id=?').run(Date.now(),activeJob.id);
    const app=desktop.pages()[0]||await desktop.newPage();await app.goto(url+'#/');await app.getByRole('heading',{name:'Your companies, live',exact:true}).waitFor();await app.getByRole('button',{name:'Open company Northstar Studio',exact:true}).waitFor();await app.evaluate(()=>document.fonts.ready);await app.screenshot({path:output+'/desktop-app.png'});
   }finally{if(desktop)await desktop.close();desktop=null;fs.rmSync(profile,{recursive:true,force:true});}
-  demoDb.close();assert.deepEqual(errors,[]);console.log('Saved three real boredly screenshots from isolated demonstration data.');
+  demoDb.close();assert.deepEqual(errors,[]);console.log('Saved three real Boardly screenshots from isolated demonstration data.');
  }finally{if(desktop)await desktop.close();if(browser)await browser.close();if(vite)await vite.close();await f.close();}
 })().catch(e=>{console.error(e.message);process.exitCode=1;});

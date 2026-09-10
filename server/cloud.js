@@ -23,7 +23,7 @@ function readCloudConfig(env = process.env) {
   }
   const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
   if (url.protocol !== 'https:' && !(local && url.protocol === 'http:' && env.NODE_ENV !== 'production')) {
-    throw new Error('Cloud boredly requires HTTPS (HTTP is allowed only for local development)');
+    throw new Error('Cloud Boardly requires HTTPS (HTTP is allowed only for local development)');
   }
   if (env.BOARDLY_OWNER_ONLY && !['true', 'false'].includes(env.BOARDLY_OWNER_ONLY)) {
     throw new Error('BOARDLY_OWNER_ONLY must be true or false');
@@ -49,12 +49,12 @@ function readCloudConfig(env = process.env) {
 function accessFor(auth, config) {
   if (!auth?.userId || !auth.isAuthenticated) return { status: 401, error: 'Sign in to continue' };
   if (auth.userId === config.ownerId) return { status: 200, plan: 'owner' };
-  if (config.ownerOnly) return { status: 403, error: 'boredly is currently available to its owner only' };
+  if (config.ownerOnly) return { status: 403, error: 'Boardly is currently available to its owner only' };
   // Clerk Billing's has() reads verified session claims. Neither request bodies
   // nor user-editable metadata can grant a plan or bypass the launch gate.
   if (config.freeEnabled && !config.ownerOnly) return {status:200,plan:require('./account-plans').planFor(auth,config).slug};
   const plan = config.planSlugs.find(slug => auth.has({ plan: `u:${slug}` }));
-  return plan ? { status: 200, plan } : { status: 403, error: 'An active boredly subscription is required' };
+  return plan ? { status: 200, plan } : { status: 403, error: 'An active Boardly subscription is required' };
 }
 
 function createCloudApp(config = readCloudConfig(), { emailConnector, identityClient, providerRequest, githubRequest } = {}) {
@@ -91,6 +91,8 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
     res.sendFile(landing);
   });
   app.use('/landing', express.static(path.join(dist, 'landing'), { index: false, maxAge: '1h' }));
+  app.get('/site.webmanifest', (req, res) => res.sendFile(path.join(dist, 'site.webmanifest')));
+  app.get(['/favicon.ico', '/favicon.svg'], (req, res) => res.sendFile(path.join(dist, 'favicon.svg')));
   const clerk = clerkMiddleware({ publishableKey: config.publishableKey, secretKey: config.secretKey,
     jwtKey: config.jwtKey, authorizedParties: [config.origin] });
   app.use((req, res, next) => {
@@ -172,7 +174,7 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
       }
       identities.set(req,chosen.owner_id);tenant.active++;tenant.used=Date.now();let released=false;const release=()=>{if(!released){tenant.active--;released=true;}};res.once('finish',release);res.once('close',release);
       next();
-    }catch(e){res.status(e.status||503).json({error:e.status?e.message:'boredly could not check account access. Please try again.'});}
+    }catch(e){res.status(e.status||503).json({error:e.status?e.message:'Boardly could not check account access. Please try again.'});}
   });
   app.use(tailnet.router);
   app.use(personal.router);

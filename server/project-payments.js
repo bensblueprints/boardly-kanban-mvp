@@ -68,7 +68,7 @@ function createProjectPayments({ db, key, namespace }) {
     const settings = db.prepare('SELECT currency,budget_minor,allow_agent,updated_at FROM project_payment_settings WHERE board_id=?').get(boardId) || { currency: 'USD', budget_minor: 0, allow_agent: 0 };
     const totals = db.prepare(`SELECT COALESCE(SUM(CASE WHEN status='paid' THEN actual_minor ELSE 0 END),0) spent_minor,
       COALESCE(SUM(CASE WHEN status IN ('reserved','uncertain') THEN amount_minor ELSE 0 END),0) reserved_minor FROM project_purchases WHERE board_id=?`).get(boardId);
-    return { ...settings, ...totals, remaining_minor: settings.budget_minor - totals.spent_minor - totals.reserved_minor, cards: cardList(boardId), limit_type: 'boredly lifetime budget; not a bank card limit' };
+    return { ...settings, ...totals, remaining_minor: settings.budget_minor - totals.spent_minor - totals.reserved_minor, cards: cardList(boardId), limit_type: 'Boardly lifetime budget; not a bank card limit' };
   }
   function redact(boardId, text) {
     // Also recognize spaced/dashed PANs if a checkout script accidentally prints one.

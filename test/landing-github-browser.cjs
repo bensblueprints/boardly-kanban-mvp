@@ -4,6 +4,7 @@ const {chromium}=require(process.env.BOARDLY_PLAYWRIGHT_MODULE||'playwright');
 (async()=>{
  const remote=githubFixture(),f=await fixture({githubRequest:remote.request});let vite,browser,db;
  try{
+  await f.api('/api/onboarding',{method:'PUT',body:{step:0,status:'skipped'}});
   const p=await f.project('Active Company','Release project');
   const idle=await f.project('Idle Company','Queued project');
   const done=await f.project('Done Company','Completed project');
@@ -20,7 +21,7 @@ const {chromium}=require(process.env.BOARDLY_PLAYWRIGHT_MODULE||'playwright');
   browser=await chromium.launch({executablePath:process.env.BOARDLY_CHROME||'/usr/bin/google-chrome',headless:true});
   const page=await browser.newPage({viewport:{width:1440,height:900}}),errors=[];page.on('pageerror',e=>errors.push(e.message));page.setDefaultTimeout(10000);
   await page.goto(url+'#/');
-  await page.getByText('boredly',{exact:true}).waitFor();
+  await page.getByText('Boardly',{exact:true}).waitFor();
   const graph=page.getByRole('region',{name:'All companies agent graph'});
   await graph.getByRole('button',{name:'Open company Active Company',exact:true}).waitFor();
   for(const [name,state]of[['Active Company','working'],['Idle Company','idle'],['Blocked Company','blocked'],['Done Company','done']])assert.equal(await graph.getByRole('button',{name:'Open company '+name,exact:true}).getAttribute('data-state'),state);
@@ -49,7 +50,7 @@ const {chromium}=require(process.env.BOARDLY_PLAYWRIGHT_MODULE||'playwright');
   await page.setViewportSize({width:390,height:844});await page.goto(url+'#/');await graph.getByRole('button',{name:'Open company Active Company',exact:true}).waitFor();
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'Companies should fit the mobile page with scroll contained in graph');
   await page.goto(f.base+'/');await page.getByRole('heading',{level:1}).waitFor();
-  assert.match(await page.title(),/^boredly/);assert.equal(await page.locator('link[rel="canonical"]').getAttribute('href'),'https://boardly.onetimesuite.com/');
+  assert.match(await page.title(),/^Boardly/);assert.equal(await page.locator('link[rel="canonical"]').getAttribute('href'),'https://boardlyagent.com/');
   for(const width of [390,1440]){await page.setViewportSize({width,height:900});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'Landing page mobile overflow');}
   const links=await page.locator('a').evaluateAll(nodes=>nodes.map(a=>a.getAttribute('href')));assert.ok(links.filter(h=>h==='/sign-up').length>=3);assert.ok(links.includes('/sign-in'));assert.ok(links.includes('/app'));
   for(const image of await page.locator('img').all()){await image.scrollIntoViewIfNeeded();await image.evaluate(async img=>{if(!img.complete)await new Promise((resolve,reject)=>{img.onload=resolve;img.onerror=reject;});});assert.ok(await image.evaluate(img=>img.naturalWidth>0));}

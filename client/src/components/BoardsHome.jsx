@@ -1,11 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { KanbanSquare, Plus, Star, Trash2, LogOut, Upload, Download, Layers, StickyNote, Plug, Cloud } from 'lucide-react';
+import { Plus, Star, Trash2, LogOut, Upload, Download, Layers, StickyNote, Plug, Cloud } from 'lucide-react';
 import { api } from '../api.js';
 import McpPanel from './McpPanel.jsx';
 import SyncPanel from './SyncPanel.jsx';
 import CloudConnections from './CloudConnections.jsx';
 import {useAccess} from '../access.jsx';
+import BrandLogo from './BrandLogo.jsx';
 import CompanyWorkspace from './CompanyWorkspace.jsx';
 
 const COLORS = ['#6366f1', '#8b5cf6', '#ec4899', '#ef4444', '#f59e0b', '#22c55e', '#14b8a6', '#3b82f6', '#64748b'];
@@ -75,10 +76,7 @@ export default function BoardsHome({ onOpen, onLogout, cloud = false }) {
       {cloud && connectionTab && <CloudConnections initialTab={connectionTab} onClose={() => setConnectionTab(null)} />}
       <header className="border-b border-zinc-800/80 bg-zinc-950/80 backdrop-blur sticky top-0 z-10">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 min-h-16 py-3 flex flex-wrap gap-3 items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <KanbanSquare className="w-6 h-6 text-indigo-400" />
-            <span className="font-bold text-lg">boredly</span>
-          </div>
+          {!cloud && <a href="#/" aria-label="Boardly workspace home" className="text-lg"><BrandLogo size={32}/></a>}
           <div className="flex flex-wrap items-center gap-2">
             <button hidden={!owner}
               onClick={() => importRef.current?.click()}
@@ -127,7 +125,7 @@ export default function BoardsHome({ onOpen, onLogout, cloud = false }) {
         <h1 className="text-2xl font-bold mb-1">Your boards</h1>
         <p className="text-sm text-zinc-500 mb-8">{cloud ? 'Your projects and next steps.' : 'Every project, one flat price. Zero per-seat math.'}</p>
 
-        {cloud && <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-4"><div><p className="text-sm font-medium">Your projects, on every computer</p><p className="text-xs text-zinc-500 mt-1">Download boredly desktop and sync it with this workspace.</p></div><button onClick={() => setConnectionTab('downloads')} className="text-sm text-indigo-300 hover:text-indigo-200 flex items-center gap-2"><Download size={16} /> Get the desktop app</button></div>}
+        {cloud && <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-4"><div><p className="text-sm font-medium">Your projects, on every computer</p><p className="text-xs text-zinc-500 mt-1">Download Boardly desktop and sync it with this workspace.</p></div><button onClick={() => setConnectionTab('downloads')} className="text-sm text-indigo-300 hover:text-indigo-200 flex items-center gap-2"><Download size={16} /> Get the desktop app</button></div>}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           <AnimatePresence>
             {(boards || []).map((b) => (

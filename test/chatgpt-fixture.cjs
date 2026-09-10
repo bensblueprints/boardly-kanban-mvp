@@ -1,7 +1,7 @@
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),crypto=require('node:crypto');
 const {createChatGPTService}=require('../scripts/chatgpt-service.cjs');
 async function connectorFixture(){
- const root=fs.mkdtempSync(path.join(os.tmpdir(),'boredly-chatgpt-test-')),command=path.join(root,'codex.cjs'),token=crypto.randomBytes(32).toString('hex');
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'Boardly-chatgpt-test-')),command=path.join(root,'codex.cjs'),token=crypto.randomBytes(32).toString('hex');
  fs.writeFileSync(command,`#!/usr/bin/env node
 const fs=require('fs'),path=require('path'),assert=require('assert/strict'),readline=require('readline');
 const dir=process.env.CODEX_HOME,authFile=path.join(dir,'auth.json');
