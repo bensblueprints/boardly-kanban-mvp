@@ -28,7 +28,7 @@ export default function ProjectWorkspace({ route, workspaceId, userId, title, on
     try { message = JSON.parse(event.nativeEvent.data); } catch { return; }
     if (!message || typeof message !== 'object' || typeof message.id !== 'string' || typeof message.nonce !== 'string' || !['ready', 'token', 'signout', 'download', 'shareText'].includes(message.type)) return;
     if (!/^[a-zA-Z0-9-]{1,80}$/.test(message.id) || !/^[a-f0-9-]{36}$/.test(message.nonce)) return;
-    if (message.type === 'ready') { documentId.current = message.nonce; reply(message.id, message.nonce, { userId, workspaceId }); return; }
+    if (message.type === 'ready') { if (documentId.current !== message.nonce) generation.current++; documentId.current = message.nonce; reply(message.id, message.nonce, { userId, workspaceId }); return; }
     if (message.nonce !== documentId.current) return;
     const activeGeneration = generation.current;
     try {
@@ -73,7 +73,13 @@ export default function ProjectWorkspace({ route, workspaceId, userId, title, on
       allowFileAccess={false} allowFileAccessFromFileURLs={false} allowUniversalAccessFromFileURLs={false}
       mixedContentMode="never" allowsInlineMediaPlayback mediaPlaybackRequiresUserAction={false}
       mediaCapturePermissionGrantType="prompt" setSupportMultipleWindows
-      onLoadStart={event => { currentUrl.current = event.nativeEvent.url; generation.current++; documentId.current = ''; }}
+      onLoadStart={event => {
+        // Android emits this for hash navigation too, while the same document
+        // and pending requests remain alive. A new document replaces its nonce
+        // in the ready handshake; injected replies also check that actual nonce.
+        if (!isWorkspaceUrl(currentUrl.current) || !isWorkspaceUrl(event.nativeEvent.url)) { generation.current++; documentId.current = ''; }
+        currentUrl.current = event.nativeEvent.url;
+      }}
       onNavigationStateChange={state => { currentUrl.current = state.url; setCanGoBack(state.canGoBack); }} onMessage={receive}
       onShouldStartLoadWithRequest={request => {
         if (isWorkspaceUrl(request.url)) return true;
