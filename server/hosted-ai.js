@@ -4,7 +4,7 @@ const path=require('node:path');
 const projectFolders=require('./project-folders');
 const {safeText:baseSafeText}=require('./agent-activity');
 const {MAX_AGENTS,nextProjectJob,snapshot,modeInstruction}=require('./agent-scheduling');
-function createHostedAI({db,uploadsDir,personal,canEdit,canUse=()=>false,retain,release,storageLimit,organization,ssh,github}){
+function createHostedAI({db,uploadsDir,personal,canEdit,canUse=()=>false,retain,release,storageLimit,organization,ssh,github,computeruse}){
  const sshContext=(actor,id)=>canUse(actor,id,'ssh')?ssh?.context?.(id,actor)||{status:'not_connected',saved:false,connections:[]}:{status:'restricted',saved:null,connections:[]};
  const githubContext=(actor,id)=>canUse(actor,id,'github')?github?.context?.(id)||{status:'not_connected',saved:false}:{status:'restricted',saved:null};
  const safeText=text=>baseSafeText(github?github.redact(text):text);
@@ -20,6 +20,7 @@ function createHostedAI({db,uploadsDir,personal,canEdit,canUse=()=>false,retain,
   move_file:{description:'Move an existing file within this project. Use null folder_id for the Files root.',properties:{id:{type:'integer'},folder_id:{type:['integer','null']}}},
  };
  definitions.report_blocker={description:'Pause the current assignment only after independent authorized work is complete, recording the exact blocker and required next action.',properties:{blocker:{type:'string'},next_action:{type:'string'},summary:{type:'string'}}};
+ definitions.inspect_project_computer={description:'Check the live status of ComputerUse rentals assigned to this project or inherited from its company. Screen control is not available through this tool.',properties:{}};
  definitions.list_ssh_connections={description:'List SSH connections explicitly enabled for this project.',properties:{}};
  definitions.execute_ssh={description:'Run a command through an enabled, pinned project/company SSH connection. On uncertainty inspect the remote outcome before retrying.',properties:{connection_id:{type:'string'},command:{type:'string'}}};
  definitions.github_status={description:'Read the configured GitHub repository and current branch SHA.',properties:{}};
@@ -93,7 +94,7 @@ function createHostedAI({db,uploadsDir,personal,canEdit,canUse=()=>false,retain,
   const current=()=>db.prepare('SELECT status FROM chat_jobs WHERE id=?').get(j.id)?.status;
   const allowed=()=>{if(!canEdit(j.requested_by,j.board_id)||current()!=='running')throw Error('Run stopped or project access was removed');};
   const allowedScope=scope=>{allowed();if(!canUse(j.requested_by,j.board_id,scope))throw Error('The owner has not enabled the '+scope+' permission scope for this member');};
-  const toolAllowed=name=>name==='github_deploy'?canUse(j.requested_by,j.board_id,'github')&&canUse(j.requested_by,j.board_id,'ssh'):name.startsWith('github_')?canUse(j.requested_by,j.board_id,'github'):['list_ssh_connections','execute_ssh'].includes(name)?canUse(j.requested_by,j.board_id,'ssh'):true;
+  const toolAllowed=name=>name==='inspect_project_computer'?canUse(j.requested_by,j.board_id,'computers')&&!!computeruse?.enabled(j.board_id):name==='github_deploy'?canUse(j.requested_by,j.board_id,'github')&&canUse(j.requested_by,j.board_id,'ssh'):name.startsWith('github_')?canUse(j.requested_by,j.board_id,'github'):['list_ssh_connections','execute_ssh'].includes(name)?canUse(j.requested_by,j.board_id,'ssh'):true;
   const progress=message=>db.prepare('UPDATE chat_jobs SET progress=?,updated_at=? WHERE id=? AND status=\'running\'').run(message,Date.now(),j.id);
   const activity=(title,kind='tool')=>db.prepare('INSERT INTO chat_activity VALUES (?,?,?,?,?,?,?,?)').run(j.id,crypto.randomUUID(),kind,safeText(title),'','completed',Date.now(),Date.now());
   blockers.started(j);
@@ -125,7 +126,8 @@ function createHostedAI({db,uploadsDir,personal,canEdit,canUse=()=>false,retain,
     input.push(...output);
     for(const call of calls){allowed();progress('Working in this project: '+call.name.replaceAll('_',' '));let result;try{if(!toolAllowed(call.name))throw Error('The owner has not enabled this member permission scope');const args=JSON.parse(call.arguments);
       if(call.name==='report_blocker'){if(!args.blocker?.trim()||!args.next_action?.trim()||!args.summary?.trim())throw Error('A summary, blocker and next action are required');const blocker=safeText(args.blocker).slice(0,10000),nextAction=safeText(args.next_action).slice(0,10000);db.transaction(()=>{db.prepare("UPDATE chat_jobs SET status='blocked',blocker=?,next_action=?,draft=?,progress='Blocked · action needed',updated_at=? WHERE id=?").run(blocker,nextAction,safeText(args.summary),Date.now(),j.id);blockers.record(j,blocker,nextAction);})();return;}
-      if(call.name==='list_ssh_connections')result=ssh?.agentList(j.board_id,j.requested_by)||[];
+      if(call.name==='inspect_project_computer')result=await computeruse.inspectForAgent(j.board_id,j.requested_by,()=>{allowed();if(!canUse(j.requested_by,j.board_id,'computers'))throw Error('Computer use permission revoked');});
+      else if(call.name==='list_ssh_connections')result=ssh?.agentList(j.board_id,j.requested_by)||[];
       else if(call.name.startsWith('github_')){
        const actions={github_status:'status',github_list_files:'list',github_read_file:'read',github_commit_files:'commit',github_verify_deployment:'verify-deployment',github_deploy:'deploy'};
        if(!actions[call.name])throw Error('Unknown GitHub tool');result=await githubRun(actions[call.name],args);
