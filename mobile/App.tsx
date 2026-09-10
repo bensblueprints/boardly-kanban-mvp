@@ -17,6 +17,8 @@ const logo = require('./assets/icon.png');
 
 function Boardly() {
   const { isLoaded, isSignedIn, userId, getToken } = useAuth({ treatPendingAsSignedOut: false });
+  // Clerk Expo wraps getToken on every render; keep refresh independent of that wrapper identity.
+  const tokenProvider = useRef(getToken); tokenProvider.current = getToken;
   const { user } = useUser(), { signOut } = useClerk();
   const [authOpen, setAuthOpen] = useState(false), [access, setAccess] = useState<Access | null>(null), [tree, setTree] = useState<Hierarchy | null>(null);
   const [selection, setSelection] = useState(''), [company, setCompany] = useState<number | null>(null), [search, setSearch] = useState('');
@@ -29,7 +31,7 @@ function Boardly() {
     request.current?.abort(); const controller = new AbortController(); request.current = controller;
     setBusy(true); setError('');
     try {
-      const token = await getToken();
+      const token = await tokenProvider.current();
       if (!token) throw new Error('Sign in to open your workspace.');
       const headers = { authorization: 'Bearer ' + token, ...(selection ? { 'x-boardly-workspace': selection } : {}) };
       const meResponse = await fetch(ORIGIN + '/api/me', { headers, signal: controller.signal }); const me: Access = await meResponse.json();
@@ -42,7 +44,7 @@ function Boardly() {
       setAccess(me); setTree(hierarchy);
     } catch (failure) { if (!controller.signal.aborted) setError(failure instanceof Error ? failure.message : 'Check your connection and try again.'); }
     finally { if (!controller.signal.aborted) setBusy(false); }
-  }, [isSignedIn, getToken, selection]);
+  }, [isSignedIn, userId, selection]);
   useEffect(() => { refresh(); }, [refresh]);
   useEffect(() => NetInfo.addEventListener(state => setOnline(state.isConnected !== false)), []);
   useEffect(() => { const subscription = AppState.addEventListener('change', state => { if (state === 'active') refresh(); }); return () => subscription.remove(); }, [refresh]);
