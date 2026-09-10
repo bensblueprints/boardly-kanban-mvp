@@ -24,8 +24,9 @@ function resolveDataDir() {
   return path.join(__dirname, '..', 'data');
 }
 
-function createBoardlyServer({ db, uploadsDir }) {
-  const server = new McpServer({ name: 'boardly', version: '1.1.0' });
+function createBoardlyServer({ db, uploadsDir, management }) {
+  const server = new McpServer({ name: 'boardly', version: '1.2.0' });
+  if (management) require('../server/management-api').registerManagementTools(server, management);
 
   // ---- helpers (mirrors server/app.js) ----
 
@@ -90,7 +91,7 @@ function createBoardlyServer({ db, uploadsDir }) {
   function tool(name, description, schema, handler) {
     server.registerTool(name, { description, inputSchema: schema }, async (args) => {
       try {
-        return ok(handler(args));
+        return ok(await handler(args));
       } catch (err) {
         return fail(err.message || String(err));
       }
@@ -145,8 +146,8 @@ function createBoardlyServer({ db, uploadsDir }) {
   tool('get_hierarchy', 'Company → Board → Project hierarchy. Project IDs are legacy board/workspace IDs used by task, chat and file tools.', {}, () => hierarchy.tree());
   tool('create_company', 'Create a company', {name:z.string().min(1),description:z.string().optional()}, a => hierarchy.createCompany(a));
   tool('update_company', 'Rename a company or update its description', {company_id:z.number().int(),name:z.string().optional(),description:z.string().optional()}, a => hierarchy.updateCompany(a.company_id,a));
-  tool('create_company_board', 'Create a board container inside a company; use create_project for its projects', {name:z.string().min(1),company_id:z.number().int().nullable().optional()}, a => hierarchy.createBoard(a));
-  tool('update_company_board', 'Move a board and all its projects to a company, or rename it', {board_id:z.number().int(),company_id:z.number().int().nullable().optional(),name:z.string().optional()}, a => hierarchy.updateBoard(a.board_id,a));
+  tool('create_company_board', 'Create a board container inside a company; use create_project for its projects', {name:z.string().min(1),description:z.string().optional(),company_id:z.number().int().nullable().optional()}, a => hierarchy.createBoard(a));
+  tool('update_company_board', 'Move a board and all its projects to a company, rename it, or edit its description', {board_id:z.number().int(),company_id:z.number().int().nullable().optional(),name:z.string().optional(),description:z.string().optional()}, a => hierarchy.updateBoard(a.board_id,a));
   tool('create_project', 'Create a project with task lists inside a board container', {parent_board_id:z.number().int(),name:z.string().min(1),description:z.string().optional()}, a => hierarchy.createProject(a));
   tool('update_project', 'Move a project to another board container or rename its display name', {project_id:z.number().int(),parent_board_id:z.number().int().optional(),name:z.string().optional()}, a => hierarchy.updateProject(a.project_id,a));
 

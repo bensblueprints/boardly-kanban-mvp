@@ -71,6 +71,18 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
   app.disable('x-powered-by');
   app.set('trust proxy', 'loopback');
   const tenants = new Map(), identities = new WeakMap();
+  // Only in-process management dispatch can widen an MCP key to an app API
+  // request. No HTTP header can set this capability, and auth runs again.
+  const managementRequests = new WeakSet();
+  const managementFor = req => require('./management-api').createManagement({
+    app, parent: req, origin: config.origin, authorizeRequest: request => managementRequests.add(request),
+    routers: () => {
+      const t = req.tenant;
+      return [app, personal.router, chatgpt.router, tailnet.router, t.app, t.hub,
+        t.subscription.router, t.chat, t.assets, t.email.router, t.payments.router,
+        t.environment.router, t.github.router, t.ssh.router];
+    },
+  });
   const connections = createConnections(config.dataDir);
   const projectKey = loadKey(config.dataDir);
   const identity = identityClient || require('@clerk/backend').createClerkClient({secretKey:config.secretKey,publishableKey:config.publishableKey});
@@ -162,7 +174,7 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
       else plan=chosen.owner?planFor(auth,config):await planService.sponsored(chosen.owner_id);
       if(!plan)throw Object.assign(Error('The sponsoring account is unavailable'),{status:403});
       if(chosen.owner&&!config.freeEnabled&&auth.userId!==config.ownerId)plan={...plan,storage_bytes:config.storageLimitBytes||1073741824};
-      if(req.boardlyConnection){const allowed=req.boardlyConnection.scope==='mcp'?route==='/mcp':req.boardlyConnection.scope==='sync'?/^\/api\/sync\/(push|pull|attachments\/[a-f0-9-]+)$/.test(route)||route==='/api/account/status':req.boardlyConnection.scope==='worker'&&/^\/api\/worker\//.test(route);if(!allowed)return res.status(403).json({error:'This connection key does not permit that action'});}
+      if(req.boardlyConnection){const allowed=req.boardlyConnection.scope==='mcp'?(route==='/mcp'||managementRequests.has(req)):req.boardlyConnection.scope==='sync'?/^\/api\/sync\/(push|pull|attachments\/[a-f0-9-]+)$/.test(route)||route==='/api/account/status':req.boardlyConnection.scope==='worker'&&/^\/api\/worker\//.test(route);if(!allowed)return res.status(403).json({error:'This connection key does not permit that action'});}
       else if(route.startsWith('/api/worker/'))return res.status(403).json({error:'A worker connection is required'});
       if((route.startsWith('/api/connections')||route==='/mcp'||route.startsWith('/api/sync/')||route==='/api/account/status')&&(!chosen.owner||auth.userId!==config.ownerId))return res.status(403).json({error:'This integration is currently available to the owner'});
       if(/^\/api\/(mcp|coach|login|logout)(\/|$)/i.test(req.path))return res.status(404).json({error:'Local desktop control is not available in cloud mode'});
@@ -177,6 +189,11 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
       identities.set(req,chosen.owner_id);tenant.active++;tenant.used=Date.now();let released=false;const release=()=>{if(!released){tenant.active--;released=true;}};res.once('finish',release);res.once('close',release);
       next();
     }catch(e){res.status(e.status||503).json({error:e.status?e.message:'Boardly could not check account access. Please try again.'});}
+  });
+  app.get('/api/management', (req, res) => {
+    if (!req.workspaceIsOwner || req.cloudUserId !== config.ownerId) return res.status(403).json({ error: 'Management discovery is available to the integration owner' });
+    const offset = Math.max(0, Number(req.query.offset) || 0), limit = Math.min(100, Math.max(1, Number(req.query.limit) || 50));
+    res.json(managementFor(req).list(String(req.query.query || ''), offset, limit));
   });
   app.use(tailnet.router);
   app.use(personal.router);
@@ -225,7 +242,7 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
     res.json({ ok: true });
   });
   app.post('/mcp', express.json({ limit: '4mb' }), async (req, res, next) => {
-    const server = createBoardlyServer({ db: req.tenant.app.db, uploadsDir: req.tenant.uploadsDir });
+    const server = createBoardlyServer({ db: req.tenant.app.db, uploadsDir: req.tenant.uploadsDir, management: managementFor(req) });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on('close', () => { transport.close().catch(() => {}); server.close().catch(() => {}); });
     try { await server.connect(transport); await transport.handleRequest(req, res, req.body); }
