@@ -64,6 +64,13 @@ async function run() {
     assert.equal((await request('/api/boards', customer)).status, 403, 'owner-only overrides paid plans');
     assert.equal((await request('/api/boards', token('user_owner', { exp: 1 }))).status, 401);
     assert.equal((await request('/api/boards', token('user_owner', { azp: 'https://evil.example' }))).status, 401);
+    const native = token('user_owner', { azp: undefined });
+    assert.equal((await (await request('/api/me', native)).json()).allowed, true, 'native Bearer session may omit azp');
+    assert.equal((await request('/api/boards', native, { headers: { origin: 'https://evil.example' } })).status, 403, 'native tokens cannot bypass request origin checks');
+    assert.equal((await request('/api/boards', token('user_owner', { azp: undefined, exp: 1 }))).status, 401, 'native sessions still expire');
+    assert.equal((await request('/api/boards', token('user_owner', { azp: null }))).status, 401, 'malformed origin claims are rejected');
+    assert.equal((await request('/api/boards', null, { headers: { cookie: '__session=' + native } })).status, 401, 'native sessions are not accepted through cookies');
+    assert.equal((await request('/api/boards', native.slice(0, -5) + 'AAAAA')).status, 401, 'native signature tampering is rejected');
     const pieces = owner.split('.');
     pieces[1] = Buffer.from(JSON.stringify({ sub: 'user_customer', exp: 9999999999 })).toString('base64url');
     assert.equal((await request('/api/boards', pieces.join('.'))).status, 401);
@@ -109,6 +116,7 @@ async function run() {
     assert.deepEqual(await (await request('/api/boards', customer)).json(), []);
     assert.equal((await request(`/api/cards/${card.id}`, customer)).status, 404);
     assert.equal((await request(uploaded.url, customer)).status, 404);
+    assert.equal((await request(uploaded.url, token('user_customer', { azp: undefined, pla: 'u:boardly_pro' }))).status, 404, 'native customer tokens remain isolated from owner files');
     assert.equal((await request(`/api/boards/${board.id}/export`, customer)).status, 404);
     assert.equal((await request(`/api/boards/${board.id}`, customer, { method: 'DELETE' })).status, 404);
     assert.equal((await request('/api/boards', token('user_unpaid'))).status, 403);

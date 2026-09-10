@@ -108,12 +108,26 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
   app.get(['/favicon.ico', '/favicon.svg'], (req, res) => res.sendFile(path.join(dist, 'favicon.svg')));
   const clerk = clerkMiddleware({ publishableKey: config.publishableKey, secretKey: config.secretKey,
     jwtKey: config.jwtKey, authorizedParties: [config.origin] });
+  // Native Clerk sessions omit azp. Only explicit session Bearer tokens may omit
+  // it; cookie sessions still use the strict browser origin allowlist above.
+  const bearerClerk = clerkMiddleware({ publishableKey: config.publishableKey, secretKey: config.secretKey,
+    jwtKey: config.jwtKey });
   app.use((req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'same-origin');
     res.setHeader('Cache-Control', 'private, no-store');
     const match = /^Bearer (bdly_[A-Za-z0-9_-]+)$/.exec(req.headers.authorization || '');
-    if (!match) return clerk(req, res, next);
+    if (!match) {
+      if (!/^Bearer [A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/i.test(req.headers.authorization || '')) return clerk(req, res, next);
+      return bearerClerk(req, res, error => {
+        if (error) return next(error);
+        const auth = getAuth(req, { acceptsToken: 'session_token' });
+        // Read claims only after Clerk has verified the signature and lifetime.
+        if (auth.isAuthenticated && auth.sessionClaims?.azp !== undefined && auth.sessionClaims.azp !== config.origin)
+          return res.status(401).json({ error: 'Session origin is not allowed' });
+        next();
+      });
+    }
     const connection = connections.authenticate(match[1]);
     // Personal connections are owner-only during this initial launch. Paid
     // customers need their own revocation/entitlement integration before enablement.
