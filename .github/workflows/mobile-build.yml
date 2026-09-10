@@ -11,12 +11,23 @@ permissions:
 
 concurrency:
   group: mobile-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   ios:
+    name: iOS ${{ matrix.target }}
     runs-on: macos-26
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: simulator
+            sdk: iphonesimulator
+            destination: generic/platform=iOS Simulator
+          - target: device
+            sdk: iphoneos
+            destination: generic/platform=iOS
     defaults:
       run:
         working-directory: mobile
@@ -32,12 +43,12 @@ jobs:
       - run: npm run typecheck
       - run: npx expo prebuild --platform ios --no-install --template expo-template-bare-minimum@56.0.35
       - run: pod install --project-directory=ios
-      - name: Compile the iOS simulator app
-        run: xcodebuild -workspace ios/Boardly.xcworkspace -scheme Boardly -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath build/ios-simulator CODE_SIGNING_ALLOWED=NO ARCHS=arm64 build
-      - name: Package simulator app
-        run: tar -czf Boardly-ios-simulator.tar.gz -C build/ios-simulator/Build/Products/Release-iphonesimulator Boardly.app
+      - name: Compile the iOS app
+        run: xcodebuild -workspace ios/Boardly.xcworkspace -scheme Boardly -configuration Release -sdk '${{ matrix.sdk }}' -destination '${{ matrix.destination }}' -derivedDataPath build/ios CODE_SIGNING_ALLOWED=NO ARCHS=arm64 build
+      - name: Package app
+        run: tar -czf Boardly-ios-${{ matrix.target }}.tar.gz -C build/ios/Build/Products/Release-${{ matrix.sdk }} Boardly.app
       - uses: actions/upload-artifact@v4
         with:
-          name: Boardly-iOS-simulator
-          path: mobile/Boardly-ios-simulator.tar.gz
+          name: Boardly-iOS-${{ matrix.target }}
+          path: mobile/Boardly-ios-${{ matrix.target }}.tar.gz
           if-no-files-found: error
