@@ -33,13 +33,14 @@ function projectQueue(db, id) {
   }
   return { reason: active >= MAX_AGENTS ? 'capacity' : 'ready' };
 }
-function snapshot(db, ids, {github,ssh} = {}) {
+function snapshot(db, ids, {github,ssh,computers} = {}) {
   return ids.map(id => ({
     captured_at: new Date().toISOString(),
     project: db.prepare('SELECT id,name,description FROM boards WHERE id=?').get(id),
     scope: require('./hierarchy').createHierarchy(db).scope(id),
     ...(github?{github:github(id)}:{}),
     ...(ssh?{ssh:ssh(id)}:{}),
+    ...(computers?{computeruse:computers(id)}:{}),
     lists: db.prepare('SELECT id,name FROM lists WHERE board_id=? AND archived=0').all(id),
     task_counts: db.prepare(`SELECT l.name AS status,COUNT(c.id) AS total FROM lists l LEFT JOIN cards c ON c.list_id=l.id AND c.archived=0 WHERE l.board_id=? AND l.archived=0 GROUP BY l.id ORDER BY l.position`).all(id),
     tasks: db.prepare(`SELECT c.id,c.title,c.description,c.due_date,c.updated_at,l.name AS status FROM cards c JOIN lists l ON l.id=c.list_id

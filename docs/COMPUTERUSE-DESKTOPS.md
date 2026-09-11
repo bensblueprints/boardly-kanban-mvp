@@ -1,21 +1,27 @@
 # ComputerUse in Boardly
 
-Connect the ComputerUse API in **Account & AI → ComputerUse account**, using
+Connect the ComputerUse API on the **Companies home page → ComputerUse**, using
 `account:read`, `desktop:read` and `desktop:write` scopes. The key is encrypted
 per account on the server; workers receive neither that key nor desktop leases.
 Keys created by ComputerUse expire after 30 days. Renew an expired key in
 ComputerUse, replace it in Boardly, then select the company/project assignments
 again. Replacing/disconnecting a key clears assignments deliberately.
 
-**Company → Computers** assigns multiple computers to the company's projects.
+The same connected API inventory is available across all companies in that Boardly account.
+The **Company computers** panel appears directly on every company home page and
+assigns multiple computers to that company's projects.
 **Project → Computer use** can override the selection, disable it, or inherit it.
-The picker includes **Free Desktops** and paid rentals. Assigning a free desktop
+The picker loads **Free Desktops** and paid rentals automatically from the API.
+The old $29.99 Boardly offer and availability-request flow are retired. Boardly
+shows actual assigned inventory rather than a second rental checkout. Assigning a free desktop
 does not create a Stripe subscription or payment. Existing API `rental_ids`
 remain compatible; free desktops use `desktop:<UUID>`. Responses expose `kind`
 and `desktop_id` explicitly so free computers are never represented as rentals.
 
 Enable **Allow permitted Work agents to view and control these computers**.
-Members also need the separate Computers permission. Old inspection-only grants
+Members also need the separate Computers permission. Company/board AI conversations
+can see the permitted project computer assignments; Work agents receive the
+existing controls when their company or project enables them. Old inspection-only grants
 keep `allow_control=false`; explicit control permission is required for inputs
 and screenshots. Ask/Plan cannot operate desktops.
 
@@ -44,4 +50,5 @@ Implementation reference for image tool responses:
 
 Verification: `node test/computeruse-account.js`, `node test/computeruse-desktops.js`,
 `node test/computeruse-agent-vision.js`, `node test/computeruse-worker.js`,
+`node test/project-computers.js`, `node test/project-computers-browser.cjs`,
 `node test/owner-funding.js`, `node test/cloud-api-agents.js`, `node test/chatgpt.js`.

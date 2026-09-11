@@ -48,7 +48,8 @@ function createProjectChat({ db, connections, userId, uploadsDir, environment, p
   const body = express.json({ limit: '1mb' });
   const githubContext=(actor,id)=>canUseGithub(actor,id)?github?.context(id)||{status:'not_connected',saved:false}:{status:'restricted',saved:null};
   const sshContext=(actor,id)=>canUseSsh(actor,id)?ssh?.context?.(id,actor)||{status:'not_connected',saved:false,connections:[]}:{status:'restricted',saved:null,connections:[]};
-  const organization = require('./organization-agents').createOrganizationAgents({db,clean,userId,hosted:()=>router.hosted,githubContext,sshContext});
+  const computerContext=(actor,id)=>canUseComputers(actor,id)?computeruse?.assignment('project',id)||{configured:false,saved:false,rental_ids:[],allow_agent:false,allow_control:false}:{status:'restricted',saved:null,rental_ids:[]};
+  const organization = require('./organization-agents').createOrganizationAgents({db,clean,userId,hosted:()=>router.hosted,githubContext,sshContext,computerContext});
   router.organization=organization; router.use(organization.router);
   router.audioWork=require('./audio-work').createAudioWork({db,userId,clean,enqueue:()=>router.hosted.enqueue()});
   function expireJobs() {
@@ -174,7 +175,7 @@ function createProjectChat({ db, connections, userId, uploadsDir, environment, p
       require('./hierarchy').ensureProjects(db);
       const scope = hierarchy.scope(t.board_id);
       db.prepare('UPDATE chat_jobs SET company_id=? WHERE id=?').run(scope?.company_id ?? null,j.id);
-      if(j.mode!=='work')return {...j,status:'running',context:cleanValues(snapshot(db,[t.board_id],{github:id=>githubContext(j.requested_by||userId,id),ssh:id=>sshContext(j.requested_by||userId,id)}),value=>clean(t.board_id,value)),history:db.prepare('SELECT role,content FROM chat_messages WHERE thread_id=? ORDER BY created_at,rowid').all(t.id).slice(-40),prompt:db.prepare('SELECT content FROM chat_messages WHERE id=?').get(j.message_id).content};
+      if(j.mode!=='work')return {...j,status:'running',context:cleanValues(snapshot(db,[t.board_id],{github:id=>githubContext(j.requested_by||userId,id),ssh:id=>sshContext(j.requested_by||userId,id),computers:id=>computerContext(j.requested_by||userId,id)}),value=>clean(t.board_id,value)),history:db.prepare('SELECT role,content FROM chat_messages WHERE thread_id=? ORDER BY created_at,rowid').all(t.id).slice(-40),prompt:db.prepare('SELECT content FROM chat_messages WHERE id=?').get(j.message_id).content};
       return { ...j, status: 'running', sessionId: t.codex_session_id,
         board: db.prepare('SELECT id,uuid,name,description FROM boards WHERE id=?').get(t.board_id),
         hierarchy: scope,

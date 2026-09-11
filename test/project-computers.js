@@ -1,18 +1,27 @@
-const assert=require('node:assert/strict'),path=require('node:path'),Database=require('better-sqlite3');
+const assert=require('node:assert/strict'),crypto=require('node:crypto'),path=require('node:path'),Database=require('better-sqlite3');
 const {fixture}=require('./member-fixture'),{workspacePath}=require('../server/cloud');
-(async()=>{const f=await fixture({publicAccess:true});let db;try{
- const a=await f.project('Computer company','Computer project'),b=await f.project('Other account','Private project','user_other'),route=`/api/boards/${a.project.id}/computers`;
- let state=await f.api(route);assert.deepEqual(state.plan,{id:'computer_8gb_150gb',name:'Project computer',currency:'usd',monthly_cents:2999,ram_gb:8,storage_gb:150,ai_usage_included:false});assert.equal(state.checkout_available,false);assert.equal(state.available_computers,0);assert.equal(state.request,null);
- for(const quantity of [0,-1,1.5,33,'2',null])assert.equal((await f.request(route+'/request',{method:'PUT',body:{quantity}})).status,400);
- state=await f.api(route+'/request',{method:'PUT',body:{quantity:8}});assert.equal(state.request.quantity,8);assert.equal(state.plan.monthly_cents*8,23992);
- const created=state.request.created_at;await f.api(route+'/request',{method:'PUT',body:{quantity:8}});db=new Database(path.join(workspacePath(f.root,'user_owner'),'app.db'));assert.equal(db.prepare('SELECT COUNT(*) n FROM project_computer_requests').get().n,1);assert.equal(db.prepare('SELECT COUNT(*) n FROM chat_jobs').get().n,0);
- state=await f.api(route+'/request',{method:'PUT',body:{quantity:2,status:'active',paid:true,price:1}});assert.equal(state.request.quantity,2);assert.equal(state.request.created_at,created);assert.equal(state.request.status,'requested');assert.equal(state.checkout_available,false);assert.equal(state.available_computers,0);
- assert.equal((await f.request(route+'/checkout',{method:'POST',body:{paid:true}})).status,503);assert.equal((await f.request('/api/billing/checkout',{method:'POST',body:{kind:'computer',quantity:2}})).status,400);
- const editor=(await f.api(`/api/projects/${a.project.id}/members`,{method:'POST',body:{email:'computer-editor@example.com',role:'editor'}})).member.user_id,viewer=(await f.api(`/api/projects/${a.project.id}/members`,{method:'POST',body:{email:'computer-viewer@example.com',role:'viewer'}})).member.user_id;
- for(const user of [editor,viewer]){const shared=await f.api(route,{user,workspace:'user_owner'});assert.equal(shared.can_request,false);assert.equal(shared.request.quantity,2);for(const [method,suffix,body]of[['PUT','/request',{quantity:1}],['DELETE','/request'],['POST','/checkout',{}]])assert.equal((await f.request(route+suffix,{user,workspace:'user_owner',method,body})).status,403);assert.equal((await f.request(`/api/boards/999999/computers`,{user,workspace:'user_owner'})).status,404);}
- assert.equal((await f.request(route,{user:'user_other',workspace:'user_owner'})).status,403);assert.equal((await f.api(`/api/boards/${b.project.id}/computers`,{user:'user_other'})).request,null);
- assert.equal((await f.api(route+'/request',{method:'DELETE'})).request,null);assert.equal((await f.api(route+'/request',{method:'DELETE'})).request,null);await f.api(route+'/request',{method:'PUT',body:{quantity:3}});assert.equal((await f.api(route)).request.quantity,3);
- const grant=(await f.api(`/api/projects/${a.project.id}/members`)).members.find(m=>m.email==='computer-editor@example.com').grant_id;await f.api(`/api/memberships/${grant}`,{method:'DELETE'});assert.equal((await f.request(route,{user:editor,workspace:'user_owner'})).status,403);
- assert.equal(db.pragma('integrity_check',{simple:true}),'ok');assert.deepEqual(db.pragma('foreign_key_check'),[]);await f.api(`/api/boards/${a.project.id}`,{method:'DELETE'});assert.equal(db.prepare('SELECT COUNT(*) n FROM project_computer_requests').get().n,0);
- console.log('PASS: fixed $29.99 computer catalog, durable idempotent availability requests, cancellation, input validation, no paid entitlement/VM/agent creation, checkout closed, account/project/member boundaries and revocation');
-}finally{db?.close();await f.close();}})().catch(e=>{console.error(e);process.exitCode=1;});
+(async()=>{
+ const desktop_id=crypto.randomUUID(),data={id:'fixture-account',rentals:[],desktops:[{id:desktop_id,kind:'pilot',state:'active',available:true,memory_mib:6144,label:'ThinkCentre 8 GB'}]};
+ const f=await fixture({publicAccess:true,computeruseOrigin:'https://api.computeruse.example',computeruseRequest:async()=>data});let db;
+ try{
+  const a=await f.project('Company A','Project A'),b=await f.project('Company B','Project B'),route=`/api/boards/${a.project.id}/computers`;
+  let state=await f.api(route);assert.equal(state.source,'computeruse_api');assert.equal(state.plan,null);assert.equal(state.available_computers,0);assert.equal(state.can_request,false);assert.equal(state.checkout_available,false);
+  await f.api('/api/account/computeruse',{method:'PUT',body:{token:'cu_fixture_account_key_123456'}});
+  for(const p of [a,b])assert.equal((await f.api(`/api/companies/${p.company.id}/computeruse/rentals`)).rentals.length,1);
+  await f.api(`/api/companies/${a.company.id}/computeruse`,{method:'PUT',body:{rental_ids:['desktop:'+desktop_id],allow_agent:true,allow_control:true}});
+  state=await f.api(route);assert.equal(state.available_computers,1);assert.equal(state.computers[0].desktop_id,desktop_id);assert.equal(state.assignment.inherited,true);assert.equal(state.company_id,a.company.id);assert.ok(!JSON.stringify(state).includes('2999'));
+  assert.equal((await f.api(`/api/boards/${b.project.id}/computers`)).available_computers,0);
+  for(const suffix of ['/request','/checkout'])assert.equal((await f.request(route+suffix,{method:suffix==='/request'?'PUT':'POST',body:{quantity:2,paid:true}})).status,410);
+  db=new Database(path.join(workspacePath(f.root,'user_owner'),'app.db'));assert.equal(db.prepare('SELECT COUNT(*) n FROM project_computer_requests').get().n,0);assert.equal(db.prepare('SELECT COUNT(*) n FROM chat_jobs').get().n,0);
+  const member=(await f.api(`/api/projects/${a.project.id}/members`,{method:'POST',body:{email:'computer-member@example.com',role:'editor'}})).member;
+  const options={user:member.user_id,workspace:'user_owner'};assert.equal((await f.request(route,options)).status,403);
+  const grant=(await f.api(`/api/projects/${a.project.id}/members`)).members.find(m=>m.email==='computer-member@example.com').grant_id;
+  await f.api(`/api/memberships/${grant}`,{method:'PATCH',body:{scopes:['computers']}});assert.equal((await f.api(route,options)).available_computers,1);
+  assert.equal((await f.request(`/api/boards/${b.project.id}/computers`,options)).status,404);
+  await f.api(`/api/memberships/${grant}`,{method:'PATCH',body:{scopes:[]}});assert.equal((await f.request(route,options)).status,403);
+  data.desktops[0].available=false;assert.equal((await f.api(route)).available_computers,0);
+  await f.api('/api/account/computeruse',{method:'DELETE'});state=await f.api(route);assert.equal(state.launch_status,'not_connected');assert.deepEqual(state.computers,[]);
+  assert.equal(db.pragma('integrity_check',{simple:true}),'ok');
+  console.log('PASS: connected API inventory across companies, per-company assignment/inheritance, no stale price or checkout, no purchases/jobs, live availability and member isolation/revocation');
+ }finally{db?.close();await f.close();}
+})().catch(e=>{console.error(e);process.exitCode=1});

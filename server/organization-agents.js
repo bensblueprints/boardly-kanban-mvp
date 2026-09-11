@@ -3,7 +3,7 @@ const crypto = require('node:crypto');
 const { MAX_AGENTS, snapshot, modeInstruction, cleanValues } = require('./agent-scheduling');
 const { safeText } = require('./agent-activity');
 const fail = (status, message) => Object.assign(Error(message), {status});
-function createOrganizationAgents({db, clean, userId, hosted, githubContext, sshContext}) {
+function createOrganizationAgents({db, clean, userId, hosted, githubContext, sshContext, computerContext}) {
   db.exec(`CREATE TABLE IF NOT EXISTS agent_swarms (
     id TEXT PRIMARY KEY, scope_type TEXT NOT NULL, scope_id INTEGER NOT NULL,
     title TEXT NOT NULL, instruction TEXT NOT NULL, requested_by TEXT NOT NULL, created_at INTEGER NOT NULL);
@@ -53,7 +53,7 @@ function createOrganizationAgents({db, clean, userId, hosted, githubContext, ssh
     const s=scope(req.params.kind,req.params.id);
     const swarms=db.prepare('SELECT id FROM agent_swarms WHERE scope_type=? AND scope_id=? ORDER BY created_at DESC LIMIT 20').all(s.kind,s.id).map(x=>details(x.id));
     const threads=db.prepare('SELECT * FROM discussion_threads WHERE scope_type=? AND scope_id=? ORDER BY created_at DESC,rowid DESC').all(s.kind,s.id);
-    res.json({scope:s,swarms,threads,max_agents:MAX_AGENTS,github:s.projects.map(p=>({project_id:p.id,project_name:p.name,board_name:p.board_name,...githubContext?.(req.cloudUserId||userId,p.id)}))});
+    res.json({scope:s,swarms,threads,max_agents:MAX_AGENTS,computers:s.projects.map(p=>({project_id:p.id,project_name:p.name,board_name:p.board_name,...computerContext?.(req.cloudUserId||userId,p.id)})),github:s.projects.map(p=>({project_id:p.id,project_name:p.name,board_name:p.board_name,...githubContext?.(req.cloudUserId||userId,p.id)}))});
   });
   router.post('/api/agents/:kind(company|board)/:id/swarms', (req,res) => {
     const s=scope(req.params.kind,req.params.id), data=req.body;
@@ -92,7 +92,7 @@ function createOrganizationAgents({db, clean, userId, hosted, githubContext, ssh
     if(req.aiRuntime==='api')router.enqueueApi?.();res.status(202).json({id});
   });
   router.post('/api/discussions/jobs/:id/cancel',(req,res)=>{const j=db.prepare('SELECT * FROM discussion_jobs WHERE id=?').get(req.params.id);if(!j)throw fail(404,'Reply not found');getThread(j.thread_id);db.prepare("UPDATE discussion_jobs SET status='cancelled',updated_at=? WHERE id=? AND status IN ('queued','running')").run(Date.now(),j.id);res.json({ok:true});});
-  function context(j){const t=getThread(j.thread_id),s=scope(t.scope_type,t.scope_id);return {kind:'discussion',...j,context:cleanValues({scope:s,projects:snapshot(db,s.projects.map(p=>p.id),{github:githubContext&&((id)=>githubContext(j.requested_by||userId,id)),ssh:sshContext&&((id)=>sshContext(j.requested_by||userId,id))})},value=>scrub(s,value)),history:db.prepare("SELECT mode,prompt,draft,status FROM discussion_jobs WHERE thread_id=? AND created_at<=? ORDER BY created_at,rowid").all(t.id,j.created_at).slice(-20)};}
+  function context(j){const t=getThread(j.thread_id),s=scope(t.scope_type,t.scope_id);return {kind:'discussion',...j,context:cleanValues({scope:s,projects:snapshot(db,s.projects.map(p=>p.id),{github:githubContext&&((id)=>githubContext(j.requested_by||userId,id)),ssh:sshContext&&((id)=>sshContext(j.requested_by||userId,id)),computers:computerContext&&((id)=>computerContext(j.requested_by||userId,id))})},value=>scrub(s,value)),history:db.prepare("SELECT mode,prompt,draft,status FROM discussion_jobs WHERE thread_id=? AND created_at<=? ORDER BY created_at,rowid").all(t.id,j.created_at).slice(-20)};}
   function claim(workerId){return db.transaction(()=>{const j=db.prepare("SELECT * FROM discussion_jobs WHERE status='queued' AND runtime='codex' ORDER BY created_at,rowid LIMIT 1").get();if(!j)return null;const c=context(j);db.prepare("UPDATE discussion_jobs SET status='running',worker_id=?,started_at=?,updated_at=? WHERE id=?").run(workerId,Date.now(),Date.now(),j.id);return c;}).immediate();}
   router.post('/api/worker/discussions/:id',(req,res)=>{
     const j=db.prepare('SELECT * FROM discussion_jobs WHERE id=?').get(req.params.id);if(!j||j.worker_id!==req.boardlyConnection.id)return res.status(404).json({error:'Reply not found'});
