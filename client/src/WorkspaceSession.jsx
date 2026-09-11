@@ -12,7 +12,7 @@ const rememberWorkspace = (userId, id) => {
   } catch { /* Storage may be unavailable; the current session still works. */ }
 };
 
-export default function WorkspaceSession({ userId, getToken, onLogout }) {
+export default function WorkspaceSession({ userId, getToken, onLogout, profile, onManageProfile }) {
   const [access, setAccess] = useState(null);
   const [selection, setSelection] = useState(() => ({ id: savedWorkspace(userId) }));
   useEffect(() => {
@@ -65,5 +65,5 @@ export default function WorkspaceSession({ userId, getToken, onLogout }) {
     <button className="text-indigo-400" onClick={() => setSelection({ id: selection.id })}>Retry</button>
     <button className="text-indigo-400" onClick={onLogout}>Sign out</button>
   </div>;
-  return <Workspace key={userId + access.workspaceId} access={access} onSwitch={switchWorkspace} cloud onLogout={onLogout} />;
+  return <Workspace key={userId + access.workspaceId} access={access} onSwitch={switchWorkspace} cloud onLogout={onLogout} profile={profile} onManageProfile={onManageProfile} />;
 }

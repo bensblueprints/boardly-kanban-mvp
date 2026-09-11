@@ -3,7 +3,7 @@ import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   ArrowLeft, Plus, Star, Search, Filter, Download, Upload, Archive,
-  History, X, Clock, MessageSquare, Paperclip, CheckSquare, AlignLeft, RotateCcw, Sparkles
+  Settings2, Plug, History, X, Clock, MessageSquare, Paperclip, CheckSquare, AlignLeft, RotateCcw, Sparkles
 } from 'lucide-react';
 import { api } from '../api.js';
 import CardModal from './CardModal.jsx';
@@ -12,11 +12,10 @@ import ProjectChat from './ProjectChat.jsx';
 import AudioBriefing from './AudioBriefing.jsx';
 import AiActions from './AiActions.jsx';
 import SplitWorkspace from './SplitWorkspace.jsx';
-import CloudConnections from './CloudConnections.jsx';
-import Members from './Members.jsx';
 import {useAccess} from '../access.jsx';
 import ProjectAssets from './ProjectAssets.jsx';
 import ProjectComputers from './ProjectComputers.jsx';
+import ScopeSettings from './ScopeSettings.jsx';
 
 function dueState(due) {
   if (!due) return null;
@@ -119,7 +118,9 @@ function AddCard({ listId, onAdded, autoFocus }) {
 
 export default function BoardView({ boardId, onBack, cloud = false }) {
   const owner=useAccess().workspaceOwner!==false;
-  const [members,setMembers]=useState(false);
+  const [settingsSection,setSettingsSection]=useState(()=>location.hash.match(/\/settings(?:\/([^/?]+))?/)?.[1]||(location.hash.includes('/settings')?'general':null));
+  useEffect(()=>{const changed=()=>setSettingsSection(location.hash.match(/\/settings(?:\/([^/?]+))?/)?.[1]||(location.hash.includes('/settings')?'general':null));window.addEventListener('hashchange',changed);return()=>window.removeEventListener('hashchange',changed);},[]);
+  const openSettings=section=>{location.hash=`#/board/${boardId}/settings/${section}`;};
   const [board, setBoard] = useState(null);
   const readOnly=board?.permissions?.role==='viewer';
   const can=scope=>owner||board?.permissions?.scopes?.includes(scope);
@@ -133,7 +134,6 @@ export default function BoardView({ boardId, onBack, cloud = false }) {
   const [showChat, setShowChat] = useState(false);
   const [showAudio, setShowAudio] = useState(false);
   const [showComputers, setShowComputers] = useState(false);
-  const [connections, setConnections] = useState(false);
   const [assetsTab, setAssetsTab] = useState(null);
   const [chatThread, setChatThread] = useState(null);
   const [chatTask, setChatTask] = useState(null);
@@ -167,13 +167,13 @@ export default function BoardView({ boardId, onBack, cloud = false }) {
   // keyboard shortcuts: n = new card (first list), / = focus search
   useEffect(() => {
     function onKey(e) {
-      if (openCardId || e.target.closest('input, textarea, [contenteditable]')) return;
+      if (settingsSection || openCardId || e.target.closest('input, textarea, [contenteditable]')) return;
       if (e.key === '/') { e.preventDefault(); searchRef.current?.focus(); }
       if (e.key === 'n' && !readOnly && board?.lists?.length) { e.preventDefault(); setQuickAddList(board.lists[0].id); }
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [board, openCardId]);
+  }, [board, openCardId, settingsSection]);
 
   const filtering = query || labelFilter || dueFilter;
   const visibleLists = useMemo(() => {
@@ -296,6 +296,8 @@ export default function BoardView({ boardId, onBack, cloud = false }) {
 
   if (!board) return <div className="h-full flex items-center justify-center text-zinc-600">Loading…</div>;
 
+  if(cloud&&settingsSection)return <ScopeSettings kind="project" entity={board} section={settingsSection} owner={owner} can={can} onSaved={load} onBack={()=>location.hash=`#/board/${board.id}`} onExport={exportBoard}/>;
+
   return (
     <div className="h-full min-h-0 flex">
     <div className="flex-1 min-w-0 min-h-0 flex flex-col" style={{ background: `linear-gradient(180deg, ${board.color}22, transparent 240px)` }}>
@@ -386,10 +388,10 @@ export default function BoardView({ boardId, onBack, cloud = false }) {
         <button onClick={() => openPanel('archived')} className="p-2 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-zinc-100" title="Archived items">
           <Archive className="w-4 h-4" />
         </button>
-        <button onClick={exportBoard} className="p-2 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-zinc-100" title="Export board as JSON">
+        <button hidden={cloud} onClick={exportBoard} className="p-2 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-zinc-100" title="Export board as JSON">
           <Download className="w-4 h-4" />
         </button>
-        <button hidden={!owner} onClick={() => importRef.current?.click()} className="p-2 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-zinc-100" title="Import board from JSON">
+        <button hidden={cloud||!owner} onClick={() => importRef.current?.click()} className="p-2 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-zinc-100" title="Import board from JSON">
           <Upload className="w-4 h-4" />
         </button>
         <input ref={importRef} type="file" accept=".json,application/json" className="hidden"
@@ -400,19 +402,13 @@ export default function BoardView({ boardId, onBack, cloud = false }) {
         <AiActions onChat={() => { setChatTask(null); setChatThread(null); setShowChat(true); }} onAudio={() => setShowAudio(true)} audioDisabled={readOnly}/>
         {cloud && <button disabled={deployBusy||readOnly} onClick={() => launchAgent()} className="text-sm text-indigo-300 border border-indigo-500/30 rounded-lg px-3 py-1.5 disabled:opacity-50">{deployBusy ? 'Starting…' : 'Deploy agent'}</button>}
         {cloud && <button onClick={() => setAssetsTab('files')} className="text-sm text-zinc-300 px-2">Files</button>}
-        {cloud && <button onClick={() => setShowComputers(true)} className="text-sm text-zinc-300 px-2">Computer use</button>}
+        {cloud && can('computers') && <button onClick={() => setShowComputers(true)} className="text-sm text-zinc-300 px-2">Computer use</button>}
         {cloud && <button onClick={() => setAssetsTab('links')} className="text-sm text-zinc-300 px-2">Links</button>}
-        {cloud && can('ssh') && <button onClick={() => setAssetsTab('ssh')} className="text-sm text-zinc-300 px-2">SSH</button>}
-        {cloud && can('github') && <button onClick={() => setAssetsTab('github')} className="text-sm text-zinc-300 px-2">GitHub</button>}
-        {cloud && can('environment') && <button onClick={() => setAssetsTab('environment')} className="text-sm text-zinc-300 px-2">Environment</button>}
-        {cloud && can('payments') && <button onClick={() => setAssetsTab('payments')} className="text-sm text-zinc-300 px-2">Payments</button>}
-        {cloud && owner && <button onClick={() => setConnections(true)} className="text-sm text-zinc-400 hover:text-zinc-200 px-2">Connections</button>}
-        {can('members')&&<button onClick={()=>setMembers(true)} className="text-sm text-zinc-300 px-2">Members</button>}{readOnly&&<span className="text-xs text-zinc-500">View-only access</span>}
+        <button onClick={()=>openSettings('connectors')} className="text-sm text-zinc-300 px-2 inline-flex gap-2 items-center"><Plug size={16}/>Connectors</button>
+        <button aria-label="Project settings" onClick={()=>openSettings('general')} className="text-sm text-zinc-300 px-2 inline-flex gap-2 items-center"><Settings2 size={16}/>Settings</button>{readOnly&&<span className="text-xs text-zinc-500">View-only access</span>}
       </nav>}
       {cloud && showAudio && <AudioBriefing key={board.id} kind="project" id={board.id} onClose={() => {setShowAudio(false);load();}} />}
       {cloud && showComputers && <ProjectComputers key={board.id} board={board} onClose={() => setShowComputers(false)} />}
-      {members&&can('members')&&<Members kind="projects" id={board.id} onClose={()=>setMembers(false)}/>}
-      {cloud && connections && <CloudConnections onClose={() => setConnections(false)} />}
 
       {cloud && assetsTab && (['files','links'].includes(assetsTab)||can(assetsTab)) && <ProjectAssets board={{...board,name:board.hierarchy?.project_name || board.name}} initialTab={assetsTab} onClose={() => setAssetsTab(null)} />}
       {agentError && <p role="alert" className="p-3 text-sm text-rose-300">{agentError}</p>}

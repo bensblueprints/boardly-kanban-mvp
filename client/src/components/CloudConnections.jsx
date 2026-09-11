@@ -25,32 +25,32 @@ function CopyField({ label, value, multiline = false }) {
   </div>;
 }
 
-export default function CloudConnections({ initialTab = 'mcp', onClose }) {
+export default function CloudConnections({ initialTab = 'mcp', onClose, embedded=false, developerAccess=true }) {
   const [tab, setTab] = useState(initialTab), [connections, setConnections] = useState([]);
   const [origin, setOrigin] = useState(location.origin), [name, setName] = useState('');
   const [issued, setIssued] = useState(null), [error, setError] = useState(''), [busy, setBusy] = useState(false);
   const load = async () => { const d = await api.get('/api/connections'); setConnections(d.connections); setOrigin(d.origin); };
-  useEffect(() => { load().catch(e => setError(e.message)); }, []);
-  useEffect(() => { const f = e => { if (e.key === 'Escape') onClose(); }; window.addEventListener('keydown', f); return () => window.removeEventListener('keydown', f); }, [onClose]);
+  useEffect(() => { if(developerAccess)load().catch(e => setError(e.message)); }, [developerAccess]);
+  useEffect(() => { const f = e => { if (!embedded && e.key === 'Escape') onClose(); }; window.addEventListener('keydown', f); return () => window.removeEventListener('keydown', f); }, [onClose,embedded]);
   const create = async e => {
     e.preventDefault(); setBusy(true); setError('');
     try { const d = await api.post('/api/connections', { name: name.trim() || (tab === 'mcp' ? 'My AI client' : 'My desktop'), scope: tab }); setIssued(d); setName(''); await load(); }
     catch (e) { setError(e.message); } finally { setBusy(false); }
   };
   const current = issued?.scope === tab ? issued : null;
-  return <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-3" onClick={onClose}>
-    <section role="dialog" aria-modal="true" aria-label="Boardly connections and downloads" onClick={e => e.stopPropagation()} className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl border border-zinc-700 bg-zinc-900 shadow-2xl">
-      <header className="flex items-center justify-between p-5 border-b border-zinc-800"><h2 className="font-semibold text-lg">Connect your workspace</h2><button aria-label="Close connections" onClick={onClose}><X size={20} /></button></header>
-      <nav className="flex gap-2 px-5 pt-4" aria-label="Connection type">
-        {[["mcp", 'MCP connector', Plug], ['sync', 'Desktop sync', Cloud], ['downloads', 'Download apps', Download]].map(([id, title, Icon]) => <button key={id} aria-pressed={tab === id} onClick={() => { setTab(id); setError(''); }} className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm ${tab === id ? 'bg-indigo-500/20 text-indigo-200' : 'text-zinc-400 hover:bg-zinc-800'}`}><Icon size={16} />{title}</button>)}
+  return <div className={embedded?'':'fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-3'} onClick={embedded?undefined:onClose}>
+    <section role={embedded?'region':'dialog'} aria-modal={embedded?undefined:true} aria-label="Boardly connections and downloads" onClick={e => e.stopPropagation()} className={embedded?'min-w-0':'w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl border border-zinc-700 bg-zinc-900 shadow-2xl'}>
+      {!embedded&&<header className="flex items-center justify-between p-5 border-b border-zinc-800"><h2 className="font-semibold text-lg">Connect your workspace</h2><button aria-label="Close connections" onClick={onClose}><X size={20} /></button></header>}
+      <nav className="flex flex-wrap gap-2 pb-4" aria-label="Connection type">
+        {[["mcp", 'MCP connector', Plug], ['sync', 'Desktop sync', Cloud], ['downloads', 'Download apps', Download]].filter(([id])=>developerAccess||id==='downloads').map(([id, title, Icon]) => <button key={id} aria-pressed={tab === id} onClick={() => { setTab(id); setError(''); }} className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm ${tab === id ? 'bg-indigo-500/20 text-indigo-200' : 'text-zinc-400 hover:bg-zinc-800'}`}><Icon size={16} />{title}</button>)}
       </nav>
-      <div className="p-5 space-y-5">
+      <div className="space-y-5">
         {error && <p role="alert" className="text-sm text-rose-300">{error}</p>}
         {tab === 'downloads' ? <>
           <div><h3 className="font-semibold">Boardly for your desktop</h3><p className="text-sm text-zinc-400 mt-1">Keep a local copy of your boards and sync with your cloud workspace.</p></div>
           <div className="grid sm:grid-cols-2 gap-3">{desktopDownloads.map(([platform, detail, href]) => <a key={href} href={href} className="p-4 rounded-xl border border-zinc-700 hover:border-indigo-400 flex gap-3 items-center"><Download size={22} className="text-indigo-300" /><span><strong className="block">{platform}</strong><span className="text-xs text-zinc-400">{detail} · v1.9.0</span></span></a>)}</div>
           <p className="text-sm text-zinc-400">After installing, open <strong className="text-zinc-200">Sync</strong> in the desktop app. Create a desktop key here, then paste the server address and key into the app’s existing-token form.</p>
-          <button onClick={() => setTab('sync')} className="rounded-lg bg-indigo-600 hover:bg-indigo-500 px-4 py-2 text-sm">Connect a desktop</button>
+          {developerAccess?<button onClick={() => setTab('sync')} className="rounded-lg bg-indigo-600 hover:bg-indigo-500 px-4 py-2 text-sm">Connect a desktop</button>:<p className="text-sm text-amber-200">Cloud desktop sync and MCP keys are currently available to the platform owner.</p>}
         </> : <>
           <div><h3 className="font-semibold">{tab === 'mcp' ? 'Let your AI client work with Boardly' : 'Sync this account with your desktop'}</h3>
             <p className="text-sm text-zinc-400 mt-1">{tab === 'mcp' ? 'Connect a client that supports Streamable HTTP and a Bearer token. It will use the same boards you see here.' : 'Use a separate key for each computer. Changes to boards, cards, checklists and attachments sync both ways.'}</p></div>

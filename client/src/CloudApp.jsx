@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { ClerkProvider, SignIn, SignUp, useAuth, useClerk } from '@clerk/react';
+import { ClerkProvider, SignIn, SignUp, useAuth, useClerk, useUser } from '@clerk/react';
 import BrandLogo from './components/BrandLogo.jsx';
 import WorkspaceSession from './WorkspaceSession.jsx';
 
@@ -10,7 +10,8 @@ const branding = {
 
 function CloudSession({ ownerOnly }) {
   const { isLoaded, isSignedIn, userId, getToken } = useAuth();
-  const { signOut } = useClerk();
+  const { signOut, openUserProfile } = useClerk();
+  const {user}=useUser();
   const isSignUp = /^\/sign-up(\/|$)/.test(location.pathname);
   const needsSignInRoute = isLoaded && !isSignedIn && !/^\/sign-(in|up)(\/|$)/.test(location.pathname);
   useEffect(() => { if (needsSignInRoute) location.replace('/sign-in?redirect_url=' + encodeURIComponent(location.pathname + location.search + location.hash)); }, [needsSignInRoute]);
@@ -25,7 +26,7 @@ function CloudSession({ ownerOnly }) {
       ? <SignUp routing="path" path="/sign-up" signInUrl="/sign-in" fallbackRedirectUrl="/app" />
       : <SignIn routing="path" path="/sign-in" signUpUrl={ownerOnly ? undefined : '/sign-up'} fallbackRedirectUrl="/app" withSignUp={!ownerOnly} transferable={!ownerOnly} />}
   </div>;
-  return <WorkspaceSession key={userId} userId={userId} getToken={getToken} onLogout={() => signOut({ redirectUrl: '/' })} />;
+  return <WorkspaceSession key={userId} userId={userId} getToken={getToken} profile={user?{name:user.fullName||user.username||user.primaryEmailAddress?.emailAddress,email:user.primaryEmailAddress?.emailAddress,imageUrl:user.imageUrl}:null} onManageProfile={()=>openUserProfile()} onLogout={() => signOut({ redirectUrl: '/' })} />;
 }
 
 export default function CloudApp({ config }) {

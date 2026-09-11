@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
 const input = 'rounded-lg bg-zinc-950 border border-zinc-700 px-3 py-2 text-sm';
-export default function Members({ kind, id, onClose }) {
+export default function Members({ kind, id, onClose, embedded=false }) {
  const [data,setData]=useState(null),[email,setEmail]=useState(''),[role,setRole]=useState('editor');
  const [error,setError]=useState(''),[notice,setNotice]=useState(''),[busy,setBusy]=useState(false),[expanded,setExpanded]=useState({});
  const requestId=useRef(0),writing=useRef(false);
@@ -35,8 +35,8 @@ export default function Members({ kind, id, onClose }) {
    </fieldset>}
   </section>;
  }
- return <div className="fixed inset-0 z-50 bg-black/60 p-4 flex items-center justify-center" onClick={onClose}><section role="dialog" aria-modal="true" aria-label="Members" onClick={e=>e.stopPropagation()} className="w-full max-w-3xl max-h-[90vh] overflow-auto rounded-2xl bg-zinc-900 border border-zinc-700 p-6 space-y-5">
-  <header className="flex justify-between gap-4"><h2 className="text-xl font-semibold">{kind==='companies'?'Company':'Project'} members</h2><button aria-label="Close members" onClick={onClose}>✕</button></header>
+ return <div className={embedded?'':'fixed inset-0 z-50 bg-black/60 p-4 flex items-center justify-center'} onClick={embedded?undefined:onClose}><section role={embedded?'region':'dialog'} aria-modal={embedded?undefined:true} aria-label="Members" onClick={e=>e.stopPropagation()} className={embedded?'space-y-5':'w-full max-w-3xl max-h-[90vh] overflow-auto rounded-2xl bg-zinc-900 border border-zinc-700 p-6 space-y-5'}>
+  <header className="flex justify-between gap-4"><h2 className="text-xl font-semibold">{kind==='companies'?'Company':'Project'} members</h2>{!embedded&&<button aria-label="Close members" onClick={onClose}>✕</button>}</header>
   <p className="text-sm text-zinc-400">{kind==='companies'?'Company members can access every project in this company. People added to individual projects are listed separately below.':'Project members can access this project. Company access is inherited.'} Added members do not need a paid account.</p>
   {data&&<p className="text-sm">{data.usage.users} users across this account · {data.user_limit===null?'Unlimited users':`${data.user_limit} user allowance`}</p>}
   {error&&<p role="alert" className="text-rose-300 text-sm">{error}</p>}{notice&&<p role="status" className="text-emerald-300 text-sm">{notice}</p>}

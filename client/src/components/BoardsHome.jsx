@@ -12,7 +12,10 @@ import CompanyWorkspace from './CompanyWorkspace.jsx';
 const COLORS = ['#6366f1', '#8b5cf6', '#ec4899', '#ef4444', '#f59e0b', '#22c55e', '#14b8a6', '#3b82f6', '#64748b'];
 const EMOJIS = ['📋', '🚀', '🎯', '💼', '🛠️', '🎨', '📦', '🧠', '🔥', '🌱', '🏠', '✍️'];
 
-export default function BoardsHome({ onOpen, onLogout, cloud = false }) {
+export default function BoardsHome(props) {
+  return props.cloud ? <CompanyWorkspace onOpen={props.onOpen} cloud /> : <LocalBoardsHome {...props}/>;
+}
+function LocalBoardsHome({ onOpen, onLogout, cloud = false }) {
   const owner=useAccess().workspaceOwner!==false;
   const [boards, setBoards] = useState(null);
   const [creating, setCreating] = useState(false);
@@ -74,7 +77,7 @@ export default function BoardsHome({ onOpen, onLogout, cloud = false }) {
     <div className="min-h-full">
       <style>{`button[hidden]{display:none!important}`}</style>
       {cloud && connectionTab && <CloudConnections initialTab={connectionTab} onClose={() => setConnectionTab(null)} />}
-      <header className="border-b border-zinc-800/80 bg-zinc-950/80 backdrop-blur sticky top-0 z-10">
+      {!cloud&&<header className="border-b border-zinc-800/80 bg-zinc-950/80 backdrop-blur sticky top-0 z-10">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 min-h-16 py-3 flex flex-wrap gap-3 items-center justify-between">
           {!cloud && <a href="#/" aria-label="Boardly workspace home" className="text-lg"><BrandLogo size={32}/></a>}
           <div className="flex flex-wrap items-center gap-2">
@@ -119,7 +122,7 @@ export default function BoardsHome({ onOpen, onLogout, cloud = false }) {
             </button>
           </div>
         </div>
-      </header>
+      </header>}
 
       {cloud ? <CompanyWorkspace onOpen={onOpen} cloud={cloud} /> : <main className="max-w-6xl mx-auto px-6 py-10">
         <h1 className="text-2xl font-bold mb-1">Your boards</h1>
