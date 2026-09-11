@@ -25,10 +25,10 @@ function memberGuard({db,memberships,ownerId,userId}){
    // Match only the existing connector routes, then recheck live grants for
    // async provider operations as well as the initial HTTP request.
    let privileged;
-   const connection=route.match(/^\/api\/(companies|projects)\/(\d+)\/(ssh|github)(?:\/([\w-]+))?(?:\/(test))?$/);
+   const connection=route.match(/^\/api\/(companies|projects)\/(\d+)\/(ssh|github)(?:\/([\w-]+))?(?:\/(test|setup|probe|activate))?$/);
    if(connection){
     const [,kind,id,cap,part,test]=connection;
-    const permitted=cap==='github'?(!part&&['GET','PUT','DELETE'].includes(method))||(['test','repositories'].includes(part)&&!test&&method==='POST'):(!part&&['GET','POST'].includes(method))||(part&&!test&&['PATCH','DELETE'].includes(method))||(part&&test&&method==='POST');
+    const permitted=cap==='github'?(!part&&['GET','PUT','DELETE'].includes(method))||(['test','repositories'].includes(part)&&!test&&method==='POST'):(!part&&['GET','POST'].includes(method))||(part&&!test&&['PATCH','DELETE'].includes(method))||(part==='setup'&&!test&&method==='POST')||(part&&test&&method===(test==='setup'?'GET':'POST'));
     if(permitted)privileged={kind:kind==='companies'?'company':'project',id:Number(id),cap};
    }
    const secret=route.match(/^\/api\/boards\/(\d+)\/(environment|payments)(.*)$/);

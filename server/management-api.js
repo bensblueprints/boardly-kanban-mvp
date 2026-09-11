@@ -15,7 +15,9 @@ const fieldHints = [
   [/\/members$/, ['email', 'role']],
   [/^\/api\/memberships\/:id$/, ['role', 'scopes', 'owner_ssh']],
   [/\/team-chat$/, ['body', 'client_id']],
-  [/\/ssh(?:\/:connectionId)?$/, ['label', 'host', 'port', 'username', 'private_key', 'passphrase', 'password', 'fingerprint', 'allow_agent', 'jump_id', 'access', 'tailnet_device_id']],
+  [/\/ssh\/setup$/, ['host', 'username', 'label', 'port', 'tailnet_device_id']],
+  [/\/ssh\/:connectionId\/activate$/, ['fingerprint', 'allow_agent']],
+  [/\/ssh(?:\/:connectionId)?$/, ['label', 'host', 'port', 'username', 'auth_type', 'private_key', 'passphrase', 'password', 'fingerprint', 'allow_agent', 'jump_id', 'access', 'tailnet_device_id']],
 ];
 
 function catalogue(routers) {

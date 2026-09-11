@@ -2,7 +2,7 @@ const crypto=require('node:crypto'),express=require('express');
 const {redact}=require('./project-environment');
 const {safeText}=require('./agent-activity');
 const fail=(status,message)=>Object.assign(Error(message),{status});
-function connectSSH(config,{command,forward,valid=()=>true,timeout=30000}={}){
+function connectSSH(config,{command,forward,probe=false,valid=()=>true,timeout=30000}={}){
  return new Promise((resolve,reject)=>{
   const {Client}=require('ssh2'),client=new Client();let ended=false,stdout='',stderr='',truncated=false;
   const finish=(error,result)=>{if(ended)return;ended=true;clearTimeout(timer);clearInterval(check);client.end();error?reject(error):resolve(result);};
@@ -23,14 +23,14 @@ function connectSSH(config,{command,forward,valid=()=>true,timeout=30000}={}){
    });
   });
   try{client.connect({host:config.host,port:config.port,username:config.username,...(config.sock?{sock:config.sock}:{}),
-   ...(config.auth_type==='key'?{privateKey:config.private_key,passphrase:config.passphrase||undefined}:{password:config.password}),
+   ...(probe?{}:config.auth_type==='key'?{privateKey:config.private_key,passphrase:config.passphrase||undefined}:{password:config.password}),
    readyTimeout:10000,keepaliveInterval:5000,keepaliveCountMax:2,
-   hostVerifier:key=>'SHA256:'+crypto.createHash('sha256').update(key).digest('base64').replace(/=+$/,'')===config.fingerprint});}
+   hostVerifier:key=>{const fingerprint='SHA256:'+crypto.createHash('sha256').update(key).digest('base64').replace(/=+$/,'');if(probe){finish(null,{fingerprint});return false;}return fingerprint===config.fingerprint;}});}
   catch{finish(fail(400,'SSH credentials or connection settings are invalid'));}
  });
 }
 function createSshConnections({db,key,namespace,connector=connectSSH,tailnet,members=()=>[]}){
- const direct=async(config,options)=>{if(!config.fingerprint)throw fail(400,'Add the trusted host fingerprint before connecting');if(config.tailnet_device_id){if(!tailnet)throw fail(503,'Tailscale is not configured');const sock=await tailnet.dial(config.tailnet_account,config.tailnet_device_id,config.port);try{const result=await connector({...config,sock},options);if(options.forward)return {...result,close:()=>{result.close();sock.destroy();}};sock.destroy();return result;}catch(e){sock.destroy();throw e;}}return connector(config,options);};
+ const direct=async(config,options)=>{if(!config.fingerprint&&!options.probe)throw fail(400,'Add the trusted host fingerprint before connecting');if(config.tailnet_device_id){if(!tailnet)throw fail(503,'Tailscale is not configured');const sock=await tailnet.dial(config.tailnet_account,config.tailnet_device_id,config.port);try{const result=await connector({...config,sock},options);if(options.forward)return {...result,close:()=>{result.close();sock.destroy();}};sock.destroy();return result;}catch(e){sock.destroy();throw e;}}return connector(config,options);};
  db.exec(`CREATE TABLE IF NOT EXISTS ssh_connections (
  id TEXT PRIMARY KEY,company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
  project_id INTEGER REFERENCES boards(id) ON DELETE CASCADE,label TEXT NOT NULL,host TEXT NOT NULL,port INTEGER NOT NULL,
@@ -44,6 +44,7 @@ function createSshConnections({db,key,namespace,connector=connectSSH,tailnet,mem
  const table=kind=>kind==='owner'?'owner_ssh_connections':'ssh_connections';
  const all='(SELECT * FROM ssh_connections UNION ALL SELECT * FROM owner_ssh_connections)';
  db.exec(`CREATE TABLE IF NOT EXISTS ssh_access(connection_id TEXT PRIMARY KEY,mode TEXT NOT NULL CHECK(mode IN ('shared','owner','assigned')),member_ids TEXT NOT NULL);`);
+ db.exec(`CREATE TABLE IF NOT EXISTS ssh_setup (connection_id TEXT PRIMARY KEY,public_key TEXT NOT NULL,discovered_fingerprint TEXT,discovered_at INTEGER,connection_revision INTEGER);`);
  const access=id=>{const r=db.prepare('SELECT mode,member_ids FROM ssh_access WHERE connection_id=?').get(id);return r?{mode:r.mode,member_ids:JSON.parse(r.member_ids)}:{mode:'shared',member_ids:[]};};
  function permitted(id,actor=namespace){if(actor===namespace)return true;const a=access(id);return a.mode==='shared'||(a.mode==='assigned'&&members().some(m=>m.user_id===actor&&a.member_ids.includes(m.id)));}
  function requireAccess(id,actor){if(!permitted(id,actor))throw fail(403,'This computer is not assigned to you');}
@@ -65,7 +66,7 @@ function createSshConnections({db,key,namespace,connector=connectSSH,tailnet,mem
  const where=kind=>kind==='owner'?'company_id IS NULL AND project_id IS NULL':`${field(kind)}=?`;
  const params=(kind,id)=>kind==='owner'?[]:[id];
  function scope(kind,id){if(kind==='owner')return;if(!['companies','projects'].includes(kind)||!db.prepare(`SELECT id FROM ${kind==='companies'?'companies':'boards'} WHERE id=?`).get(id))throw fail(404,'SSH scope not found');}
- const list=(kind,id)=>{scope(kind,id);return db.prepare(`SELECT ${columns} FROM ${table(kind)} WHERE ${where(kind)} ORDER BY label,id`).all(...params(kind,id));};
+ const list=(kind,id)=>{scope(kind,id);return db.prepare(`SELECT ${columns} FROM ${table(kind)} WHERE ${where(kind)} ORDER BY label,id`).all(...params(kind,id)).map(r=>({...r,generated_key:!!db.prepare('SELECT 1 FROM ssh_setup WHERE connection_id=?').get(r.id)}));};
  const row=(kind,id,cid)=>{scope(kind,id);const r=db.prepare(`SELECT * FROM ${table(kind)} WHERE id=? AND ${where(kind)}`).get(cid,...params(kind,id));if(!r)throw fail(404,'SSH connection not found');return r;};
  function chain(config,requireEnabled=false){
   const hops=[],seen=new Set([config.id]);let current=config;
@@ -78,7 +79,7 @@ function createSshConnections({db,key,namespace,connector=connectSSH,tailnet,mem
   const hops=chain(config,!!options.requireEnabled),handles=[];
   const valid=()=>{if(options.valid&&!options.valid())return false;try{return chain(config,!!options.requireEnabled).every((h,i)=>h.id===hops[i]?.id&&h.updated_at===hops[i]?.updated_at);}catch{return false;}};
   try{let sock;
-   for(let i=0;i<hops.length;i++){if(!valid())throw fail(403,'SSH permission was removed');const next=hops[i+1]||config;const handle=await direct({...hops[i],...(sock?{sock}: {})},{...options,valid,command:undefined,forward:{host:next.host,port:next.port}});handles.push(handle);sock=handle.sock;}
+   for(let i=0;i<hops.length;i++){if(!valid())throw fail(403,'SSH permission was removed');const next=hops[i+1]||config;const handle=await direct({...hops[i],...(sock?{sock}: {})},{...options,probe:false,valid,command:undefined,forward:{host:next.host,port:next.port}});handles.push(handle);sock=handle.sock;}
    if(!valid())throw fail(403,'SSH permission was removed');return await direct({...config,...(sock?{sock}: {})},{...options,valid});
   }finally{for(const handle of handles.reverse())handle.close();}
  }
@@ -100,6 +101,7 @@ function createSshConnections({db,key,namespace,connector=connectSSH,tailnet,mem
   chain(r);
   const changed=!old||['host','port','username','auth_type','fingerprint','private_key','passphrase','password','jump_id'].some(k=>data[k]!==undefined&&data[k]!==old[k]);
   db.prepare(`INSERT INTO ${table(kind)} (id,company_id,project_id,label,host,port,username,auth_type,fingerprint,encrypted,allow_agent,created_at,updated_at,tested_at,tailnet_account,tailnet_device_id,jump_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET label=excluded.label,host=excluded.host,port=excluded.port,username=excluded.username,auth_type=excluded.auth_type,fingerprint=excluded.fingerprint,encrypted=excluded.encrypted,allow_agent=excluded.allow_agent,updated_at=excluded.updated_at,tested_at=excluded.tested_at,jump_id=excluded.jump_id`).run(r.id,r.company_id,r.project_id,r.label.trim(),r.host,r.port,r.username,r.auth_type,r.fingerprint,encrypt(r,secrets),data.allow_agent===undefined?(old?.allow_agent||0):Number(data.allow_agent),old?.created_at||Date.now(),Math.max(Date.now(),(old?.updated_at||0)+1),changed?null:old.tested_at,old?.tailnet_account||network?.account||null,old?.tailnet_device_id||network?.device||null,r.jump_id);
+  if(old&&((data.private_key&&data.private_key!==previous.private_key)||(data.password&&data.password!==previous.password)||(data.auth_type&&data.auth_type!==old.auth_type)))db.prepare('DELETE FROM ssh_setup WHERE connection_id=?').run(r.id);
   return list(kind,id).find(x=>x.id===r.id);
  }
  const hierarchy=require('./hierarchy').createHierarchy(db);
@@ -117,9 +119,54 @@ function createSshConnections({db,key,namespace,connector=connectSSH,tailnet,mem
  const router=express.Router();router.use(express.json({limit:'100kb'}));
  router.use((req,res,next)=>{if(/^\/api\/account\/ssh(?:\/|$)/.test(req.path)){if(!req.workspaceIsOwner)return res.status(403).json({error:'Only the account owner can manage shared SSH connections'});req.url=req.url.replace('/api/account/ssh','/api/owner/0/ssh');}else if(/^\/api\/owner(?:\/|$)/.test(req.path))return res.status(404).json({error:'Not found'});next();});
  router.get('/api/:kind(companies|projects|owner)/:id/ssh',(req,res)=>{scope(req.params.kind,req.params.id);res.json({connections:visible(list(req.params.kind,req.params.id),req.cloudUserId),inherited:visible(inherited(req.params.kind,req.params.id),req.cloudUserId),can_manage_account:!!req.workspaceIsOwner,...(req.workspaceIsOwner?{members:members().map(({id,email,name,status})=>({id,email,name,status}))}:{})});});
+ const setupPath='/api/:kind(companies|projects|owner)/:id/ssh';
+ function setupInfo(kind,id,cid,actor){
+  requireAccess(cid,actor);const r=row(kind,id,cid),setup=db.prepare('SELECT public_key FROM ssh_setup WHERE connection_id=?').get(cid);
+  if(!setup)throw fail(404,'This connection uses an existing key or password');
+  return {connection:visible(list(kind,id).filter(c=>c.id===cid),actor)[0],public_key:setup.public_key,commands:require('./ssh-setup').installCommands(setup.public_key)};
+ }
+ router.post(setupPath+'/setup',async(req,res,next)=>{try{
+  const kind=req.params.kind,id=req.params.id;scope(kind,id);
+  let host=String(req.body.host||'').trim(),username=String(req.body.username||'').trim(),network;
+  if(host.includes('@')){const parts=host.split('@');if(parts.length!==2)throw fail(400,'Enter username@hostname');username=username||parts[0];host=parts[1];}
+  if(!username)throw fail(400,'Enter username@hostname, or an SSH username for the selected machine');
+  host=host.replace(/^\[(.*)\]$/,'$1');
+  if(req.body.tailnet_device_id){if(!tailnet)throw fail(503,'Tailscale is not configured');const peer=await tailnet.device(req.cloudUserId,req.body.tailnet_device_id);network={account:req.cloudUserId,device:peer.id};host=peer.dns_name||peer.addresses[0];}
+  req.revalidateMember?.();
+  const pair=require('./ssh-setup').generateKey();
+  const r=db.transaction(()=>{
+   const saved=save(kind,id,{label:req.body.label||`${username}@${host}`,host,username,port:req.body.port??22,auth_type:'key',private_key:pair.private_key,fingerprint:'',allow_agent:false},undefined,network);
+   db.prepare('INSERT INTO ssh_setup (connection_id,public_key) VALUES (?,?)').run(saved.id,pair.public_key);
+   if(kind==='owner')setAccess(kind,id,saved.id,{mode:'owner',member_ids:[]},req.cloudUserId);
+   return saved;
+  })();
+  res.status(201).json(setupInfo(kind,id,r.id,req.cloudUserId));
+ }catch(e){next(e);}});
+ router.get(setupPath+'/:connectionId/setup',(req,res)=>res.json(setupInfo(req.params.kind,req.params.id,req.params.connectionId,req.cloudUserId)));
+ router.post(setupPath+'/:connectionId/probe',async(req,res,next)=>{try{
+  const {kind,id,connectionId}=req.params;requireAccess(connectionId,req.cloudUserId);const r=row(kind,id,connectionId);
+  if(!db.prepare('SELECT 1 FROM ssh_setup WHERE connection_id=?').get(r.id)||r.fingerprint)throw fail(409,'Use Test connection for a trusted machine');
+  const valid=()=>{try{req.revalidateMember?.();requireAccess(r.id,req.cloudUserId);return row(kind,id,r.id).updated_at===r.updated_at;}catch{return false;}};
+  const found=await execute({...r,...decrypt(r)},{probe:true,valid});
+  if(!valid())throw fail(403,'SSH permission or connection settings changed');
+  db.prepare('UPDATE ssh_setup SET discovered_fingerprint=?,discovered_at=?,connection_revision=? WHERE connection_id=?').run(found.fingerprint,Date.now(),r.updated_at,r.id);
+  res.json({fingerprint:found.fingerprint,host:r.host,port:r.port});
+ }catch(e){next(e);}});
+ router.post(setupPath+'/:connectionId/activate',async(req,res,next)=>{try{
+  const {kind,id,connectionId}=req.params;requireAccess(connectionId,req.cloudUserId);const r=row(kind,id,connectionId),setup=db.prepare('SELECT * FROM ssh_setup WHERE connection_id=?').get(r.id);
+  if(!setup||r.fingerprint||!setup.discovered_at||Date.now()-setup.discovered_at>10*60*1000||setup.connection_revision!==r.updated_at||req.body.fingerprint!==setup.discovered_fingerprint)throw fail(409,'Check the connection again before trusting this machine');
+  if(typeof req.body.allow_agent!=='boolean')throw fail(400,'Choose whether Work agents can use this machine');
+  const valid=()=>{try{req.revalidateMember?.();requireAccess(r.id,req.cloudUserId);return row(kind,id,r.id).updated_at===r.updated_at;}catch{return false;}};
+  await execute({...r,...decrypt(r),fingerprint:setup.discovered_fingerprint},{valid});
+  if(!valid())throw fail(403,'SSH permission or connection settings changed');
+  save(kind,id,{fingerprint:setup.discovered_fingerprint,allow_agent:req.body.allow_agent},r.id);
+  db.prepare(`UPDATE ${table(kind)} SET tested_at=? WHERE id=?`).run(Date.now(),r.id);
+  db.prepare('UPDATE ssh_setup SET discovered_fingerprint=NULL,discovered_at=NULL,connection_revision=NULL WHERE connection_id=?').run(r.id);
+  res.json({connected:true,...setupInfo(kind,id,r.id,req.cloudUserId)});
+ }catch(e){next(e);}});
  router.post('/api/:kind(companies|projects|owner)/:id/ssh',async(req,res,next)=>{try{let network;if(req.body.tailnet_device_id){if(!tailnet)throw fail(503,'Tailscale is not configured');const peer=await tailnet.device(req.cloudUserId,req.body.tailnet_device_id);network={account:req.cloudUserId,device:peer.id};req.body.host=peer.dns_name||peer.addresses[0];}req.revalidateMember?.();res.status(201).json(save(req.params.kind,req.params.id,req.body,undefined,network));}catch(e){next(e);}});
  router.patch('/api/:kind(companies|projects|owner)/:id/ssh/:connectionId',(req,res)=>{requireAccess(req.params.connectionId,req.cloudUserId);res.json(req.body.access!==undefined&&Object.keys(req.body).length===1?setAccess(req.params.kind,req.params.id,req.params.connectionId,req.body.access,req.cloudUserId):save(req.params.kind,req.params.id,req.body,req.params.connectionId));});
- router.delete('/api/:kind(companies|projects|owner)/:id/ssh/:connectionId',(req,res)=>{requireAccess(req.params.connectionId,req.cloudUserId);const r=row(req.params.kind,req.params.id,req.params.connectionId);db.transaction(()=>{db.prepare(`DELETE FROM ${table(req.params.kind)} WHERE id=?`).run(r.id);db.prepare('DELETE FROM ssh_access WHERE connection_id=?').run(r.id);})();res.json({ok:true});});
+ router.delete('/api/:kind(companies|projects|owner)/:id/ssh/:connectionId',(req,res)=>{requireAccess(req.params.connectionId,req.cloudUserId);const r=row(req.params.kind,req.params.id,req.params.connectionId);db.transaction(()=>{db.prepare(`DELETE FROM ${table(req.params.kind)} WHERE id=?`).run(r.id);db.prepare('DELETE FROM ssh_access WHERE connection_id=?').run(r.id);db.prepare('DELETE FROM ssh_setup WHERE connection_id=?').run(r.id);})();res.json({ok:true});});
  router.post('/api/:kind(companies|projects|owner)/:id/ssh/:connectionId/test',async(req,res,next)=>{try{
   const resolve=()=>{requireAccess(req.params.connectionId,req.cloudUserId);scope(req.params.kind,req.params.id);const shared=inherited(req.params.kind,req.params.id).find(c=>c.id===req.params.connectionId);return shared?row(shared.company_id==null?'owner':'companies',shared.company_id||0,shared.id):row(req.params.kind,req.params.id,req.params.connectionId);};
   const r=resolve(),valid=()=>{try{req.revalidateMember?.();return resolve().updated_at===r.updated_at;}catch{return false;}};
