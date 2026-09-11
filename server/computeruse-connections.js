@@ -9,7 +9,7 @@ function trustedOrigin(value){
 // Only fixed paths on the configured service origin receive the encrypted key.
 async function requestDesktop(origin,token,command,data){
  const paths={account:'/api/v1/account',desktops:'/api/v1/desktops'};
- if(!paths[command]&&!['status','screenshot','lease','release','action'].includes(command))throw fail(400,'Unsupported desktop command');
+ if(!paths[command]&&!['status','screenshot','lease','release','action','login'].includes(command))throw fail(400,'Unsupported desktop command');
  try{
   const r=await fetch(origin+(paths[command]||'/api/v1/desktops/'+command),{method:paths[command]?'GET':'POST',headers:{Authorization:'Bearer '+token,Accept:command==='screenshot'?'image/jpeg':'application/json','Content-Type':'application/json'},body:paths[command]?undefined:JSON.stringify(data),redirect:'error',signal:AbortSignal.timeout(25000)});
   if(!r.ok){const messages={401:'Reconnect ComputerUse: the API key expired or was revoked.',403:'ComputerUse denied access. Check ownership and account:read, desktop:read and desktop:write scopes.',409:'Desktop is busy or under human control. Hand back control in ComputerUse, or wait for the other agent to finish.'};throw fail(r.status,messages[r.status]||'ComputerUse is unavailable. An input may already have occurred; observe before retrying.');}
@@ -22,7 +22,7 @@ async function requestAccount(origin,token){
  const a=await requestDesktop(origin,token,'account');
  const d=await requestDesktop(origin,token,'desktops');return {...a,desktops:d.desktops};
 }
-function createComputerUseConnections({db,key,namespace,origin='',request=requestAccount,desktopRequest=requestDesktop}){
+function createComputerUseConnections({db,key,namespace,origin='',request=requestAccount,desktopRequest=requestDesktop,onepassword}){
  origin=trustedOrigin(origin);
  db.exec(`CREATE TABLE IF NOT EXISTS cu_account_connection(id INTEGER PRIMARY KEY CHECK(id=1),revision TEXT NOT NULL,encrypted TEXT,account_id TEXT,updated_at INTEGER NOT NULL);
  CREATE TABLE IF NOT EXISTS cu_assignments(id INTEGER PRIMARY KEY,company_id INTEGER UNIQUE REFERENCES companies(id) ON DELETE CASCADE,board_id INTEGER UNIQUE REFERENCES boards(id) ON DELETE CASCADE,rental_ids TEXT NOT NULL,allow_agent INTEGER NOT NULL DEFAULT 0,revision TEXT NOT NULL,updated_at INTEGER NOT NULL,CHECK((company_id IS NULL)!=(board_id IS NULL)));`);
@@ -81,7 +81,7 @@ function createComputerUseConnections({db,key,namespace,origin='',request=reques
  // A lease belongs to one Work run, never to every agent sharing the API key.
  const leases=new Map(),busy=new Set(),uncertain=new Set();
  async function controlForAgent(id,actor,runId,command,data,valid=()=>{}){
-  if(!['status','screenshot','action','release'].includes(command)||!identifier(data?.desktop_id)||!identifier(runId))throw fail(400,'Invalid desktop request');
+  if(!['status','screenshot','action','release','logins','login'].includes(command)||!identifier(data?.desktop_id)||!identifier(runId))throw fail(400,'Invalid desktop request');
   const desktopId=data.desktop_id;
   if(busy.has(desktopId))throw fail(409,'Another desktop operation is in progress');busy.add(desktopId);
   try{
@@ -91,6 +91,7 @@ function createComputerUseConnections({db,key,namespace,origin='',request=reques
    const check=()=>{valid();unchanged(revision);if(signature('project',id)!==scope||!enabled(id))throw fail(403,'Computer assignment changed');};
    check();const token=decrypt(connection()),send=async(c,d)=>{check();const result=await desktopRequest(origin,token,c,{desktop_id:desktopId,...d});check();return result;};
    if(command==='status')return await send('status',{});
+   if(command==='logins')return {logins:onepassword?.forAgent(id)||[]};
    if(!assignment('project',id).allow_control)throw fail(403,'Enable desktop control in the company or project computer assignment.');
    let held=leases.get(desktopId);
    if(held&&held.expires*1000<=Date.now()){leases.delete(desktopId);held=null;}
@@ -98,11 +99,15 @@ function createComputerUseConnections({db,key,namespace,origin='',request=reques
    if(command==='release'){
     if(!held)return {released:false};try{return await send('release',{lease:held.lease});}finally{leases.delete(desktopId);}
    }
-   if(command==='action'&&uncertain.has(desktopId))throw fail(409,'Previous input outcome is uncertain. Take a fresh screenshot before choosing another action.');
+   if(['action','login'].includes(command)&&uncertain.has(desktopId))throw fail(409,'Previous input outcome is uncertain. Take a fresh screenshot before choosing another action.');
    const lease=await send('lease',held?{lease:held.lease}:{});
    if(typeof lease.lease!=='string'||!Number.isSafeInteger(lease.expires))throw fail(503,'Invalid desktop lease');
    leases.set(desktopId,{runId,projectId:id,actor,revision,lease:lease.lease,expires:lease.expires});
    if(command==='screenshot'){const image=await send('screenshot',{});uncertain.delete(desktopId);return image;}
+   if(command==='login'){
+    if(!onepassword||!identifier(data.login_id)||typeof data.operation_id!=='string'||!/^[-0-9a-f]{36}$/.test(data.operation_id))throw fail(400,'Choose an approved login and operation ID.');
+    try{return await onepassword.use({projectId:id,actor,desktopId,loginId:data.login_id,operationId:data.operation_id,mode:data.mode,field:data.field,valid:check,send:(payload,v)=>{v();return send('login',{lease:lease.lease,...payload});}});}catch(e){uncertain.add(desktopId);throw e;}
+   }
    if(typeof data.operation_id!=='string'||!/^[0-9a-f-]{36}$/.test(data.operation_id)||!data.action||JSON.stringify(data.action).length>20000)throw fail(400,'Invalid desktop action');
    try{return await send('action',{lease:lease.lease,operation_id:data.operation_id,action:data.action});}catch(e){uncertain.add(desktopId);throw e;}
   }finally{busy.delete(desktopId);}

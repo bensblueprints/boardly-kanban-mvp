@@ -1,7 +1,7 @@
 {
   "name": "boardly",
   "version": "1.9.0",
-  "description": "Self-hosted kanban board. Pay once, own it forever \u2014 no Trello per-seat subscription.",
+  "description": "Self-hosted kanban board. Pay once, own it forever — no Trello per-seat subscription.",
   "author": "Ben (bensblueprints) <ben@onetimesuite.com>",
   "homepage": "https://boardly.onetimesuite.com",
   "license": "MIT",
@@ -38,6 +38,7 @@
     "test:management": "node test/management-api.js"
   },
   "dependencies": {
+    "@1password/sdk": "0.5.0",
     "@clerk/backend": "3.17.1",
     "@clerk/express": "2.1.66",
     "@clerk/react": "6.15.1",

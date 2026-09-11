@@ -13,4 +13,4 @@ async function screenshot({desktop_id}){
  const raw=Buffer.from(r.image_url.split(',')[1],'base64');if(raw.length>2000000||raw[0]!==255||raw[1]!==216)throw Error('Invalid desktop image');
  const file=path.join(directory,crypto.randomUUID()+'.jpg');fs.writeFileSync(file,raw,{mode:0o600,flag:'wx'});return {path:file,desktop_id};
 }
-module.exports={list:()=>request('list'),status:data=>request('status',data),screenshot,action:({desktop_id,action,operation_id=crypto.randomUUID()})=>request('action',{desktop_id,action,operation_id}),release:data=>request('release',data)};
+module.exports={logins:data=>request('logins',data),login:({desktop_id,login_id,mode,field,operation_id=crypto.randomUUID()})=>request('login',{desktop_id,login_id,mode,field,operation_id}),list:()=>request('list'),status:data=>request('status',data),screenshot,action:({desktop_id,action,operation_id=crypto.randomUUID()})=>request('action',{desktop_id,action,operation_id}),release:data=>request('release',data)};

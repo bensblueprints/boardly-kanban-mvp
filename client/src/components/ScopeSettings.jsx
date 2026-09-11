@@ -3,6 +3,7 @@ import {Building2,FolderCog,Users,Plug,Download,Trash2} from 'lucide-react';
 import {api} from '../api.js';
 import SettingsShell,{settingsButton,settingsInput,accountSettings} from './SettingsShell.jsx';
 import ConnectorCatalog,{connectorDefinitions} from './ConnectorCatalog.jsx';
+import OnePasswordConnection from './OnePasswordConnection.jsx';
 import Members from './Members.jsx';
 import GithubConnection from './GithubConnection.jsx';
 import SshConnections from './SshConnections.jsx';
@@ -29,8 +30,8 @@ function GeneralSettings({kind,entity,owner,onSaved,onBack,onExport}){
 
 export default function ScopeSettings({kind,entity,section='general',owner,can,onSaved,onBack,onExport}){
  const company=kind==='company',scope=company?'Company':'Project',apiKind=company?'companies':'projects';
- const allowed=id=>id==='emails'?company&&owner:can(id==='computeruse'?'computers':id);
- const connectors=connectorDefinitions.filter(c=>(company?['github','computeruse','ssh','emails']:['github','computeruse','ssh','environment','payments']).includes(c.id)&&allowed(c.id));
+ const allowed=id=>id==='onepassword'?owner:id==='emails'?company&&owner:can(id==='computeruse'?'computers':id);
+ const connectors=connectorDefinitions.filter(c=>(company?['github','computeruse','ssh','emails','onepassword']:['github','computeruse','ssh','environment','payments','onepassword']).includes(c.id)&&allowed(c.id));
  const sections=[
   {id:'general',label:'General',icon:company?Building2:FolderCog,description:`Name, ${company?'organization':'description and export'} and ${scope.toLowerCase()} management.`},
   ...(can('members')?[{id:'members',label:'Team & permissions',icon:Users,description:company?'Manage company members and the permissions they inherit in its projects.':'Manage project-only members and review inherited company access.'}]:[]),
@@ -43,6 +44,7 @@ export default function ScopeSettings({kind,entity,section='general',owner,can,o
   {section==='members'&&can('members')&&<Members embedded kind={apiKind} id={entity.id}/>}
   {section==='connectors'&&<><ConnectorCatalog key={kind+entity.id} scope={kind} entityId={entity.id} allowed={allowed} onSelect={select}/>{!connectors.length&&<p className="text-sm text-zinc-400">Ask the account owner for the connector permissions you need. Your project access is unchanged.</p>}{owner&&<button className={settingsButton} onClick={()=>accountSettings('connectors')}>Manage reusable account connections</button>}</>}
   {allowed(section)&&<>
+   {section==='onepassword'&&owner&&<OnePasswordConnection kind={kind} id={entity.id}/>}
    {section==='github'&&<GithubConnection kind={apiKind} id={entity.id}/>}
    {section==='ssh'&&<SshConnections kind={apiKind} id={entity.id}/>}
    {section==='computeruse'&&<ComputerUseAssignment kind={apiKind} id={entity.id}/>}

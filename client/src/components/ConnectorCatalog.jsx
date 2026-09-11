@@ -4,6 +4,7 @@ import {api} from '../api.js';
 import {settingsButton,settingsInput} from './SettingsShell.jsx';
 
 export const connectorDefinitions=[
+ {id:'onepassword',label:'1Password',icon:KeyRound,scope:'Account → Company → Project',category:'Passwords',description:'Fill approved account logins on ComputerUse desktops.',guide:'Connect a vault service account, approve login items and websites, then grant access to selected companies or projects.'},
  {id:'ai',label:'ChatGPT & OpenAI',icon:BrainCircuit,scope:'Account',category:'AI',description:'Power your agents with a ChatGPT connection or OpenAI API key.',guide:'Connect in your account. AI work in shared companies uses the company owner’s funding.'},
  {id:'github',label:'GitHub',icon:Github,scope:'Account → Company → Project',category:'Code',description:'Give Work agents access to a repository and branch.',guide:'Save an account token once. Choose a company repository; projects inherit it unless they have their own.'},
  {id:'computeruse',label:'ComputerUse',icon:Monitor,scope:'Account → Company → Project',category:'Computers',description:'Assign desktops for browser work and computer automation.',guide:'Connect your ComputerUse API key once. Assign computers per company, then inherit or override in each project.'},
@@ -19,6 +20,7 @@ const saved=(yes,label='Configured')=>({configured:!!yes,label:yes?label:'Not co
 // provider or a remote device is online; the detail page performs explicit tests.
 function statusRequest(id,scope,entityId){
  const base=scope==='company'?`/api/companies/${entityId}`:`/api/projects/${entityId}`;
+ if(id==='onepassword')return [scope==='account'?'/api/account/onepassword':base+'/onepassword',d=>saved(scope==='account'?d.saved:d.saved&&(d.login_ids?.length||d.inherited_ids?.length),scope==='account'?'Vault connected':'Logins approved')];
  if(id==='ai')return ['/api/ai/settings',d=>saved(d.mode!=='none','AI configured')];
  if(id==='github')return scope==='account'?['/api/account/github',d=>saved(d.has_token,'Token saved')]:[base+'/github',d=>saved(d.effective,d.effective?.inherited?'Inherited from company':'Repository assigned')];
  if(id==='computeruse')return scope==='account'?['/api/account/computeruse',d=>saved(d.saved,'API key saved')]:[base+'/computeruse',d=>({configured:!!d.rental_ids?.length,label:d.rental_ids?.length?`${d.rental_ids.length} assigned${d.inherited?' · inherited':''}`:d.saved?'Choose computers':'Account connection needed'})];
@@ -32,7 +34,7 @@ function statusRequest(id,scope,entityId){
 }
 export default function ConnectorCatalog({scope='account',entityId,allowed=()=>true,onSelect,onChooseScope,platformOwner=false}){
  const [query,setQuery]=useState(''),[filter,setFilter]=useState('all'),[statuses,setStatuses]=useState({}),[revision,setRevision]=useState(0);
- const ids=connectorDefinitions.filter(c=>scope==='account'?true:scope==='company'?['github','computeruse','ssh','emails'].includes(c.id):['github','computeruse','ssh','environment','payments'].includes(c.id)).filter(c=>allowed(c.id));
+ const ids=connectorDefinitions.filter(c=>scope==='account'?true:scope==='company'?['github','computeruse','ssh','emails','onepassword'].includes(c.id):['github','computeruse','ssh','environment','payments','onepassword'].includes(c.id)).filter(c=>allowed(c.id));
  const signature=ids.map(c=>c.id).join(',');
  useEffect(()=>{let active=true;setStatuses({});Promise.allSettled(ids.map(async c=>{const elsewhere=scope==='account'&&['emails','environment','payments'].includes(c.id);if(elsewhere)return [c.id,{label:c.id==='emails'?'Choose a company':'Choose a project',elsewhere:true}];if(c.id==='mcp'&&!platformOwner)return[c.id,{label:'Platform owner only',restricted:true}];const request=statusRequest(c.id,scope,entityId);if(!request)return[c.id,{label:'Project configuration'}];try{const value=await api.get(request[0]);return[c.id,c.id==='ai'&&platformOwner&&value.mode==='none'?{configured:true,label:'Codex worker configured'}:request[1](value)];}catch(e){return[c.id,{label:e.status===403?'Permission required':'Status unavailable',error:e.message}];}})).then(results=>{if(active)setStatuses(Object.fromEntries(results.filter(r=>r.status==='fulfilled').map(r=>r.value)));});return()=>{active=false;};},[scope,entityId,signature,platformOwner,revision]);
  const visible=ids.filter(c=>(c.label+' '+c.category+' '+c.description+' '+c.guide).toLowerCase().includes(query.toLowerCase().trim())&&(filter==='all'||(filter==='configured'?statuses[c.id]?.configured:!statuses[c.id]?.configured)));

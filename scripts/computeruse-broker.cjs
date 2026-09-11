@@ -4,7 +4,7 @@ async function createComputerUseBroker({socketPath,request,onActivity=()=>{}}){
  const server=http.createServer(async(req,res)=>{
   res.setHeader('content-type','application/json');res.setHeader('cache-control','no-store');
   try{
-   if(req.method!=='POST'||!['/list','/status','/screenshot','/action','/release'].includes(req.url))throw Error('Unknown computer action');
+   if(req.method!=='POST'||!['/list','/status','/screenshot','/action','/release','/logins','/login'].includes(req.url))throw Error('Unknown computer action');
    let raw='';for await(const part of req){raw+=part;if(Buffer.byteLength(raw)>25000)throw Error('Request too large');}
    const command=req.url.slice(1),key='computer:'+ ++count;onActivity(key,'Computer · '+command,'running');
    const call=request(command,JSON.parse(raw||'{}'));pending.add(call);
