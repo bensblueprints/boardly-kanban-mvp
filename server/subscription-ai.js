@@ -16,7 +16,7 @@ function createSubscriptionAI({db,ownerId,canEdit,connections}) {
     if(!online())throw fail('The company owner’s subscription worker is offline. Ask the owner to reconnect it.');
     const id=crypto.randomUUID(),now=Date.now(),row={job_id:jobId,actor_id:actor};
     if(!live(row))throw fail('Run stopped or project access was removed');
-    if(Buffer.byteLength(JSON.stringify(payload))>500000)throw fail('This conversation is too large. Start a new conversation.');
+    if(Buffer.byteLength(JSON.stringify(payload))>4000000)throw fail('This conversation is too large. Start a new conversation.');
     db.prepare("INSERT INTO subscription_requests(id,job_id,payer_id,actor_id,model,status,payload,created_at,updated_at) VALUES (?,?,?,?,?,'queued',?,?,?)")
       .run(id,jobId,ownerId,actor,payload.model,JSON.stringify(payload),now,now);
     try{

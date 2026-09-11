@@ -1,0 +1,3 @@
+FROM boardly-cloud:activity-animation-ae0105b
+COPY --chown=node:node server/computeruse-connections.js server/hosted-ai.js server/subscription-ai.js server/project-chat.js server/cloud.js /app/server/
+COPY --chown=node:node dist /app/dist

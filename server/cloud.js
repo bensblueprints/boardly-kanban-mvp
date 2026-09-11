@@ -58,7 +58,7 @@ function accessFor(auth, config) {
   return plan ? { status: 200, plan } : { status: 403, error: 'An active Boardly subscription is required' };
 }
 
-function createCloudApp(config = readCloudConfig(), { emailConnector, identityClient, providerRequest, githubRequest, computeruseRequest } = {}) {
+function createCloudApp(config = readCloudConfig(), { emailConnector, identityClient, providerRequest, githubRequest, computeruseRequest, computeruseDesktopRequest } = {}) {
   const { createConnections } = require('./connections');
   const { createSyncHub } = require('./sync/hub');
   const { createProjectChat } = require('./project-chat');
@@ -151,10 +151,10 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
       tenant.payments=createProjectPayments({db:local.db,key:projectKey,namespace:ownerId});
       tenant.email=require('./company-email').createCompanyEmail({db:local.db,key:projectKey,namespace:ownerId,connector:emailConnector});
       tenant.ssh=require('./ssh-connections').createSshConnections({db:local.db,key:projectKey,namespace:ownerId,tailnet,members:()=>memberships.db.prepare("SELECT id,user_id,email,name,status FROM account_members WHERE owner_id=? AND status!='provisioning'").all(ownerId)});
-      tenant.computeruse=require('./computeruse-connections').createComputerUseConnections({db:local.db,key:projectKey,namespace:ownerId,origin:config.computeruseOrigin,request:computeruseRequest});
+      tenant.computeruse=require('./computeruse-connections').createComputerUseConnections({db:local.db,key:projectKey,namespace:ownerId,origin:config.computeruseOrigin,request:computeruseRequest,desktopRequest:computeruseDesktopRequest});
       tenant.github=require('./github-connections').createGithubConnections({db:local.db,key:projectKey,namespace:ownerId,request:githubRequest});
       tenant.teamChat=require('./company-chat').createCompanyChat(local.db);
-      tenant.chat=createProjectChat({db:local.db,connections,userId:ownerId,uploadsDir:tenant.uploadsDir,environment:tenant.environment,payments:tenant.payments,email:tenant.email,ssh:tenant.ssh,github:tenant.github,canUseGithub:(actor,id)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).capabilities('project',id).includes('github'),canUseSsh:(actor,id)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).capabilities('project',id).includes('ssh')});
+      tenant.chat=createProjectChat({db:local.db,connections,userId:ownerId,uploadsDir:tenant.uploadsDir,environment:tenant.environment,payments:tenant.payments,email:tenant.email,ssh:tenant.ssh,github:tenant.github,computeruse:tenant.computeruse,canUseComputers:(actor,id)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).capabilities('project',id).includes('computers'),canUseGithub:(actor,id)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).capabilities('project',id).includes('github'),canUseSsh:(actor,id)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).capabilities('project',id).includes('ssh')});
       const canEdit=(actor,id)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).project(id)==='editor';
       tenant.subscription=require('./subscription-ai').createSubscriptionAI({db:local.db,ownerId,canEdit,connections});
       const funded={...personal,authorize:async(actor)=>{

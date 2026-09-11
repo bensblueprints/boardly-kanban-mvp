@@ -35,7 +35,7 @@ function createChatGPTService({root,token,command='codex',spawnProcess=spawn,log
   child.stdin.on('error',()=>{});child.stderr.resume();
   readline.createInterface({input:child.stdout}).on('line',line=>{
    let msg;try{msg=JSON.parse(line);}catch{return;}
-   if(msg.id!==undefined&&pending.has(msg.id)){const r=pending.get(msg.id);pending.delete(msg.id);clearTimeout(r.timer);if(msg.error)r.reject(fail(502,'OpenAI could not complete sign-in. Enable device-code login in ChatGPT Settings → Security, then try again.'));else r.resolve(msg.result);}
+   if(msg.id!==undefined&&pending.has(msg.id)){const r=pending.get(msg.id);pending.delete(msg.id);clearTimeout(r.timer);if(msg.error){const network=/error sending request|certificate|timed out|connection refused/i.test(msg.error.message||'');r.reject(fail(network?503:400,network?'boredly could not reach OpenAI sign-in. Please retry shortly.':'OpenAI could not complete sign-in. Enable device-code login in ChatGPT Settings → Security, then try again.'));}else r.resolve(msg.result);}
    else if(msg.method==='account/login/completed'&&p.pending?.login_id===msg.params?.loginId){p.pending=null;p.error=msg.params.success?null:'ChatGPT sign-in was not completed. Start a new code and approve it in OpenAI.';}
    // No tool/approval request is ever forwarded or approved.
   });
@@ -73,7 +73,7 @@ function createChatGPTService({root,token,command='codex',spawnProcess=spawn,log
   return{connected:false,pending:null,verified_at:null};
  });}
  async function respond(p,payload){
-  if(!payload||!Array.isArray(payload.input)||!Array.isArray(payload.tools)||!['gpt-6-astra','gpt-5.6-sol','gpt-5.6-terra'].includes(payload.model)||Buffer.byteLength(JSON.stringify(payload))>500000)throw fail(400,'This conversation is too large or its model is unsupported');
+  if(!payload||!Array.isArray(payload.input)||!Array.isArray(payload.tools)||!['gpt-6-astra','gpt-5.6-sol','gpt-5.6-terra'].includes(payload.model)||Buffer.byteLength(JSON.stringify(payload))>4000000)throw fail(400,'This conversation is too large or its model is unsupported');
   const reservation={pid:null};let generation,temp,out,child,timer,usage={},reserved=false;
   try{
    await serialize(p,async()=>{
@@ -85,13 +85,14 @@ function createChatGPTService({root,token,command='codex',spawnProcess=spawn,log
    });
    if(closed||generation!==p.generation)throw fail(401,'ChatGPT was disconnected. Reconnect before resuming.');
    const schemaFile=path.join(temp,'schema.json');fs.writeFileSync(schemaFile,JSON.stringify(schema),{mode:0o600});
-   const args=['exec','--ignore-user-config','--ignore-rules','--ephemeral','--json','--skip-git-repo-check','--sandbox','read-only',...safeConfig(),'--model',payload.model,'--output-schema',schemaFile,'-o',out,'-'];
+   const images=require('./response-images.cjs').responseImages(payload,temp);
+   const args=['exec','--ignore-user-config','--ignore-rules','--ephemeral','--json','--skip-git-repo-check','--sandbox','read-only',...safeConfig(),'--model',payload.model,'--output-schema',schemaFile,'-o',out,...images.args,'-'];
    child=spawnProcess(command,args,{cwd:temp,env:environment(p),detached:true,stdio:['pipe','pipe','pipe']});p.runs.delete(reservation);p.runs.add(child);
    let reason=null;timer=setTimeout(()=>{reason='ChatGPT took too long to reply. Try a shorter request or resume your saved assignment.';kill(child);},runTimeout);
    const completion=new Promise(resolve=>{child.once('error',()=>resolve(1));child.once('close',resolve);});
    child.stdin.on('error',()=>{});child.stderr.resume();
    readline.createInterface({input:child.stdout}).on('line',line=>{try{const event=JSON.parse(line);if(event.type==='turn.completed')usage=event.usage||{};if(event.type==='error'||event.type==='turn.failed'){const message=JSON.stringify(event);if(/usage.limit|rate.limit|quota|429|limit reached/i.test(message))reason='Your ChatGPT usage limit was reached. Check your ChatGPT plan and try again when it resets.';else if(/401|unauthorized|refresh.token|sign.in|authentication/i.test(message))reason='Your ChatGPT connection needs sign-in again. Disconnect and reconnect in Account & AI.';}}catch{}});
-   child.stdin.end('Generate the next response for this boredly conversation. You have no execution tools. Return only the requested JSON. Follow the developer instructions within the supplied tool catalog. To request an action, put its catalog name and JSON-encoded arguments in calls. boredly validates and executes these separately. Never claim an action occurred before its function_call_output confirms it. Use no calls for a final answer.\n'+JSON.stringify(payload));
+   child.stdin.end('Generate the next response for this boredly conversation. You have no execution tools. Return only the requested JSON. Follow the developer instructions within the supplied tool catalog. To request an action, put its catalog name and JSON-encoded arguments in calls. boredly validates and executes these separately. Never claim an action occurred before its function_call_output confirms it. Use no calls for a final answer.\n'+JSON.stringify(images.payload));
    const code=await completion;
    if(generation!==p.generation)throw fail(401,'ChatGPT was disconnected. Reconnect before resuming.');
    if(code!==0)throw fail(502,reason||'ChatGPT could not reply. Test the connection in Account & AI and check access to the selected model.');
@@ -113,7 +114,7 @@ function createChatGPTService({root,token,command='codex',spawnProcess=spawn,log
   const match=/^\/accounts\/([a-f0-9]{64})\/(status|login|cancel|disconnect|respond|test)$/.exec(req.url);
   if(!match||req.method!==(match[2]==='status'?'GET':'POST'))return send(404,{error:'Not found'});
   try{
-   let raw='';for await(const chunk of req){raw+=chunk;if(Buffer.byteLength(raw)>550000)throw fail(413,'Request too large');}
+   let raw='';for await(const chunk of req){raw+=chunk;if(Buffer.byteLength(raw)>4100000)throw fail(413,'Request too large');}
    const p=profile(match[1]),action=match[2],body=raw?JSON.parse(raw):{};
    const result=await({status:()=>serialize(p,()=>status(p)),login:()=>login(p),cancel:()=>cancel(p),disconnect:()=>disconnect(p),respond:()=>respond(p,body),test:()=>test(p)})[action]();send(200,result);
   }catch(e){send(e.status||502,{error:e.status?e.message:'The ChatGPT connector could not complete this request'});}

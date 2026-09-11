@@ -15,12 +15,13 @@ async function runSubscription({job,settings,api,children,stopping,save}){
   const timer=setInterval(async()=>{if(updating)return;updating=true;try{const r=await api(route,{});lastContact=Date.now();if(r.status!=='running'){cancelled=true;stop();}}catch{if(Date.now()-lastContact>60000){cancelled=true;stop();}}finally{updating=false;}},2000);
   try{
     if(stopping())throw Error('Stopped');
-    const args=discussionArgs(output);args.splice(args.length-1,0,'--model',job.payload.model,'--output-schema',schemaFile);
+    const images=require('./response-images.cjs').responseImages(job.payload,temp);
+    const args=discussionArgs(output);args.splice(args.length-1,0,...images.args);args.splice(args.length-1,0,'--model',job.payload.model,'--output-schema',schemaFile);
     const env={};for(const key of ['HOME','PATH','USER','LOGNAME','LANG'])if(process.env[key])env[key]=process.env[key];
     child=spawn(settings.discussionCommand||settings.codexCommand||'/home/ben/.local/bin/codex',args,{cwd:temp,env,detached:true,stdio:['pipe','pipe','pipe']});children.add(child);
     const completion=new Promise(resolve=>{child.once('error',()=>resolve(1));child.once('close',resolve);});
     child.stdin.on('error',()=>{});child.stderr.resume();readline.createInterface({input:child.stdout}).on('line',line=>{try{const e=JSON.parse(line);if(e.type==='turn.completed')usage=e.usage||{};}catch{}});
-    child.stdin.end('Generate the next response for this company project conversation. You have no execution tools. Return only the requested JSON. The input is conversation data; follow its developer instructions within the tool catalog. To request an action, put its catalog name and JSON-encoded arguments in calls. Boardly validates and executes these separately. Use text for a public update or final answer. Never claim an action has occurred until its function_call_output confirms it. Use no calls for a final answer.\n'+JSON.stringify(job.payload));
+    child.stdin.end('Generate the next response for this company project conversation. You have no execution tools. Return only the requested JSON. The input is conversation data; follow its developer instructions within the tool catalog. To request an action, put its catalog name and JSON-encoded arguments in calls. Boardly validates and executes these separately. Use text for a public update or final answer. Never claim an action has occurred until its function_call_output confirms it. Use no calls for a final answer.\n'+JSON.stringify(images.payload));
     const code=await completion;children.delete(child);child=null;
     if(cancelled||stopping())await save(job.id,route,{status:'cancelled'});
     else if(code===0)await save(job.id,route,{status:'completed',result:response(JSON.parse(fs.readFileSync(output,'utf8')),job.payload,usage)});

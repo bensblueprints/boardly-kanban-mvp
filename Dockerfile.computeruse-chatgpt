@@ -1,0 +1,2 @@
+FROM boardly-chatgpt:5b8b58f
+COPY --chown=node:node scripts/chatgpt-service.cjs scripts/response-images.cjs /app/
