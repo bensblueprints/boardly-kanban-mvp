@@ -58,7 +58,7 @@ function accessFor(auth, config) {
   return plan ? { status: 200, plan } : { status: 403, error: 'An active Boardly subscription is required' };
 }
 
-function createCloudApp(config = readCloudConfig(), { emailConnector, identityClient, providerRequest, githubRequest, computeruseRequest, computeruseDesktopRequest, onepasswordClient } = {}) {
+function createCloudApp(config = readCloudConfig(), { emailConnector, identityClient, providerRequest, githubRequest, computeruseRequest, computeruseDesktopRequest, onepasswordClient, providerConnectorRequest, mediaRequest } = {}) {
   const { createConnections } = require('./connections');
   const { createSyncHub } = require('./sync/hub');
   const { createProjectChat } = require('./project-chat');
@@ -89,9 +89,9 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
   const memberships = require('./memberships').createMemberships(config.dataDir);
   const {planFor,createPlanService,PLANS} = require('./account-plans');
   const planService = createPlanService(config,identity);
-  const personal=require('./personal-ai').createPersonalAI({config,key:projectKey,request:providerRequest});
-  const chatgpt=require('./chatgpt').createChatGPT(config.chatgpt,personal);
   const tailnet=require('./tailnet').createTailnet(config.tailnet||{url:process.env.BOARDLY_TAILNET_URL,token:process.env.BOARDLY_TAILNET_TOKEN_FILE?fs.readFileSync(process.env.BOARDLY_TAILNET_TOKEN_FILE,'utf8').trim():undefined});
+  const personal=require('./personal-ai').createPersonalAI({config,key:projectKey,request:providerRequest,tailnet,providerConnectorRequest});
+  const chatgpt=require('./chatgpt').createChatGPT(config.chatgpt,personal);
   app.use(personal.billing.webhook);
   const dist = path.join(__dirname, '..', 'dist');
   // The public homepage is independent of Clerk availability and sessions.
@@ -151,11 +151,12 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
       tenant.payments=createProjectPayments({db:local.db,key:projectKey,namespace:ownerId});
       tenant.email=require('./company-email').createCompanyEmail({db:local.db,key:projectKey,namespace:ownerId,connector:emailConnector});
       tenant.ssh=require('./ssh-connections').createSshConnections({db:local.db,key:projectKey,namespace:ownerId,tailnet,members:()=>memberships.db.prepare("SELECT id,user_id,email,name,status FROM account_members WHERE owner_id=? AND status!='provisioning'").all(ownerId)});
+      tenant.media=require('./media-connectors').createMediaConnectors({db:local.db,key:projectKey,namespace:ownerId,request:mediaRequest});
       tenant.onepassword=require('./onepassword').createOnePassword({db:local.db,key:projectKey,namespace:ownerId,client:onepasswordClient});
       tenant.computeruse=require('./computeruse-connections').createComputerUseConnections({db:local.db,key:projectKey,namespace:ownerId,origin:config.computeruseOrigin,request:computeruseRequest,desktopRequest:computeruseDesktopRequest,onepassword:tenant.onepassword});
       tenant.github=require('./github-connections').createGithubConnections({db:local.db,key:projectKey,namespace:ownerId,request:githubRequest});
       tenant.teamChat=require('./company-chat').createCompanyChat(local.db);
-      tenant.chat=createProjectChat({db:local.db,connections,userId:ownerId,uploadsDir:tenant.uploadsDir,environment:tenant.environment,payments:tenant.payments,email:tenant.email,ssh:tenant.ssh,github:tenant.github,computeruse:tenant.computeruse,canUseComputers:(actor,id)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).capabilities('project',id).includes('computers'),canUseGithub:(actor,id)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).capabilities('project',id).includes('github'),canUseSsh:(actor,id)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).capabilities('project',id).includes('ssh')});
+      tenant.chat=createProjectChat({db:local.db,connections,userId:ownerId,uploadsDir:tenant.uploadsDir,environment:tenant.environment,payments:tenant.payments,email:tenant.email,ssh:tenant.ssh,github:tenant.github,computeruse:tenant.computeruse,media:tenant.media,canUseMedia:(actor,id)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).project(id)==='editor',canUseComputers:(actor,id)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).capabilities('project',id).includes('computers'),canUseGithub:(actor,id)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).capabilities('project',id).includes('github'),canUseSsh:(actor,id)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).capabilities('project',id).includes('ssh')});
       const canEdit=(actor,id)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).project(id)==='editor';
       tenant.subscription=require('./subscription-ai').createSubscriptionAI({db:local.db,ownerId,canEdit,connections});
       const funded={...personal,authorize:async(actor)=>{
@@ -163,7 +164,7 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
         if(personal.account(ownerId).mode==='chatgpt')return chatgpt.authorize(ownerId);
         return personal.authorize(ownerId);
       },respond:(a,id,payload)=>a.mode==='subscription'?tenant.subscription.respond(a.actor_id,id,payload):a.mode==='chatgpt'?chatgpt.respond(a,id,payload):personal.respond(a,id,payload)};
-      tenant.chat.hosted=require('./hosted-ai').createHostedAI({db:local.db,uploadsDir:tenant.uploadsDir,personal:funded,canEdit:(actor,id)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).project(id)==='editor',canUse:(actor,id,scope)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).capabilities('project',id).includes(scope),retain:()=>tenant.active++,release:()=>tenant.active--,storageLimit:()=>tenant.plan.storage_bytes,organization:tenant.chat.organization,ssh:tenant.ssh,github:tenant.github,computeruse:tenant.computeruse});
+      tenant.chat.hosted=require('./hosted-ai').createHostedAI({db:local.db,uploadsDir:tenant.uploadsDir,personal:funded,canEdit:(actor,id)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).project(id)==='editor',canUse:(actor,id,scope)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).capabilities('project',id).includes(scope),retain:()=>tenant.active++,release:()=>tenant.active--,storageLimit:()=>tenant.plan.storage_bytes,organization:tenant.chat.organization,ssh:tenant.ssh,github:tenant.github,computeruse:tenant.computeruse,media:tenant.media});
       tenant.chat.organization.router.enqueueApi=()=>tenant.chat.hosted.enqueue();
       tenant.assets=createProjectAssets({db:local.db,uploadsDir:tenant.uploadsDir,limitBytes:plan.storage_bytes});
       tenants.set(ownerId,tenant);
@@ -223,7 +224,7 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
     const subscription=payer===config.ownerId&&mode==='none';
     req.aiRuntime=req.workspaceIsOwner&&subscription?'codex':'api';
     req.aiFunding=subscription?'owner_subscription':mode==='chatgpt'?'owner_chatgpt':'owner_api';
-    req.personalAiAllowed=subscription?req.tenant.subscription.online():mode==='chatgpt'?chatgpt.configured:mode==='key'||(mode==='card'&&personal.summary(payer).billing_ready);
+    req.personalAiAllowed=subscription?req.tenant.subscription.online():mode==='chatgpt'?chatgpt.configured:(mode==='key'||mode==='provider'&&personal.providers.activeState(payer).saved);
     if(req.aiRuntime==='api'&&req.method==='POST'&&(/^\/api\/chat\/threads\/[^/]+\/messages$/.test(req.path)||/^\/api\/boards\/\d+\/agent$/.test(req.path)||/^\/api\/agents\/(company|board)\/\d+\/swarms$/.test(req.path)||/^\/api\/discussions\/threads\/[^/]+\/messages$/.test(req.path)||/^\/api\/audio\/(project|company|board)\/\d+\/work$/.test(req.path))){
       if(subscription&&!req.personalAiAllowed)throw Object.assign(Error('The company owner’s subscription worker is offline. Ask the owner to reconnect it.'),{status:503});
       if(!subscription)try{await(mode==='chatgpt'?chatgpt.authorize(payer):personal.authorize(payer));}catch(e){if(!req.workspaceIsOwner)throw Object.assign(Error('Company AI funding is unavailable. Ask the company owner to check Account & AI.'),{status:e.status||503});throw e;}
@@ -237,6 +238,8 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
   app.use(require('./audio').createAudioRoutes({config:config.audio, memberships}));
   app.use(require('./computeruse-connections').createComputerUseRoutes({memberships}));
   app.use(require('./onepassword').createOnePasswordRoutes());
+  app.use(require('./media-connectors').createMediaRoutes());
+  app.use(personal.providers.router);
   app.use(require('./project-computers').createComputerRoutes({memberships}));
   app.use((req,res,next)=>{
     if(!req.tenant||req.workspaceIsOwner)return next();

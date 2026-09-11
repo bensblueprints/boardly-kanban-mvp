@@ -60,7 +60,10 @@ export default function CloudConnections({ initialTab = 'mcp', onClose, embedded
             <p className="text-sm text-indigo-200">Key created. Copy it now; it is shown only once. You can revoke it below.</p>
             <CopyField label="Connection key" value={current.token} />
             {tab === 'mcp' && <details><summary className="cursor-pointer text-sm text-zinc-300">Client configuration</summary><div className="mt-3 space-y-3">
-              <CopyField label="JSON configuration" multiline value={JSON.stringify({ mcpServers: { boardly: { url: origin + '/mcp', headers: { Authorization: 'Bearer ' + current.token } } } }, null, 2)} />
+              <CopyField label="JSON configuration" multiline value={JSON.stringify({ mcpServers: { boardly: { type: 'http', url: origin + '/mcp', headers: { Authorization: 'Bearer ' + current.token } } } }, null, 2)} />
+              <p className="text-xs text-zinc-400">Claude Code: use the JSON entry above in your private MCP configuration. Keep your own Claude Code sign-in. Never commit the connection key. <a className="underline text-indigo-300" href="https://code.claude.com/docs/en/mcp" target="_blank" rel="noreferrer">Claude Code setup guide</a></p>
+              <CopyField label="Kimi Code configuration" multiline value={JSON.stringify({mcpServers:{boardly:{url:origin+'/mcp',bearerTokenEnvVar:'BOARDLY_MCP_TOKEN'}}},null,2)}/>
+              <p className="text-xs text-zinc-400">Kimi Code: add the entry to ~/.kimi-code/mcp.json, set BOARDLY_MCP_TOKEN privately and start a new session. Keep your own Kimi sign-in. <a className="underline text-indigo-300" href="https://www.kimi.com/code/docs/en/kimi-code-cli/customization/mcp.html" target="_blank" rel="noreferrer">Kimi MCP setup guide</a></p>
               <CopyField label="Codex configuration" multiline value={'[mcp_servers.boardly]\nurl = "' + origin + '/mcp"\nbearer_token_env_var = "BOARDLY_MCP_TOKEN"'} />
               <p className="text-xs text-zinc-400">For Codex, save the key as BOARDLY_MCP_TOKEN in the environment used to launch Codex.</p>
             </div></details>}

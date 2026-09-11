@@ -55,27 +55,17 @@ async function run(){
   assert.equal((await g.api('/api/account/plan',{user})).user_limit,3);
   for(const email of ['first@example.com','second@example.com'])await g.api(`/api/projects/${a.project.id}/members`,{user,method:'POST',body:{email,role:'editor'}});
   assert.equal((await g.request(`/api/projects/${a.project.id}/members`,{user,method:'POST',body:{email:'third@example.com',role:'editor'}})).status,409);
-  await g.api('/api/ai/settings',{user,method:'PUT',body:{mode:'card',model:'gpt-6-astra',monthly_cap:20}});
-  const thread=await g.api(`/api/boards/${a.project.id}/chat/threads`,{user,method:'POST',body:{}});await g.api(`/api/chat/threads/${thread.id}/messages`,{user,method:'POST',body:{ mode:'work', content:'Bill me for a response.'}});
-  let chat;for(let i=0;i<100;i++){chat=await g.api(`/api/chat/threads/${thread.id}`,{user});if(!['queued','running'].includes(chat.job.status))break;await new Promise(r=>setTimeout(r,20));}assert.equal(chat.job.status,'completed',JSON.stringify(chat));
-  const ai=await g.api('/api/ai/settings',{user});assert.equal(ai.usage.boardly_charge,ai.usage.provider_cost*2);assert.equal(ai.usage.boardly_charge,.00669);
-  const meter=records.find(r=>r.route.endsWith('/meter_events'));assert.equal(meter.body['payload[value]'],'6690000');assert.equal(meter.body['payload[stripe_customer_id]'],cid);
-  const disk=new Database(path.join(g.root,'personal-ai.db'));assert.equal(disk.prepare('SELECT reported_at FROM ai_usage').get().reported_at,null,'Failed meter event stays pending');disk.close();
-  const beforeCap=paidCalls;await g.api('/api/ai/settings',{user,method:'PUT',body:{mode:'card',model:'gpt-6-astra',monthly_cap:1}});
-  await g.api(`/api/chat/threads/${thread.id}/messages`,{user,method:'POST',body:{ mode:'work', content:'x'.repeat(29900)}});
-  for(let i=0;i<100;i++){chat=await g.api(`/api/chat/threads/${thread.id}`,{user});if(!['queued','running'].includes(chat.job.status))break;await new Promise(r=>setTimeout(r,20));}
-  assert.equal(chat.job.status,'blocked');assert.match(chat.job.error,/spending cap/);assert.equal(paidCalls,beforeCap,'Cap rejection happens before provider usage');
-  await g.api('/api/ai/settings',{user,method:'PUT',body:{mode:'card',model:'gpt-6-astra',monthly_cap:20}});networkFail=true;
-  await g.api(`/api/chat/threads/${thread.id}/messages`,{user,method:'POST',body:{ mode:'work', content:'Uncertain network result'}});
-  for(let i=0;i<100;i++){chat=await g.api(`/api/chat/threads/${thread.id}`,{user});if(!['queued','running'].includes(chat.job.status))break;await new Promise(r=>setTimeout(r,20));}
-  assert.equal((await g.api('/api/ai/settings',{user})).review,1);assert.equal((await g.api('/api/ai/settings',{user})).usage.boardly_charge,.00669);
-  assert.equal((await g.request(`/api/chat/threads/${thread.id}/messages`,{user,method:'POST',body:{ mode:'work', content:'Do not retry unknown charges'}})).status,409);
-  // A cancellation/failure immediately removes both seat and AI entitlements.
-  subs.set(cid,[]);assert.equal((await g.api('/api/account/plan',{user})).user_limit,1);assert.equal((await g.request(`/api/chat/threads/${thread.id}/messages`,{user,method:'POST',body:{ mode:'work', content:'Should not run'}})).status,402);
+  assert.equal((await g.request('/api/ai/settings',{user,method:'PUT',body:{mode:'card',model:'gpt-6-astra',monthly_cap:20}})).status,400);
+  assert.equal((await g.request('/api/ai/checkout',{user,method:'POST',body:{consent:true}})).status,410);
+  const thread=await g.api(`/api/boards/${a.project.id}/chat/threads`,{user,method:'POST',body:{}});
+  assert.equal((await g.request(`/api/chat/threads/${thread.id}/messages`,{user,method:'POST',body:{mode:'work',content:'Use the platform AI account'}})).status,402);
+  assert.equal(paidCalls,0,'An unconnected customer cannot spend the platform API key');
+  assert.equal(records.filter(r=>r.route.endsWith('/meter_events')).length,0);
+  subs.set(cid,[]);assert.equal((await g.api('/api/account/plan',{user})).user_limit,1);
   const raw=JSON.stringify({id:'evt_fixture',type:'invoice.paid',data:{object:{}}}),stamp=String(Math.floor(Date.now()/1000)),sig=crypto.createHmac('sha256',billing.webhookSecret).update(stamp+'.'+raw).digest('hex');
   assert.equal((await fetch(g.base+'/api/billing/webhook',{method:'POST',headers:{'content-type':'application/json','stripe-signature':`t=${stamp},v1=${sig}`},body:raw})).status,200);
   assert.equal((await fetch(g.base+'/api/billing/webhook',{method:'POST',headers:{'content-type':'application/json','stripe-signature':`t=${stamp},v1=${'0'.repeat(64)}`},body:raw})).status,400);
-  console.log('PASS: paid extra-user quantities, personal card funding, exact 2× metering, durable failed-event outbox, pre-call spending caps, ambiguous-call holds, cancelled subscription gates and signed webhooks (provider fixtures; no real charges)');
+  console.log('PASS: paid extra-user quantities, BYO-only customer AI, no platform-key fallback, cancelled seat subscription gates and signed webhooks (provider fixtures; no real charges)');
  }finally{await g.close();}
 }
 run().catch(e=>{console.error(e);process.exitCode=1;});

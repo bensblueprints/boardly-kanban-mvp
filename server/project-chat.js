@@ -6,7 +6,7 @@ const multer = require('multer');
 const { safeText } = require('./agent-activity');
 const { MAX_AGENTS, nextProjectJob, projectQueue, snapshot, cleanValues } = require('./agent-scheduling');
 
-function createProjectChat({ db, connections, userId, uploadsDir, environment, payments, email, ssh, github, computeruse, canUseComputers=(actor)=>actor===userId, canUseGithub=(actor)=>actor===userId, canUseSsh=(actor)=>actor===userId }) {
+function createProjectChat({ db, connections, userId, uploadsDir, environment, payments, email, ssh, github, computeruse, media, canUseMedia=(actor)=>actor===userId, canUseComputers=(actor)=>actor===userId, canUseGithub=(actor)=>actor===userId, canUseSsh=(actor)=>actor===userId }) {
   const router = express.Router();
   db.exec(`CREATE TABLE IF NOT EXISTS chat_threads (
     id TEXT PRIMARY KEY, board_id INTEGER NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
@@ -179,6 +179,7 @@ function createProjectChat({ db, connections, userId, uploadsDir, environment, p
       return { ...j, status: 'running', sessionId: t.codex_session_id,
         board: db.prepare('SELECT id,uuid,name,description FROM boards WHERE id=?').get(t.board_id),
         hierarchy: scope,
+        media: canUseMedia(j.requested_by||userId,t.board_id)&&!!media?.forAgent(t.board_id).length,
         computeruse: canUseComputers(j.requested_by||userId,t.board_id)&&!!computeruse?.enabled(t.board_id),
         emails: email?.agentList(t.board_id) || [],
         ssh: canUseSsh(j.requested_by||userId,t.board_id)?ssh?.agentList(t.board_id,j.requested_by||userId)||[]:[],
@@ -198,6 +199,15 @@ function createProjectChat({ db, connections, userId, uploadsDir, environment, p
     if (!j || j.mode !== 'work' || j.worker_id !== req.boardlyConnection.id || j.status !== 'running') return res.status(404).json({ error: 'Active run not found' });
     req.projectJob = j; req.projectThread = thread(j.thread_id); next();
   }
+  router.post('/api/worker/jobs/:id/media/:action',activeJob,express.json({limit:'12kb'}),async(req,res,next)=>{try{
+    const actor=req.projectJob.requested_by||userId,boardId=req.projectThread.board_id;
+    const valid=()=>{const current=job(req.params.id);if(!media||!canUseMedia(actor,boardId)||current?.status!=='running'||current.worker_id!==req.boardlyConnection.id||current.updated_at<Date.now()-120000)throw Object.assign(Error('Media permission or active run was removed'),{status:403});};
+    valid();res.set('Cache-Control','no-store');const action=req.params.action,data=req.body||{};
+    if(action==='list')return res.json(media.forAgent(boardId));
+    if(action==='generate')return res.json(await media.generate(boardId,actor,data,valid));
+    if(['status','cancel'].includes(action))return res.json(await media.refresh(boardId,data.job_id,valid,action==='cancel'));
+    throw Object.assign(Error('Unknown media action'),{status:404});
+  }catch(e){next(e);}});
   router.post('/api/worker/jobs/:id/computeruse/:action',activeJob,express.json({limit:'25kb'}),async(req,res,next)=>{try{
     const actor=req.projectJob.requested_by||userId,boardId=req.projectThread.board_id;
     const valid=()=>{const current=job(req.params.id);if(!computeruse||!canUseComputers(actor,boardId)||!computeruse.enabled(boardId)||current?.status!=='running'||current.worker_id!==req.boardlyConnection.id||current.updated_at<Date.now()-120000)throw Object.assign(Error('Computer use permission or active run was removed'),{status:403});};

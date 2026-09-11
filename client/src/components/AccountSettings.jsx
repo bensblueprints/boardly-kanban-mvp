@@ -5,6 +5,8 @@ import {useAccess} from '../access.jsx';
 import SettingsShell,{settingsButton,settingsInput} from './SettingsShell.jsx';
 import ConnectorCatalog,{connectorDefinitions} from './ConnectorCatalog.jsx';
 import AccountFunding from './AccountFunding.jsx';
+import MediaConnection from './MediaConnection.jsx';
+import AIProviderConnection from './AIProviderConnection.jsx';
 import OnePasswordConnection from './OnePasswordConnection.jsx';
 import AccountGithub from './AccountGithub.jsx';
 import AccountComputerUse from './AccountComputerUse.jsx';
@@ -37,7 +39,7 @@ export default function AccountSettings({onClose,initialSection='profile',profil
   {id:'ai',label:'AI & models',icon:BrainCircuit,description:'Choose the AI connection, model and spending settings for your own workspaces.',keywords:'ChatGPT Codex OpenAI API funding'},
   {id:'billing',label:'Billing & usage',icon:CreditCard,description:'Workspace plans, storage, user seats, invoices and subscription management.'},
   ...(owner?[{id:'connectors',label:'Connectors',icon:Plug,description:'Discover what Boardly can connect to and choose the right scope.',keywords:'integrations apps email SMTP IMAP cards secrets'}]:[]),
-  ...connectorDefinitions.filter(c=>owner&&['github','computeruse','ssh','tailscale','onepassword'].includes(c.id)).map(c=>({...c,description:c.guide})),
+  ...connectorDefinitions.filter(c=>owner&&['github','computeruse','ssh','tailscale','onepassword','claude','kimi','local','fal','higgsfield'].includes(c.id)).map(c=>({...c,description:c.guide})),
   {id:'apps',label:'Apps & devices',icon:Download,description:'Download Boardly and manage supported desktop or external AI connections.',keywords:'MCP API sync download Windows Mac Linux'},
   ...(platformOwner?[{id:'mcp',label:'Developer & MCP',icon:Plug,description:'Create and revoke keys for external AI clients accessing this workspace.'}]:[]),
   ...(owner?[{id:'data',label:'Import & export',icon:Database,description:'Bring existing boards into your workspace and export project data.'}]:[]),
@@ -47,6 +49,8 @@ export default function AccountSettings({onClose,initialSection='profile',profil
   {section==='profile'&&<><div className="flex items-center gap-4">{profile?.imageUrl?<img src={profile.imageUrl} alt="Your profile" referrerPolicy="no-referrer" className="w-16 h-16 rounded-full"/>:<span className="w-16 h-16 bg-indigo-500/15 rounded-full flex items-center justify-center"><UserRound size={28}/></span>}<div className="min-w-0"><h3 className="font-semibold truncate">{profile?.name||'Your Boardly account'}</h3>{profile?.email&&<p className="text-sm text-zinc-400 break-all mt-1">{profile.email}</p>}<p className="text-xs text-indigo-300 mt-1">{owner?'Account owner':'Viewing a shared workspace'}</p></div></div><div className="rounded-xl border border-zinc-700 p-4 space-y-3"><h3 className="font-medium">Profile & sign-in security</h3><p className="text-sm text-zinc-400">Manage your profile photo, name, email addresses and available sign-in security options through your Boardly account.</p>{onManageProfile?<button className={settingsButton} onClick={onManageProfile}>Manage profile & security</button>:<p className="text-sm text-zinc-400">Profile management is available when signed in through Boardly’s website.</p>}</div><div className="space-y-3"><h3 className="font-medium">Activity animation</h3><p className="text-sm text-zinc-400">Control moving lines in company activity views. This preference is saved in this browser and initially follows your device’s reduced-motion setting.</p><ActivityMotion enabled={motion} onChange={setMotion}/></div></>}
   {['billing','ai'].includes(section)&&<AccountFunding key={section} section={section}/>}
   {owner&&section==='connectors'&&<>{scopeConnector&&<ScopeChooser key={scopeConnector} connector={scopeConnector} onCancel={()=>setScopeConnector(null)}/>}<ConnectorCatalog platformOwner={platformOwner} onSelect={select} onChooseScope={id=>setScopeConnector(id)}/></>}
+  {owner&&['fal','higgsfield'].includes(section)&&<MediaConnection key={section} provider={section}/>}
+  {owner&&['claude','kimi','local'].includes(section)&&<AIProviderConnection key={section} provider={section} platformOwner={platformOwner}/>}
   {owner&&section==='onepassword'&&<OnePasswordConnection/>}
   {owner&&section==='github'&&<AccountGithub/>}
   {owner&&section==='computeruse'&&<><AccountComputerUse/><a href="#/" className={settingsButton}>View computers & choose a company</a></>}

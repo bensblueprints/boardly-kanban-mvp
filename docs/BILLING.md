@@ -1,3 +1,9 @@
+# Current AI policy — September 11, 2026
+
+Customers connect their own ChatGPT/Codex account or provider API key. New and existing card-funded AI execution and checkout are disabled; no customer may fall back to the platform OpenAI key or owner Codex login. Workspace plans and seat subscriptions remain separate and unchanged. Existing historical AI ledgers/outbox are retained for reconciliation. Provider setup and limits: [Customer-owned AI and media connections](provider-connectors.md).
+
+The card-funded AI setup below is historical implementation documentation, superseded by the policy above. Do not enable it for new customers.
+
 # Boardly accounts, members, company chat and AI funding
 
 Company members inherit every project in that company. Direct project members see only that project. Editors manage tasks/files and use company-owner AI funding; viewers read and download. Both can participate in company team chat when they hold company-wide membership. The account owner manages structure and company mail and can optionally delegate selected connection and member controls. Added users sign in with Clerk email codes using the link in Members; Boardly does not automatically email an invitation. A distinct Clerk user counts once per sponsoring account, including pending users and the owner.

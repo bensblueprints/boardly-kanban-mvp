@@ -60,6 +60,8 @@ const {connectorFixture}=require('./chatgpt-fixture.cjs'),{fixture}=require('./m
   assert.equal((await slow).status,401);await disconnect;assert.equal((await during).connected,false);
   assert.equal((await f.api('/api/ai/settings',opts(a))).mode,'none');assert.equal((await f.api('/api/ai/chatgpt',opts(a))).connected,false);
   assert.equal((await f.api('/api/ai/chatgpt',opts(b))).connected,true);
+  assert.equal((await f.request(`/api/chat/threads/${thread.id}/messages`,{user:a,method:'POST',body:{mode:'work',content:'Do not borrow the sponsor connection'}})).status,402);
+  assert.equal((await f.api('/api/ai/chatgpt')).email,'sponsor@example.com','Customer disconnect leaves the platform owner connection untouched');
   console.log('PASS: real process protocol harness, private service, independent customer logins, cancel/test/disconnect race, Ask/Plan/Work with scoped task actions, zero API charges, rate-limit errors and per-user onboarding persistence');
  }finally{if(f)await f.close();await c.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});
