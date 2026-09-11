@@ -1,8 +1,10 @@
 **
-!Dockerfile.onepassword
-!package.json
-!package-lock.json
+!Dockerfile.providers
 !server/
 !server/**
+!scripts/
+!scripts/**
+!docs/
+!docs/**
 !dist/
 !dist/**
