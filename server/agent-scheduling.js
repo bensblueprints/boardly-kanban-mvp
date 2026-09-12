@@ -38,6 +38,7 @@ function snapshot(db, ids, {github,ssh,computers} = {}) {
     captured_at: new Date().toISOString(),
     project: db.prepare('SELECT id,name,description FROM boards WHERE id=?').get(id),
     scope: require('./hierarchy').createHierarchy(db).scope(id),
+    company_instructions: require('./company-skills').projectInstructions(db,id),
     ...(github?{github:github(id)}:{}),
     ...(ssh?{ssh:ssh(id)}:{}),
     ...(computers?{computeruse:computers(id)}:{}),

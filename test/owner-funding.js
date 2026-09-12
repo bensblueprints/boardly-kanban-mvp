@@ -24,7 +24,7 @@ const payload=JSON.parse(input.slice(input.indexOf('\\n')+1));assert.ok(!payload
 const done=payload.input.some(i=>i.type==='function_call_output');
 const result=done?{text:'Created and verified the team task.',calls:[]}:{text:'Adding the requested task.',calls:[{name:'create_task',arguments:JSON.stringify({list_id:${p.list.id},title:'Owner-funded team task',description:'Verified'})}]};
 fs.writeFileSync(process.argv[process.argv.indexOf('-o')+1],JSON.stringify(result));console.log(JSON.stringify({type:'turn.completed',usage:{input_tokens:100,output_tokens:20}}));});`,{mode:0o700});
-  const config=path.join(f.root,'worker.json');fs.writeFileSync(config,JSON.stringify({origin:f.base,token:key.token,workspaceRoot:path.join(f.root,'worker'),codexCommand:fake,cloud:true,continuous:true}));
+  const config=path.join(f.root,'worker.json');fs.writeFileSync(config,JSON.stringify({origin:f.base,token:key.token,workspaceRoot:path.join(f.root,'worker'),codexCommand:fake,cloud:true,mcpTokenFile:await f.mcpTokenFile(),continuous:true}));
   worker=spawn(process.execPath,[path.resolve('scripts/codex-worker.cjs'),config],{stdio:'ignore'});
   let history;for(let i=0;i<200;i++){history=await f.api(`/api/chat/threads/${thread.id}`);if(!['queued','running'].includes(history.job.status))break;await new Promise(r=>setTimeout(r,30));}
   assert.equal(history.job.status,'completed',JSON.stringify(history));

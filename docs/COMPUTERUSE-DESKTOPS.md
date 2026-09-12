@@ -31,10 +31,27 @@ holds an exclusive 60-second renewable lease. Completion releases it; if the
 worker crashes, it expires. Input operations have stable IDs and are never
 blindly retried. After an uncertain result, a fresh screenshot is required.
 
-Open the desktop in [ComputerUse](https://computeruse.space/portal) and choose
-**Take control** to pause agent screenshots and inputs while entering credentials.
-Explicitly hand back control before agents continue. API keys cannot force human
-handback. Sharing a desktop between projects shares its files and login sessions;
+When a Work agent starts using a computer, a live window opens in Boardly.
+You can watch its screen and current work, then use **Maximize** for more space.
+Boardly automatically uses the direct local connection when available for both
+watching and human control. The window shows **Direct connection** and the frame
+response time. Watching alone grants no mouse or keyboard access. If a direct
+route is unavailable, it uses the server connection and offers **Reconnect
+directly**. Failed input is never repeated through the fallback connection.
+Choose **Take Over** to use the mouse and keyboard yourself. The agent cannot
+see the screen or send input while you have control. The text box at the bottom
+also lets you type or paste into the remote computer, including on a phone.
+Choose **Give Back to Agent** when finished. Boardly returns control and resumes
+the linked saved assignment if it is waiting for your handoff.
+
+Closing the window keeps your control in place. **Open computer** brings it back;
+the same button is available beside each assigned project computer. Dismissed
+work will not repeatedly pop up during the same browser session. Another person
+cannot see or take over a screen you are controlling. If your Boardly sign-in has
+expired, use the original [ComputerUse portal](https://computeruse.space/portal)
+to recover control. API keys cannot force human handback.
+
+Sharing a desktop between projects shares its files and login sessions;
 use different desktops where those need to be separate.
 
 Screenshots stay out of Boardly chat/activity/files unless an agent is explicitly
@@ -52,3 +69,17 @@ Verification: `node test/computeruse-account.js`, `node test/computeruse-desktop
 `node test/computeruse-agent-vision.js`, `node test/computeruse-worker.js`,
 `node test/project-computers.js`, `node test/project-computers-browser.cjs`,
 `node test/owner-funding.js`, `node test/cloud-api-agents.js`, `node test/chatgpt.js`.
+
+Live viewer checks: `npm run test:computer-viewer` and
+`node test/live-computer-browser.cjs` (Playwright and Chrome required;
+`BOARDLY_PLAYWRIGHT_MODULE` / `BOARDLY_CHROME_PATH` can select local installations).
+The browser test uses a synthetic desktop and never touches a real account.
+
+Operators: set the same random 32-byte lowercase hex
+`COMPUTERUSE_BOARDLY_VIEWER_KEY` on the Boardly application and ComputerUse API.
+Keep it out of worker environments. Browser routes require a verified sign-in
+session and current project Computers access; they are excluded from MCP.
+The backend signs a 30-second, one-use assertion bound to the user/session,
+connected API credential, desktop, command and exact request body. The provider
+still checks credential scopes, account ownership, control holder, revocation
+and guest fencing. This secret does not enable unowned or unassigned desktops.

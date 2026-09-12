@@ -1,0 +1,10 @@
+FROM boardly-cloud:minimize-1f1b926
+USER root
+COPY package.json package-lock.json /app/
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund && npm rebuild better-sqlite3 && chown -R node:node /app/node_modules
+COPY --chown=node:node server /app/server
+COPY --chown=node:node mcp /app/mcp
+COPY --chown=node:node scripts /app/scripts
+COPY --chown=node:node docs /app/docs
+COPY --chown=node:node dist /app/dist
+USER node

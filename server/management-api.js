@@ -4,9 +4,13 @@ const { SCOPE_CATALOG } = require('./member-permissions');
 const fail = (status, message) => Object.assign(Error(message), { status });
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
 // Runtime infrastructure protocols and provider callbacks are not user settings.
-const excluded = /^\/api\/(?:worker|sync|mcp|coach|login|logout|auth-config|management|webhooks?)(?:\/|$)|\/webhook(?:\/|$)/i;
+const excluded = /^\/api\/(?:worker|sync|mcp|coach|login|logout|auth-config|management|webhooks?)(?:\/|$)|\/webhook(?:\/|$)|\/computeruse\/view\/|^\/api\/computeruse\/activity$/i;
 
 const fieldHints = [
+  [/\/skills\/rules$/, ['instructions','revision']],
+  [/\/skills(?:\/:skillId)?$/, ['name','description','instructions','enabled','revision']],
+  [/\/storage$/, ['provider','label','endpoint','region','bucket','prefix','access_key','secret_key','session_token','username','password','read_only']],
+  [/\/storage\/:connectionId$/, ['label','read_only','revision']],
   [/^\/api\/(?:companies|company-boards)(?:\/:id)?$/, ['name', 'description', 'company_id']],
   [/^\/api\/projects(?:\/:id)?$/, ['name', 'description', 'parent_board_id']],
   [/^\/api\/boards(?:\/:id)?$/, ['name', 'description', 'color', 'emoji', 'starred']],

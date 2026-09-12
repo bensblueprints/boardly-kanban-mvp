@@ -12,10 +12,11 @@ import CompaniesOverview from './CompaniesOverview.jsx';
 import CompanyActivity from './CompanyActivity.jsx';
 import CompanyOnboarding,{CompanyStart,QuickCompany,startCompanyPlan} from './CompanyOnboarding.jsx';
 import CompanyChat from './CompanyChat.jsx';
+import MasterChat from './MasterChat.jsx';
 const button='rounded-lg border border-zinc-700 px-3 py-2 text-sm hover:bg-zinc-800 disabled:opacity-50';
 const input='rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm';
 const navigate=path=>{location.hash=path;};
-function route(){const m=location.hash.match(/^#\/(company|collection|company-add|company-build)\/([\w-]+)/);return m?{kind:m[1],id:m[2],settings:location.hash.includes('/settings')?(location.hash.match(/\/settings(?:\/([^/?]+))?/)?.[1]||'general'):null}:{kind:'home'};}
+function route(){const m=location.hash.match(/^#\/(company|collection|company-add|company-build|master)\/([\w-]+)/);return m?{kind:m[1],id:m[2],settings:location.hash.includes('/settings')?(location.hash.match(/\/settings(?:\/([^/?]+))?/)?.[1]||'general'):null}:{kind:'home'};}
 export default function CompanyWorkspace({onOpen,cloud=true}){
  const [showAI,setShowAI]=useState(false);
  const [showAudio,setShowAudio]=useState(false);
@@ -53,6 +54,7 @@ export default function CompanyWorkspace({onOpen,cloud=true}){
    if(form.id)await api.patch(`${paths[form.kind]}/${form.id}`,body);else{const result=await api.post(paths[form.kind],body);if(form.kind==='company')navigate(`#/company/${result.id}`);if(form.kind==='project')onOpen(result.id);}
    setForm(null);
  });}
+ if(cloud&&owner&&view.kind==='master')return <MasterChat/>;
  if(cloud&&owner&&view.kind==='company-build')return <CompanyOnboarding key={view.id} id={view.id}/>;
  if(cloud&&owner&&view.kind==='company-add')return view.id==='quick'?<QuickCompany/>:<main className="max-w-4xl mx-auto p-6 space-y-6"><button className={button} onClick={()=>navigate('#/')}>Back to companies</button><CompanyStart/></main>;
  if(view.kind==='company'&&company&&view.settings)return <ScopeSettings kind="company" entity={company} section={view.settings} owner={owner} can={canCompany} onSaved={load} onBack={()=>navigate(`#/company/${company.id}`)}/>;
@@ -62,6 +64,7 @@ export default function CompanyWorkspace({onOpen,cloud=true}){
   <div className="flex flex-wrap justify-between gap-4 items-start"><div><h1 className="text-2xl font-bold">{heading}</h1><p className="text-sm text-zinc-400 mt-2">{view.kind==='home'?'Companies contain boards. Boards organize projects and their tasks.':view.kind==='company'?'Boards, projects and shared company email.':'Each project has its own tasks, AI chat, files and settings.'}</p></div>
    <div className="flex flex-wrap gap-2">{view.kind==='company'&&company&&<button aria-label="Company settings" className={button} onClick={()=>navigate(`#/company/${company.id}/settings/general`)}><Settings2 size={16} className="inline mr-2"/>Settings</button>}<div className="flex gap-2" hidden={!owner}>{view.kind==='home'?<button className={button+' bg-indigo-600'} onClick={()=>cloud?navigate('#/company-add/choose'):newForm('company')}>Add company</button>:view.kind==='company'?<><button className={button} onClick={()=>newForm('board')}>New board</button></>:board&&<><button className={button+' bg-indigo-600'} onClick={()=>newForm('project')}>New project</button><button className={button} onClick={()=>setForm({kind:'board',id:board.id,name:board.name})}>Rename board</button></>}</div></div>
   </div>
+  {cloud&&owner&&<div className="flex flex-wrap gap-2"><button className={button+' border-indigo-400 text-indigo-200'} onClick={()=>navigate('#/master/chat')}>Master Chat · all companies</button>{view.kind==='company'&&company&&<><button className={button} onClick={()=>navigate(`#/company/${company.id}/settings/skills`)}>Rules & Skills</button><button className={button} onClick={()=>navigate(`#/company/${company.id}/settings/storage`)}>Company storage</button></>}</div>}
   {view.kind==='home'&&cloud&&owner&&<CompanyStart choices={!data.companies.length}/>}
   {view.kind==='company'&&company&&cloud&&owner&&<button className={button} disabled={busy} onClick={()=>act(()=>startCompanyPlan(company.id))}>Plan my next steps</button>}
   {canOpenAI?<AiActions chatLabel="Chat with AI / Agent swarm" onChat={()=>setShowAI(true)} onAudio={()=>setShowAudio(audioTarget)}/>:cloud&&audioTarget&&<button className={button+' border-indigo-400 text-indigo-100'} onClick={()=>setShowAudio(audioTarget)}>Audio briefing</button>}

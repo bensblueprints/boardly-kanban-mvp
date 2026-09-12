@@ -1,0 +1,6 @@
+FROM boardly-cloud:onboarding-aa883e4
+COPY --chown=node:node package.json /app/package.json
+COPY --chown=node:node server /app/server
+COPY --chown=node:node scripts /app/scripts
+COPY --chown=node:node docs /app/docs
+COPY --chown=node:node dist /app/dist

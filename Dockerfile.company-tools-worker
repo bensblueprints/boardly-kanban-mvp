@@ -1,0 +1,8 @@
+FROM boardly-cloud-worker:github-sync-2e2981f
+USER root
+COPY package.json package-lock.json /app/
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund && npm rebuild better-sqlite3 && chown -R node:node /app/node_modules
+COPY --chown=node:node server /app/server
+COPY --chown=node:node mcp /app/mcp
+COPY --chown=node:node scripts /app/scripts
+USER node
