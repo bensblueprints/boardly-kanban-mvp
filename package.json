@@ -25,7 +25,7 @@
     "test:sync": "node test/sync-tracking.js && node test/sync-engine.js && node sync-server/test/sync-server.test.js && node test/sync-convergence.js",
     "start:cloud": "node server/cloud-index.js",
     "test:cloud": "node test/cloud.js",
-    "test:computers": "node test/project-computers.js",
+    "test:computers": "node test/project-computers.js && node test/computeruse-desktops.js && node test/computer-viewer.js",
     "test:files": "node test/project-folders.js",
     "test:audio": "node test/audio.js && node test/audio-work.js",
     "test:integrations": "node test/cloud-integrations.js",
@@ -37,7 +37,8 @@
     "test:overview": "node test/company-overview.js",
     "test:chatgpt": "node test/chatgpt.js",
     "test:management": "node test/management-api.js",
-    "test:onboarding": "node test/company-onboarding.js && node test/company-bots.js"
+    "test:onboarding": "node test/company-onboarding.js && node test/company-bots.js",
+    "test:computer-viewer": "node test/computer-viewer.js"
   },
   "dependencies": {
     "@1password/sdk": "0.5.0",

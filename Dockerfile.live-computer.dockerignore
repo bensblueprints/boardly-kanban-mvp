@@ -1,0 +1,11 @@
+**
+!Dockerfile.live-computer
+!server/
+!server/**
+!scripts/
+!scripts/**
+!docs/
+!docs/**
+!dist/
+!dist/**
+!package.json

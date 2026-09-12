@@ -37,6 +37,7 @@ function readCloudConfig(env = process.env) {
   workspacePath(dataDir, env.BOARDLY_OWNER_USER_ID);
   return {
     computeruseOrigin: require('./computeruse-connections').trustedOrigin(env.COMPUTERUSE_API_ORIGIN || ''),
+    computeruseViewerKey: env.COMPUTERUSE_BOARDLY_VIEWER_KEY || '',
     dataDir, origin: url.origin, ownerId: env.BOARDLY_OWNER_USER_ID, ownerOnly, planSlugs,
     publishableKey: env.CLERK_PUBLISHABLE_KEY, secretKey: env.CLERK_SECRET_KEY,
     jwtKey: env.CLERK_JWT_KEY || undefined,
@@ -153,7 +154,7 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
       tenant.ssh=require('./ssh-connections').createSshConnections({db:local.db,key:projectKey,namespace:ownerId,tailnet,members:()=>memberships.db.prepare("SELECT id,user_id,email,name,status FROM account_members WHERE owner_id=? AND status!='provisioning'").all(ownerId)});
       tenant.media=require('./media-connectors').createMediaConnectors({db:local.db,key:projectKey,namespace:ownerId,request:mediaRequest});
       tenant.onepassword=require('./onepassword').createOnePassword({db:local.db,key:projectKey,namespace:ownerId,client:onepasswordClient});
-      tenant.computeruse=require('./computeruse-connections').createComputerUseConnections({db:local.db,key:projectKey,namespace:ownerId,origin:config.computeruseOrigin,request:computeruseRequest,desktopRequest:computeruseDesktopRequest,onepassword:tenant.onepassword});
+      tenant.computeruse=require('./computeruse-connections').createComputerUseConnections({db:local.db,key:projectKey,namespace:ownerId,origin:config.computeruseOrigin,request:computeruseRequest,desktopRequest:computeruseDesktopRequest,onepassword:tenant.onepassword,viewerKey:config.computeruseViewerKey});
       tenant.github=require('./github-connections').createGithubConnections({db:local.db,key:projectKey,namespace:ownerId,request:githubRequest});
       tenant.bots=require('./company-bots').createCompanyBots({db:local.db,key:projectKey,namespace:ownerId,request:botRequest});
       tenant.teamChat=require('./company-chat').createCompanyChat(local.db);
@@ -196,7 +197,7 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
       else if(route.startsWith('/api/worker/'))return res.status(403).json({error:'A worker connection is required'});
       if((route.startsWith('/api/connections')||route==='/mcp'||route.startsWith('/api/sync/')||route==='/api/account/status')&&(!chosen.owner||auth.userId!==config.ownerId))return res.status(403).json({error:'This integration is currently available to the owner'});
       if(/^\/api\/(mcp|coach|login|logout)(\/|$)/i.test(req.path))return res.status(404).json({error:'Local desktop control is not available in cloud mode'});
-      req.cloudUserId=auth.userId;req.workspaceOwnerId=chosen.owner_id;req.workspaceIsOwner=chosen.owner;req.accountPlan=plan;
+      req.cloudUserId=auth.userId;req.cloudSessionId=auth.sessionId||auth.sessionClaims?.sid||null;req.workspaceOwnerId=chosen.owner_id;req.workspaceIsOwner=chosen.owner;req.accountPlan=plan;
       const tenant=tenantFor(chosen.owner_id,plan);req.tenant=tenant;
       if(!chosen.owner&&!memberships.grants(chosen.owner_id,auth.userId).length)throw Object.assign(Error('Your shared access has been removed'),{status:403});
       memberships.touch(auth.userId);
