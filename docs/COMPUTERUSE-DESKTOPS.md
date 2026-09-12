@@ -33,6 +33,11 @@ blindly retried. After an uncertain result, a fresh screenshot is required.
 
 When a Work agent starts using a computer, a live window opens in Boardly.
 You can watch its screen and current work, then use **Maximize** for more space.
+Boardly automatically uses the direct local connection when available for both
+watching and human control. The window shows **Direct connection** and the frame
+response time. Watching alone grants no mouse or keyboard access. If a direct
+route is unavailable, it uses the server connection and offers **Reconnect
+directly**. Failed input is never repeated through the fallback connection.
 Choose **Take Over** to use the mouse and keyboard yourself. The agent cannot
 see the screen or send input while you have control. The text box at the bottom
 also lets you type or paste into the remote computer, including on a phone.

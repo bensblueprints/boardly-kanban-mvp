@@ -1,10 +1,13 @@
 const assert=require('node:assert/strict'),crypto=require('node:crypto');
 const {viewerFixture}=require('./computer-viewer-fixture');
-(async()=>{const v=await viewerFixture(),{f,p,base,desktop_id}=v;try{
+(async()=>{const v=await viewerFixture({direct:true}),{f,p,base,desktop_id}=v;try{
  const {job}=await v.start();
  const activity=await f.api('/api/computeruse/activity');assert.equal(activity.activity[0].run_id,job.id);assert.equal(activity.activity[0].desktop_id,desktop_id);
  assert.ok(!JSON.stringify(activity).includes(v.token));assert.ok(!JSON.stringify(activity).includes(v.secret));
  assert.equal((await f.api(base)).mode,'agent');
+ assert.equal((await f.api(base+'/direct-connect',{method:'POST',body:{read_only:true,sdp:'synthetic offer'}})).protocol,2);
+ assert.equal((await f.request(base+'/direct-connect',{method:'POST',body:{read_only:false,sdp:'synthetic offer'}})).status,409);
+ assert.equal((await f.request(base+'/direct-connect',{method:'POST',body:{read_only:true,sdp:'x'.repeat(12001)}})).status,400);
  assert.equal((await f.request(base+'/screen')).headers.get('content-type'),'image/jpeg');
  assert.equal((await f.api(base+'/takeover',{method:'POST',body:{}})).mode,'human');
  assert.equal((await f.api(base)).can_control,true);

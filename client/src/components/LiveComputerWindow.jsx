@@ -3,19 +3,21 @@ import {createPortal} from 'react-dom';
 import {Monitor,Maximize2,Minimize2,X,Hand,Play,Loader2} from 'lucide-react';
 import {api} from '../api.js';
 import DesktopInputQueue from '../computer-input-queue.js';
+import DesktopDirect from '../computer-direct.js';
 
 const button='inline-flex items-center justify-center gap-2 rounded-lg border border-zinc-600 px-3 py-2 text-sm hover:bg-zinc-800 disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-indigo-400';
 const identity=item=>item?`${item.run_id||'manual'}:${item.project_id}:${item.desktop_id}`:'';
 const keys={Enter:'Return',Escape:'Escape',Backspace:'BackSpace',Delete:'Delete',Insert:'Insert',Tab:'Tab',ArrowLeft:'Left',ArrowRight:'Right',ArrowUp:'Up',ArrowDown:'Down',Home:'Home',End:'End',PageUp:'Page_Up',PageDown:'Page_Down',' ':'space','-':'minus','+':'plus','=':'equal','.':'period',',':'comma','/':'slash'};
 export default function LiveComputerWindow({workspaceId}) {
   const [items,setItems]=useState([]),[item,setItem]=useState(null),[open,setOpen]=useState(false),[maximized,setMaximized]=useState(false);
-  const [state,setState]=useState(null),[error,setError]=useState(''),[notice,setNotice]=useState(''),[busy,setBusy]=useState(false),[frameAt,setFrameAt]=useState(null),[text,setText]=useState('');
-  const dialog=useRef(null),canvas=useRef(null),active=useRef(null),control=useRef(false),hasFrame=useRef(false),handoff=useRef(false),generation=useRef(0),down=useRef(null),abort=useRef(null),queue=useRef(null),refresh=useRef(()=>{}),handoffEpoch=useRef(0);
+  const [state,setState]=useState(null),[error,setError]=useState(''),[notice,setNotice]=useState(''),[busy,setBusy]=useState(false),[frameAt,setFrameAt]=useState(null),[text,setText]=useState(''),[connectionLabel,setConnectionLabel]=useState('Connecting…'),[frameMs,setFrameMs]=useState(null);
+  const dialog=useRef(null),canvas=useRef(null),active=useRef(null),control=useRef(false),hasFrame=useRef(false),handoff=useRef(false),generation=useRef(0),down=useRef(null),abort=useRef(null),queue=useRef(null),refresh=useRef(()=>{}),handoffEpoch=useRef(0),direct=useRef(null);
   const storageKey='boardly-computer-windows:'+workspaceId;
   const dismissed=useRef(new Set());
   useEffect(()=>{try{dismissed.current=new Set(JSON.parse(sessionStorage.getItem(storageKey)||'[]'));}catch{}},[storageKey]);
+  function stopDirect(){const old=direct.current;direct.current=null;old?.close();}
   function clearFrame(){hasFrame.current=false;setFrameAt(null);const c=canvas.current;if(c)c.getContext('2d').clearRect(0,0,c.width,c.height);}
-  function select(next){if(handoff.current||!next)return;generation.current++;abort.current?.abort();queue.current?.clear();control.current=false;setState(null);setError('');setNotice('');setText('');clearFrame();setItem(next);setOpen(true);}
+  function select(next){if(handoff.current||!next)return;generation.current++;stopDirect();abort.current?.abort();queue.current?.clear();control.current=false;setState(null);setError('');setNotice('');setText('');clearFrame();setItem(next);setOpen(true);}
   useEffect(()=>{
     let alive=true,loading=false;
     const load=async()=>{if(loading||document.visibilityState==='hidden')return;loading=true;
@@ -28,42 +30,62 @@ export default function LiveComputerWindow({workspaceId}) {
     load();const timer=setInterval(load,2000);window.addEventListener('boardly-open-computer',manual);
     return()=>{alive=false;clearInterval(timer);window.removeEventListener('boardly-open-computer',manual);};
   },[workspaceId]);
-  function close(){generation.current++;abort.current?.abort();queue.current?.clear();control.current=false;clearFrame();setText('');for(const a of [...items,item].filter(Boolean))dismissed.current.add(identity(a));try{sessionStorage.setItem(storageKey,JSON.stringify([...dismissed.current].slice(-100)));}catch{}setOpen(false);setMaximized(false);}
+  function close(){generation.current++;stopDirect();abort.current?.abort();queue.current?.clear();control.current=false;clearFrame();setText('');for(const a of [...items,item].filter(Boolean))dismissed.current.add(identity(a));try{sessionStorage.setItem(storageKey,JSON.stringify([...dismissed.current].slice(-100)));}catch{}setOpen(false);setMaximized(false);}
   useEffect(()=>{const el=dialog.current;if(open&&item&&!el.open)el.showModal();else if(!open&&el.open)el.close();},[open,item]);
   useEffect(()=>{
     if(!open||!item)return;
     const version=++generation.current,base=`/api/projects/${item.project_id}/computeruse/view/${encodeURIComponent(item.desktop_id)}`;
-    active.current={...item,base};let alive=true,loading=false,lastStatus=0,timer,privateScreen=false;
+    active.current={...item,base};let alive=true,loading=false,lastStatus=0,timer,privateScreen=false,status=null,statusLoading=null,directRetryAt=0;
     const valid=()=>alive&&version===generation.current;
+    setConnectionLabel('Connecting…');setFrameMs(null);
+    const signal=(command,data)=>api.post(base+'/'+command,data);
+    function tryDirect(){
+      if(!valid()||handoff.current||privateScreen||!status?.direct_available||Date.now()<directRetryAt||direct.current&&!direct.current.closed)return;
+      const connection=new DesktopDirect(signal,label=>{if(valid()&&direct.current===connection)setConnectionLabel(label);},{readOnly:!control.current});
+      direct.current=connection;directRetryAt=Date.now()+15000;setConnectionLabel('Connecting directly…');
+      void connection.connect().catch(()=>connection.close());
+    }
     queue.current=new DesktopInputQueue({valid:()=>valid()&&control.current&&hasFrame.current,
-      send:action=>api.post(base+'/action',{operation_id:crypto.randomUUID(),action}),
+      send:action=>{const data={operation_id:crypto.randomUUID(),action},connection=direct.current;return connection?.ready?connection.request('action',data):api.post(base+'/action',data);},
       onError:e=>{if(valid()){control.current=false;clearFrame();setError(e.message+' Input was not repeated.');lastStatus=0;}}
     });
+    async function readStatus(){
+      if(statusLoading)return statusLoading;
+      const epoch=handoffEpoch.current;
+      statusLoading=(async()=>{const result=await api.get(base);if(!valid()||epoch!==handoffEpoch.current)return;
+        lastStatus=Date.now();status=result;setState(result);control.current=!!result.can_control;
+        privateScreen=result.mode==='human'&&!result.can_control;
+        if(privateScreen){stopDirect();clearFrame();return;}
+        if(direct.current&&direct.current.readOnly===control.current){stopDirect();directRetryAt=0;}
+        tryDirect();
+      })().finally(()=>statusLoading=null);
+      return statusLoading;
+    }
     const load=async(force=false)=>{
-      if(!valid()||loading||handoff.current||document.visibilityState==='hidden')return;loading=true;const epoch=handoffEpoch.current;const current=()=>valid()&&epoch===handoffEpoch.current;
+      if(!valid()||loading||handoff.current||document.visibilityState==='hidden')return;loading=true;const epoch=handoffEpoch.current;const current=()=>valid()&&epoch===handoffEpoch.current&&!privateScreen;
       try{
-        if(force||Date.now()-lastStatus>3000){const result=await api.get(base);if(!current())return;lastStatus=Date.now();setState(result);control.current=!!result.can_control;
-          privateScreen=result.mode==='human'&&!result.can_control;if(privateScreen){clearFrame();return;}
-        }
-        if(privateScreen)return;
+        if(!status||force)await readStatus();
+        else if(Date.now()-lastStatus>3000)void readStatus().catch(e=>{if(current()){privateScreen=true;status=null;stopDirect();control.current=false;clearFrame();setState(null);setError(e.message);}});
+        if(!current()||privateScreen)return;
+        tryDirect();const started=performance.now(),connection=direct.current;
         const controller=new AbortController();abort.current=controller;
-        const blob=await api.blob(base+'/screen',controller.signal);if(!current())return;
+        const blob=connection?.ready?await connection.request('screenshot'):await api.blob(base+'/screen',controller.signal);if(!current())return;
         const bitmap=await createImageBitmap(blob);
-        if(current()&&canvas.current){const c=canvas.current;if(c.width!==bitmap.width||c.height!==bitmap.height){c.width=bitmap.width;c.height=bitmap.height;}c.getContext('2d').drawImage(bitmap,0,0);hasFrame.current=true;setFrameAt(Date.now());setError('');}bitmap.close();
+        if(current()&&canvas.current){const c=canvas.current;if(c.width!==bitmap.width||c.height!==bitmap.height){c.width=bitmap.width;c.height=bitmap.height;}c.getContext('2d').drawImage(bitmap,0,0);hasFrame.current=true;setFrameAt(Date.now());setFrameMs(Math.round(performance.now()-started));setError('');if(!direct.current||direct.current.closed)setConnectionLabel('Server connection');}bitmap.close();
       }catch(e){if(current()&&e.name!=='AbortError'){control.current=false;clearFrame();setError(e.message);lastStatus=0;}}
       finally{loading=false;}
     };
-    refresh.current=()=>load(true);
+    refresh.current=()=>{lastStatus=0;directRetryAt=0;return load(true);};
     const wheel=e=>{if(!control.current||!hasFrame.current||handoff.current)return;e.preventDefault();queue.current.push({type:'scroll',direction:Math.abs(e.deltaX)>Math.abs(e.deltaY)?(e.deltaX>0?'right':'left'):(e.deltaY>0?'down':'up'),amount:Math.min(5,Math.max(1,Math.ceil(Math.abs(e.deltaY||e.deltaX)/100)))});};
     const screen=canvas.current;screen.addEventListener('wheel',wheel,{passive:false});
-    const poll=async()=>{await load();if(valid())timer=setTimeout(poll,500);};poll();
-    return()=>{alive=false;screen.removeEventListener('wheel',wheel);clearTimeout(timer);abort.current?.abort();queue.current?.clear();control.current=false;hasFrame.current=false;active.current=null;setText('');};
+    const poll=async()=>{const started=performance.now();await load();if(valid())timer=setTimeout(poll,Math.max(15,(direct.current?.ready?80:250)-(performance.now()-started)));};poll();
+    return()=>{alive=false;stopDirect();screen.removeEventListener('wheel',wheel);clearTimeout(timer);abort.current?.abort();queue.current?.clear();control.current=false;hasFrame.current=false;active.current=null;setText('');};
   },[open,identity(item)]);
   async function switchControl(command){
     const target=active.current;if(!target||handoff.current)return;
     handoff.current=true;handoffEpoch.current++;setBusy(true);setError('');setNotice('');
     try{
-      await queue.current?.flush();control.current=false;clearFrame();abort.current?.abort();
+      await queue.current?.flush();stopDirect();control.current=false;clearFrame();abort.current?.abort();
       const result=await api.post(target.base+'/'+command,{});if(active.current===target)setState(s=>({...s,...result}));
       if(command==='resume'&&result.job?.can_resume){
         await api.post(`/api/chat/jobs/${result.job.id}/resume`,{content:'I explicitly clicked Give Back to Agent in the live computer window. Recheck the current desktop and saved work, then continue the authorized assignment. Do not repeat uncertain actions.'});
@@ -94,7 +116,7 @@ export default function LiveComputerWindow({workspaceId}) {
           onPaste={e=>{if(!control.current)return;e.preventDefault();const value=e.clipboardData.getData('text/plain');if(value&&value.length<=4096)input({type:'type',text:value});}}
           />
           {!frameAt&&<p className="pointer-events-none absolute px-5 text-center text-sm text-zinc-300">{human&&!mine?'The screen is private while someone else has control.':error?'Waiting for the computer connection…':'Loading the live screen…'}</p>}</div>
-          <div className="mt-2 flex flex-wrap justify-between gap-2 text-sm text-zinc-400"><p>{mine?'Click the screen to use your mouse and keyboard.':state?.activity?.progress||item?.progress||'Watching your agent’s computer work.'}</p><span>{frameAt?'Live · '+new Date(frameAt).toLocaleTimeString():'Connecting'}</span></div>
+          <div className="mt-2 flex flex-wrap justify-between gap-2 text-sm text-zinc-400"><p>{mine?'Click the screen to use your mouse and keyboard.':state?.activity?.progress||item?.progress||'Watching your agent’s computer work.'}</p><span aria-label="Computer connection">{connectionLabel}{frameMs!==null?' · '+frameMs+' ms':''}</span>{connectionLabel==='Server connection'&&<button className="text-indigo-300 underline" onClick={()=>refresh.current()}>Reconnect directly</button>}</div>
           {error&&<p role="alert" className="mt-2 text-sm text-rose-300">{error}</p>}{notice&&<p role="status" className="mt-2 text-sm text-indigo-200">{notice}</p>}
         </div>
         {mine&&<form className="shrink-0 border-t border-zinc-800 p-3" onSubmit={e=>{e.preventDefault();if(text&&hasFrame.current){input({type:'type',text});setText('');}}}><div className="flex gap-2"><input aria-label="Text to type on computer" autoComplete="off" spellCheck={false} maxLength={4096} value={text} onChange={e=>setText(e.target.value)} placeholder="Type or paste text into the computer…" className="min-w-0 flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm"/><button className={button} disabled={busy||!frameAt||!text}>Type</button></div><div className="mt-2 flex flex-wrap gap-2">{[['Return','Enter'],['Tab','Tab'],['Escape','Esc'],['ctrl+l','Address bar'],['ctrl+v','Paste in desktop']].map(([key,label])=><button key={key} type="button" className={button} disabled={busy||!frameAt} onClick={()=>input({type:'key',key})}>{label}</button>)}</div><p className="mt-2 text-sm text-amber-200">Closing this window keeps the agent paused. Give control back when you’re ready.</p></form>}
