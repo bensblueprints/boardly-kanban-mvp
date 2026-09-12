@@ -1,32 +1,37 @@
 const assert=require('node:assert/strict'),path=require('node:path'),crypto=require('node:crypto');
 const {viewerFixture}=require('./computer-viewer-fixture');
 const {chromium}=require(process.env.BOARDLY_PLAYWRIGHT_MODULE||'playwright');
-let v,vite,browser,page;
+let v,vite,browser,page;const directTest=process.env.BOARDLY_TEST_DIRECT==='1';
 (async()=>{
- v=await viewerFixture();const {f,p}=v,token=f.token('user_owner');
+ v=await viewerFixture({direct:directTest});const {f,p}=v,token=f.token('user_owner');
  const repo=path.resolve(__dirname,'..'),{createServer}=await import('vite'),react=(await import('@vitejs/plugin-react')).default,tailwind=(await import('@tailwindcss/vite')).default;
  vite=await createServer({configFile:false,root:repo+'/client',plugins:[react(),tailwind(),{name:'viewer-qa',resolveId(id){if(id==='/qa-entry.jsx')return '\0viewer-qa';},load(id){if(id==='\0viewer-qa')return `import React from 'react';import {createRoot} from 'react-dom/client';import WorkspaceSession from '/src/WorkspaceSession.jsx';import '/src/index.css';createRoot(document.getElementById('root')).render(React.createElement(WorkspaceSession,{userId:'user_owner',getToken:async()=>${JSON.stringify(token)},onLogout:()=>{}}));`;},configureServer(s){s.middlewares.use('/qa',async(q,r)=>{r.setHeader('content-type','text/html');r.end(await s.transformIndexHtml('/qa','<html class="dark"><body class="bg-zinc-950 text-zinc-100"><div id="root"></div><script type="module" src="/qa-entry.jsx"></script></body></html>'));});}}],server:{host:'127.0.0.1',port:0,proxy:{'/api':{target:f.base,configure:p=>p.on('proxyReq',q=>q.setHeader('origin',f.config.origin))}}}});await vite.listen();
  browser=await chromium.launch({executablePath:process.env.BOARDLY_CHROME_PATH||'/usr/bin/google-chrome',headless:true,args:['--no-sandbox']});page=await browser.newPage({viewport:{width:1440,height:1000}});const errors=[];page.on('pageerror',e=>errors.push(e.message));
+ if(directTest)await require('./rtc-browser-fixture.cjs')(page);
  await page.goto(vite.resolvedUrls.local[0]+'qa#/board/'+p.project.id);
- v.setFrame(await page.evaluate(()=>{const c=document.createElement('canvas');c.width=1280;c.height=800;const x=c.getContext('2d');x.fillStyle='#172554';x.fillRect(0,0,1280,800);x.fillStyle='#fff';x.font='32px sans-serif';x.fillText('Permit portal — synthetic test desktop',60,90);x.fillStyle='#dbeafe';x.fillRect(60,140,1160,590);x.fillStyle='#1e3a8a';x.font='24px sans-serif';x.fillText('Account details',100,200);return c.toDataURL('image/jpeg');}));
- const {job}=await v.start();const dialog=page.getByRole('dialog',{name:'Live computer window',exact:true});await dialog.waitFor();await dialog.getByText('Agent has control',{exact:true}).waitFor();await dialog.getByText(/Live ·/).waitFor();
+ await page.getByRole('button',{name:'Set up later',exact:true}).click();
+ const frame=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=1280;c.height=800;const x=c.getContext('2d');x.fillStyle='#172554';x.fillRect(0,0,1280,800);x.fillStyle='#fff';x.font='32px sans-serif';x.fillText('Permit portal — synthetic test desktop',60,90);x.fillStyle='#dbeafe';x.fillRect(60,140,1160,590);x.fillStyle='#1e3a8a';x.font='24px sans-serif';x.fillText('Account details',100,200);return c.toDataURL('image/jpeg');});v.setFrame(frame);await page.evaluate(value=>window.__rtcFrame=value,frame);
+ const {job}=await v.start();const dialog=page.getByRole('dialog',{name:'Live computer window',exact:true});await dialog.waitFor();await dialog.getByText('Agent has control',{exact:true}).waitFor();await dialog.getByLabel('Computer connection').filter({hasText:/[0-9]+ ms/}).waitFor();
+ if(directTest){await dialog.getByLabel('Computer connection').filter({hasText:/Direct connection/}).waitFor();assert.equal(await page.evaluate(()=>window.__rtcConnections.at(-1).readOnly),true);}
  await dialog.getByRole('button',{name:'Maximize computer window',exact:true}).click();assert.equal(await dialog.evaluate(el=>Math.round(el.getBoundingClientRect().width)),1440);
  await dialog.getByRole('button',{name:'Restore computer window',exact:true}).click();assert.ok((await dialog.boundingBox()).width<1440);
- await dialog.getByRole('button',{name:'Take Over',exact:true}).click();await dialog.getByText('You have control · agent paused',{exact:true}).waitFor();await dialog.getByText(/Live ·/).waitFor();assert.equal(v.getMode(),'human');
+ await dialog.getByRole('button',{name:'Take Over',exact:true}).click();await dialog.getByText('You have control · agent paused',{exact:true}).waitFor();await dialog.getByLabel('Computer connection').filter({hasText:/[0-9]+ ms/}).waitFor();assert.equal(v.getMode(),'human');
+ if(directTest)await dialog.getByLabel('Computer connection').filter({hasText:/Direct connection/}).waitFor();
  await dialog.getByLabel('Text to type on computer').fill('A user-entered test value');await dialog.getByRole('button',{name:'Type',exact:true}).click();
  await page.waitForFunction(()=>document.querySelector('[aria-label="Text to type on computer"]').value==='');
- await page.waitForTimeout(100);assert.equal(v.inputs.size,1);assert.equal([...v.inputs.values()][0].text,'A user-entered test value');
+ await page.waitForTimeout(100);if(directTest){const inputs=await page.evaluate(()=>window.__rtcInputs);assert.equal(inputs.length,1);assert.equal(inputs[0].action.text,'A user-entered test value');assert.equal(v.inputs.size,0,'Direct inputs must bypass the server relay');}else{assert.equal(v.inputs.size,1);assert.equal([...v.inputs.values()][0].text,'A user-entered test value');}
+ if(directTest){await page.evaluate(()=>window.__rtcDropInput=true);await dialog.getByLabel('Text to type on computer').fill('uncertain once');await dialog.getByRole('button',{name:'Type',exact:true}).click();await page.waitForTimeout(600);assert.equal(await page.evaluate(()=>window.__rtcInputs.length),2);assert.equal(v.inputs.size,0,'A lost direct acknowledgement must not replay through HTTP');await dialog.getByLabel('Computer connection').filter({hasText:/Server connection/}).waitFor();}
  await dialog.getByRole('button',{name:'Close computer window',exact:true}).click();assert.equal(v.getMode(),'human');await page.waitForTimeout(2400);assert.equal(await dialog.isVisible(),false,'Dismissal must stick across activity polling');
  await page.getByRole('button',{name:'Open computer',exact:true}).click();await dialog.getByText('You have control · agent paused',{exact:true}).waitFor();
  await v.workerApi(`/api/worker/jobs/${job.id}`,{status:'blocked',blocker:'Awaiting human signup',next_action:'Give back after signup',text:'Signup ready'});
  await dialog.getByRole('button',{name:'Give Back to Agent',exact:true}).click();await dialog.getByText('Control returned. Your agent is resuming the saved work.',{exact:true}).waitFor();assert.equal(v.getMode(),'agent');
  const history=await f.api('/api/chat/threads/'+(await f.api(`/api/boards/${p.project.id}/chat/threads`))[0].id);assert.equal(history.job.status,'queued');assert.equal(history.job.id,job.id);
- await dialog.getByText(/Live ·/).waitFor();await page.screenshot({path:'/tmp/boardly-live-computer-desktop.png'});
+ await dialog.getByLabel('Computer connection').filter({hasText:/[0-9]+ ms/}).waitFor();await page.screenshot({path:'/tmp/boardly-live-computer-desktop.png'});
  await page.setViewportSize({width:390,height:844});assert.ok((await dialog.boundingBox()).width<=390);assert.ok((await dialog.boundingBox()).height<=844);
  await dialog.getByRole('button',{name:'Take Over',exact:true}).click();await dialog.getByLabel('Text to type on computer').waitFor();await page.screenshot({path:'/tmp/boardly-live-computer-mobile.png'});
  assert.ok(await dialog.getByRole('button',{name:'Give Back to Agent',exact:true}).isVisible());
  await dialog.getByRole('button',{name:'Maximize computer window',exact:true}).click();assert.equal(Math.round((await dialog.boundingBox()).height),844);
  await dialog.getByRole('button',{name:'Close computer window',exact:true}).click();await page.reload();await page.waitForTimeout(2500);assert.equal(await dialog.isVisible(),false,'Reload must not reopen a dismissed run');
  assert.equal(v.getMode(),'human');assert.deepEqual(errors,[]);
- console.log('PASS: automatic real-work activity window, live frame, maximize/restore, takeover, typed input once, persistent human control on close, explicit handback resumes saved job, mobile layout and sticky dismissal');
+ console.log((directTest?'DIRECT (simulated RTC): ':'FALLBACK: ')+'PASS: automatic real-work activity window, live frame, maximize/restore, takeover, typed input once, persistent human control on close, explicit handback resumes saved job, mobile layout and sticky dismissal');
 })().catch(async e=>{console.error(e);if(page)console.error((await page.locator('body').innerText()).slice(-1800));process.exitCode=1;}).finally(async()=>{await browser?.close();await vite?.close();await v?.f.close();});
