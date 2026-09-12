@@ -2,6 +2,14 @@ const assert=require('node:assert/strict'),path=require('node:path'),crypto=requ
 const {viewerFixture}=require('./computer-viewer-fixture');
 const {chromium}=require(process.env.BOARDLY_PLAYWRIGHT_MODULE||'playwright');
 let v,vite,browser,page;const directTest=process.env.BOARDLY_TEST_DIRECT==='1';
+async function assertFitted(dialog){
+ await page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));
+ await page.waitForFunction(()=>{const c=document.querySelector('[aria-label="Live remote desktop"]');return c&&c.getBoundingClientRect().height>0;});
+ const layout=await dialog.evaluate(d=>{const c=d.querySelector('canvas'),r=c.getBoundingClientRect(),ancestors=[];for(let el=c.parentElement;el;el=el.parentElement){ancestors.push({name:el.className,overflowY:el.scrollHeight-el.clientHeight,overflowX:el.scrollWidth-el.clientWidth});if(el===d)break;}return{width:r.width,height:r.height,ratio:c.width/c.height,left:r.left,top:r.top,right:r.right,bottom:r.bottom,ancestors};});
+ const size=page.viewportSize();assert.ok(layout.left>=0&&layout.top>=0&&layout.right<=size.width+1&&layout.bottom<=size.height+1,JSON.stringify(layout));
+ assert.ok(Math.abs(layout.width/layout.height-layout.ratio)<0.01,'Desktop must retain its aspect ratio');
+ assert.ok(layout.ancestors.every(a=>a.overflowY<=1&&a.overflowX<=1),'Viewer must fit without scrolling: '+JSON.stringify(layout.ancestors));
+}
 (async()=>{
  v=await viewerFixture({direct:directTest});const {f,p}=v,token=f.token('user_owner');
  const repo=path.resolve(__dirname,'..'),{createServer}=await import('vite'),react=(await import('@vitejs/plugin-react')).default,tailwind=(await import('@tailwindcss/vite')).default;
@@ -14,7 +22,9 @@ let v,vite,browser,page;const directTest=process.env.BOARDLY_TEST_DIRECT==='1';
  const {job}=await v.start();const dialog=page.getByRole('dialog',{name:'Live computer window',exact:true});await dialog.waitFor();await dialog.getByText('Agent has control',{exact:true}).waitFor();await dialog.getByLabel('Computer connection').filter({hasText:/[0-9]+ ms/}).waitFor();
  if(directTest){await dialog.getByLabel('Computer connection').filter({hasText:/Direct connection/}).waitFor();assert.equal(await page.evaluate(()=>window.__rtcConnections.at(-1).readOnly),true);}
  await dialog.getByRole('button',{name:'Maximize computer window',exact:true}).click();assert.equal(await dialog.evaluate(el=>Math.round(el.getBoundingClientRect().width)),1440);
+ await assertFitted(dialog);
  await dialog.getByRole('button',{name:'Restore computer window',exact:true}).click();assert.ok((await dialog.boundingBox()).width<1440);
+ await assertFitted(dialog);
  await dialog.getByRole('button',{name:'Take Over',exact:true}).click();await dialog.getByText('You have control · agent paused',{exact:true}).waitFor();await dialog.getByLabel('Computer connection').filter({hasText:/[0-9]+ ms/}).waitFor();assert.equal(v.getMode(),'human');
  if(directTest)await dialog.getByLabel('Computer connection').filter({hasText:/Direct connection/}).waitFor();
  await dialog.getByLabel('Text to type on computer').fill('A user-entered test value');await dialog.getByRole('button',{name:'Type',exact:true}).click();
@@ -29,9 +39,25 @@ let v,vite,browser,page;const directTest=process.env.BOARDLY_TEST_DIRECT==='1';
  await dialog.getByLabel('Computer connection').filter({hasText:/[0-9]+ ms/}).waitFor();await page.screenshot({path:'/tmp/boardly-live-computer-desktop.png'});
  await page.setViewportSize({width:390,height:844});assert.ok((await dialog.boundingBox()).width<=390);assert.ok((await dialog.boundingBox()).height<=844);
  await dialog.getByRole('button',{name:'Take Over',exact:true}).click();await dialog.getByLabel('Text to type on computer').waitFor();await page.screenshot({path:'/tmp/boardly-live-computer-mobile.png'});
+ await assertFitted(dialog);
  assert.ok(await dialog.getByRole('button',{name:'Give Back to Agent',exact:true}).isVisible());
  await dialog.getByRole('button',{name:'Maximize computer window',exact:true}).click();assert.equal(Math.round((await dialog.boundingBox()).height),844);
+ for(const viewport of [{width:320,height:568},{width:390,height:844},{width:844,height:390},{width:1280,height:720},{width:1920,height:1080}]){await page.setViewportSize(viewport);await assertFitted(dialog);}
+ await page.setViewportSize({width:1280,height:720});await assertFitted(dialog);await page.screenshot({path:'/tmp/boardly-live-computer-maximized.png'});
+ await dialog.getByRole('button',{name:'Keyboard shortcuts',exact:true}).click();await dialog.getByRole('button',{name:'Address bar',exact:true}).waitFor();await assertFitted(dialog);
+ await dialog.getByRole('button',{name:'Keyboard shortcuts',exact:true}).click();
+ const portrait=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=800;c.height=1200;const x=c.getContext('2d');x.fillStyle='#172554';x.fillRect(0,0,800,1200);return c.toDataURL('image/jpeg');});v.setFrame(portrait);await page.evaluate(value=>window.__rtcFrame=value,portrait);
+ await page.waitForFunction(()=>document.querySelector('[aria-label="Live remote desktop"]').height===1200);await assertFitted(dialog);
+ const priorDirect=directTest?await page.evaluate(()=>window.__rtcInputs.length):0,priorInputs=v.inputs.size+priorDirect,screen=dialog.getByLabel('Live remote desktop'),box=await screen.boundingBox();
+ await screen.click({position:{x:box.width/4,y:box.height*3/4}});
+ await page.waitForTimeout(200);
+ const remoteInputs=directTest?await page.evaluate(()=>window.__rtcInputs):[];
+ assert.equal(v.inputs.size+remoteInputs.length,priorInputs+1,'Scaled pointer input must be sent exactly once');
+ const pointer=remoteInputs.length>priorDirect?remoteInputs.at(-1).action:[...v.inputs.values()].at(-1);
+ assert.equal(pointer.type,'click');assert.ok(Math.abs(pointer.x-200)<=2&&Math.abs(pointer.y-900)<=2,'Pointer must map to desktop pixels, excluding letterbox bars: '+JSON.stringify(pointer));
+ await dialog.getByRole('button',{name:'Minimize computer window',exact:true}).click();assert.equal(v.getMode(),'human');await page.waitForTimeout(2200);assert.equal(await dialog.isVisible(),false);
+ await page.getByRole('button',{name:'Open computer',exact:true}).click();await dialog.getByText('You have control · agent paused',{exact:true}).waitFor();await assertFitted(dialog);
  await dialog.getByRole('button',{name:'Close computer window',exact:true}).click();await page.reload();await page.waitForTimeout(2500);assert.equal(await dialog.isVisible(),false,'Reload must not reopen a dismissed run');
  assert.equal(v.getMode(),'human');assert.deepEqual(errors,[]);
- console.log((directTest?'DIRECT (simulated RTC): ':'FALLBACK: ')+'PASS: automatic real-work activity window, live frame, maximize/restore, takeover, typed input once, persistent human control on close, explicit handback resumes saved job, mobile layout and sticky dismissal');
+ console.log((directTest?'DIRECT (simulated RTC): ':'FALLBACK: ')+'PASS: viewport fit without scrolling, aspect ratio and resolution changes, scaled pointer input, keyboard shortcuts, maximize/restore, takeover, typed input once, minimize/reopen preserving control, handback recovery, desktop/mobile/landscape layouts');
 })().catch(async e=>{console.error(e);if(page)console.error((await page.locator('body').innerText()).slice(-1800));process.exitCode=1;}).finally(async()=>{await browser?.close();await vite?.close();await v?.f.close();});

@@ -1,6 +1,6 @@
 import React,{createContext,useContext,useEffect,useRef,useState} from 'react';
 import {createPortal} from 'react-dom';
-import {Monitor,Minus,Maximize2,Minimize2,X,Hand,Play,Loader2} from 'lucide-react';
+import {Monitor,Minus,Maximize2,Minimize2,X,Hand,Play,Loader2,Keyboard} from 'lucide-react';
 import {api} from '../api.js';
 import DesktopInputQueue from '../computer-input-queue.js';
 import DesktopDirect from '../computer-direct.js';
@@ -14,14 +14,20 @@ export function ComputerWindowButton(){
 const identity=item=>item?`${item.run_id||'manual'}:${item.project_id}:${item.desktop_id}`:'';
 const keys={Enter:'Return',Escape:'Escape',Backspace:'BackSpace',Delete:'Delete',Insert:'Insert',Tab:'Tab',ArrowLeft:'Left',ArrowRight:'Right',ArrowUp:'Up',ArrowDown:'Down',Home:'Home',End:'End',PageUp:'Page_Up',PageDown:'Page_Down',' ':'space','-':'minus','+':'plus','=':'equal','.':'period',',':'comma','/':'slash'};
 export default function LiveComputerWindow({workspaceId,children}) {
-  const [items,setItems]=useState([]),[item,setItem]=useState(null),[open,setOpen]=useState(false),[maximized,setMaximized]=useState(false);
+  const [items,setItems]=useState([]),[item,setItem]=useState(null),[open,setOpen]=useState(false),[maximized,setMaximized]=useState(false),[showKeys,setShowKeys]=useState(false);
   const [state,setState]=useState(null),[error,setError]=useState(''),[notice,setNotice]=useState(''),[busy,setBusy]=useState(false),[frameAt,setFrameAt]=useState(null),[text,setText]=useState(''),[connectionLabel,setConnectionLabel]=useState('Connecting…'),[frameMs,setFrameMs]=useState(null);
-  const dialog=useRef(null),canvas=useRef(null),active=useRef(null),control=useRef(false),hasFrame=useRef(false),handoff=useRef(false),generation=useRef(0),down=useRef(null),abort=useRef(null),queue=useRef(null),refresh=useRef(()=>{}),handoffEpoch=useRef(0),direct=useRef(null);
+  const dialog=useRef(null),canvas=useRef(null),stage=useRef(null),active=useRef(null),control=useRef(false),hasFrame=useRef(false),handoff=useRef(false),generation=useRef(0),down=useRef(null),abort=useRef(null),queue=useRef(null),refresh=useRef(()=>{}),handoffEpoch=useRef(0),direct=useRef(null);
   const storageKey='boardly-computer-windows:'+workspaceId;
   const dismissed=useRef(new Set());
   useEffect(()=>{try{dismissed.current=new Set(JSON.parse(sessionStorage.getItem(storageKey)||'[]'));}catch{}},[storageKey]);
   function stopDirect(){const old=direct.current;direct.current=null;old?.close();}
   function clearFrame(){hasFrame.current=false;setFrameAt(null);const c=canvas.current;if(c)c.getContext('2d').clearRect(0,0,c.width,c.height);}
+  function fitFrame(){
+    const c=canvas.current,s=stage.current;if(!c||!s)return;
+    const scale=Math.min(s.clientWidth/c.width,s.clientHeight/c.height);
+    // Size the actual canvas, so pointer coordinates exclude the surrounding bars.
+    c.style.width=c.width*scale+'px';c.style.height=c.height*scale+'px';
+  }
   function select(next){if(handoff.current||!next)return;generation.current++;stopDirect();abort.current?.abort();queue.current?.clear();control.current=false;setState(null);setError('');setNotice('');setText('');clearFrame();setItem(next);setOpen(true);}
   useEffect(()=>{
     let alive=true,loading=false;
@@ -37,6 +43,12 @@ export default function LiveComputerWindow({workspaceId,children}) {
   },[workspaceId]);
   function close(){generation.current++;stopDirect();abort.current?.abort();queue.current?.clear();control.current=false;clearFrame();setText('');for(const a of [...items,item].filter(Boolean))dismissed.current.add(identity(a));try{sessionStorage.setItem(storageKey,JSON.stringify([...dismissed.current].slice(-100)));}catch{}setOpen(false);setMaximized(false);}
   useEffect(()=>{const el=dialog.current;if(open&&item&&!el.open)el.showModal();else if(!open&&el.open)el.close();},[open,item]);
+  useEffect(()=>{
+    if(!open)return;
+    const observer=new ResizeObserver(fitFrame);observer.observe(stage.current);fitFrame();
+    const root=document.documentElement,overflow=root.style.overflow;root.style.overflow='hidden';
+    return()=>{observer.disconnect();root.style.overflow=overflow;};
+  },[open]);
   useEffect(()=>{
     if(!open||!item)return;
     const version=++generation.current,base=`/api/projects/${item.project_id}/computeruse/view/${encodeURIComponent(item.desktop_id)}`;
@@ -76,7 +88,7 @@ export default function LiveComputerWindow({workspaceId,children}) {
         const controller=new AbortController();abort.current=controller;
         const blob=connection?.ready?await connection.request('screenshot'):await api.blob(base+'/screen',controller.signal);if(!current())return;
         const bitmap=await createImageBitmap(blob);
-        if(current()&&canvas.current){const c=canvas.current;if(c.width!==bitmap.width||c.height!==bitmap.height){c.width=bitmap.width;c.height=bitmap.height;}c.getContext('2d').drawImage(bitmap,0,0);hasFrame.current=true;setFrameAt(Date.now());setFrameMs(Math.round(performance.now()-started));setError('');if(!direct.current||direct.current.closed)setConnectionLabel('Server connection');}bitmap.close();
+        if(current()&&canvas.current){const c=canvas.current;if(c.width!==bitmap.width||c.height!==bitmap.height){c.width=bitmap.width;c.height=bitmap.height;fitFrame();}c.getContext('2d').drawImage(bitmap,0,0);hasFrame.current=true;setFrameAt(Date.now());setFrameMs(Math.round(performance.now()-started));setError('');if(!direct.current||direct.current.closed)setConnectionLabel('Server connection');}bitmap.close();
       }catch(e){if(current()&&e.name!=='AbortError'){control.current=false;clearFrame();setError(e.message);lastStatus=0;}}
       finally{loading=false;}
     };
@@ -110,27 +122,27 @@ export default function LiveComputerWindow({workspaceId,children}) {
   return <ComputerWindowContext.Provider value={item&&!open?()=>select(item):null}>{children}{createPortal(<>
     <dialog ref={dialog} aria-label="Live computer window" onCancel={e=>{e.preventDefault();if(maximized)setMaximized(false);else close();}} className={`computer-live-window ${maximized?'computer-live-window-maximized':''} m-auto overflow-hidden rounded-2xl border border-zinc-600 bg-zinc-950 text-zinc-100 shadow-2xl backdrop:bg-black/50`}>
       <div className="flex h-full min-h-0 flex-col">
-        <header className="flex shrink-0 flex-wrap items-center gap-3 border-b border-zinc-800 p-3 sm:p-4">
-          <div className="flex min-w-0 basis-full items-center gap-3 sm:basis-auto sm:flex-1"><Monitor className="shrink-0 text-indigo-300" size={22}/><div className="min-w-0 flex-1"><h2 className="truncate font-semibold">{item?.label||'Live computer'}</h2><p className="truncate text-sm text-zinc-400">{item?.project_name||state?.activity?.project_name||'Project computer'}</p></div></div>
-          <div className="ml-auto flex shrink-0 items-center gap-2">
+        <header className="computer-window-header flex shrink-0 items-center gap-2 border-b border-zinc-800 p-2">
+          <div className="flex min-w-0 flex-1 items-center gap-2"><Monitor className="hidden shrink-0 text-indigo-300 sm:block" size={20}/><div className="min-w-0 flex-1"><h2 className="truncate text-sm font-semibold">{item?.label||'Live computer'}</h2><p className="computer-project-name truncate text-xs text-zinc-400">{item?.project_name||state?.activity?.project_name||'Project computer'}</p></div></div>
+          <div className="ml-auto flex shrink-0 items-center gap-1">
             <button className={button} aria-label="Minimize computer window" title={human?'Minimize window · agent stays paused':'Minimize window · agent keeps working'} disabled={busy} onClick={close}><Minus size={18}/><span>Minimize</span></button>
-            <button className={button} aria-label={maximized?'Restore computer window':'Maximize computer window'} onClick={()=>setMaximized(!maximized)}>{maximized?<Minimize2 size={18}/>:<Maximize2 size={18}/>}<span className="hidden sm:inline">{maximized?'Restore':'Maximize'}</span></button>
-            <button className={button} aria-label="Close computer window" onClick={close}><X size={18}/></button>
+            <button className={button} aria-label={maximized?'Restore computer window':'Maximize computer window'} title={maximized?'Restore window (Esc)':'Maximize · fit desktop to screen'} onClick={()=>setMaximized(!maximized)}>{maximized?<Minimize2 size={18}/>:<Maximize2 size={18}/>}<span className="hidden sm:inline">{maximized?'Restore':'Maximize'}</span></button>
+            <button className={button} aria-label="Close computer window" title="Close computer window" onClick={close}><X size={18}/></button>
           </div>
         </header>
-        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-zinc-800 p-3"><p role="status" className={`mr-auto flex items-center gap-2 text-sm ${human?'text-amber-200':'text-emerald-300'}`}><span className={`h-2 w-2 rounded-full ${human?'bg-amber-300':'bg-emerald-400'}`}/>{!state?'Connecting to computer…':mine?'You have control · agent paused':human?'Someone else has control · agent paused':'Agent has control'}</p><button className={button+' border-amber-400/60'} disabled={busy||!state||human} onClick={()=>switchControl('takeover')}><Hand size={16}/>Take Over</button><button className={button+' border-indigo-400 bg-indigo-600/30'} disabled={busy||!mine} onClick={()=>switchControl('resume')}><Play size={16}/>Give Back to Agent</button>{busy&&<Loader2 size={16} className="animate-spin"/>}</div>
-        {items.length>1&&<label className="shrink-0 px-3 pt-2 text-sm text-zinc-400">Computer<select aria-label="Live computer selection" className="ml-2 max-w-full rounded-lg border border-zinc-700 bg-zinc-900 p-2 text-zinc-100" value={items.some(a=>identity(a)===identity(item))?identity(item):''} onChange={e=>select(items.find(a=>identity(a)===e.target.value))}><option value="" disabled>Choose computer</option>{items.map(a=><option key={identity(a)} value={identity(a)}>{a.label} · {a.project_name}</option>)}</select></label>}
-        <div className="min-h-0 flex-1 overflow-auto p-2 sm:p-3"><div className="relative flex min-h-36 items-center justify-center overflow-hidden rounded-xl border border-zinc-800 bg-black"><canvas ref={canvas} width="1280" height="800" tabIndex={mine?0:-1} aria-label="Live remote desktop" className={`block h-auto w-full touch-none outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ${mine?'cursor-crosshair':'cursor-default'}`}
+        <div className="computer-control-bar flex shrink-0 flex-wrap items-center gap-2 border-b border-zinc-800 p-2"><p role="status" className={`mr-auto flex min-w-0 items-center gap-2 text-sm ${human?'text-amber-200':'text-emerald-300'}`}><span className={`h-2 w-2 shrink-0 rounded-full ${human?'bg-amber-300':'bg-emerald-400'}`}/>{!state?'Connecting to computer…':mine?'You have control · agent paused':human?'Someone else has control · agent paused':'Agent has control'}</p><button className={button+' border-amber-400/60'} disabled={busy||!state||human} onClick={()=>switchControl('takeover')}><Hand size={16}/>Take Over</button><button className={button+' border-indigo-400 bg-indigo-600/30'} disabled={busy||!mine} onClick={()=>switchControl('resume')}><Play size={16}/>Give Back to Agent</button>{busy&&<Loader2 size={16} className="animate-spin"/>}</div>
+        {items.length>1&&<label className="flex min-w-0 shrink-0 items-center gap-2 px-2 pt-2 text-sm text-zinc-400">Computer<select aria-label="Live computer selection" className="min-w-0 flex-1 rounded-lg border border-zinc-700 bg-zinc-900 p-2 text-zinc-100" value={items.some(a=>identity(a)===identity(item))?identity(item):''} onChange={e=>select(items.find(a=>identity(a)===e.target.value))}><option value="" disabled>Choose computer</option>{items.map(a=><option key={identity(a)} value={identity(a)}>{a.label} · {a.project_name}</option>)}</select></label>}
+        <div className="computer-view-body flex min-h-0 min-w-0 flex-1 flex-col gap-1 overflow-hidden p-1 sm:p-2"><div ref={stage} className="computer-view-stage relative flex min-h-0 min-w-0 flex-1 items-center justify-center overflow-hidden bg-black"><canvas ref={canvas} width="1280" height="800" tabIndex={mine?0:-1} aria-label="Live remote desktop" className={`block shrink-0 touch-none outline-none focus-visible:outline-2 focus-visible:outline-indigo-400 ${mine?'cursor-crosshair':'cursor-default'}`}
           onPointerDown={e=>{if(!control.current||!hasFrame.current||handoff.current)return;e.preventDefault();e.currentTarget.focus();e.currentTarget.setPointerCapture(e.pointerId);down.current={...point(e),button:e.button,desktop:item.desktop_id};}}
           onPointerUp={e=>{const start=down.current;down.current=null;if(!start||!control.current||!hasFrame.current||start.desktop!==item.desktop_id)return;const end=point(e);input(Math.hypot(start.x-end.x,start.y-end.y)>5&&start.button===0?{type:'drag',x:start.x,y:start.y,to_x:end.x,to_y:end.y}:{type:'click',...end,button:[1,2,3][start.button]||1});}}
           onPointerCancel={()=>down.current=null} onContextMenu={e=>e.preventDefault()} onKeyDown={keydown}
           onPaste={e=>{if(!control.current)return;e.preventDefault();const value=e.clipboardData.getData('text/plain');if(value&&value.length<=4096)input({type:'type',text:value});}}
           />
           {!frameAt&&<p className="pointer-events-none absolute px-5 text-center text-sm text-zinc-300">{human&&!mine?'The screen is private while someone else has control.':error?'Waiting for the computer connection…':'Loading the live screen…'}</p>}</div>
-          <div className="mt-2 flex flex-wrap justify-between gap-2 text-sm text-zinc-400"><p>{mine?'Click the screen to use your mouse and keyboard.':state?.activity?.progress||item?.progress||'Watching your agent’s computer work.'}</p><span aria-label="Computer connection">{connectionLabel}{frameMs!==null?' · '+frameMs+' ms':''}</span>{connectionLabel==='Server connection'&&<button className="text-indigo-300 underline" onClick={()=>refresh.current()}>Reconnect directly</button>}</div>
-          {error&&<p role="alert" className="mt-2 text-sm text-rose-300">{error}</p>}{notice&&<p role="status" className="mt-2 text-sm text-indigo-200">{notice}</p>}
+          <div className="flex min-w-0 shrink-0 items-center gap-2 text-xs text-zinc-400"><p className="min-w-0 flex-1 truncate" title={mine?'Click the screen to use your mouse and keyboard.':state?.activity?.progress||item?.progress}>{mine?'Mouse and keyboard ready':state?.activity?.progress||item?.progress||'Watching your agent work'}</p><span className="shrink-0" aria-label="Computer connection">{connectionLabel}{frameMs!==null?' · '+frameMs+' ms':''}</span>{connectionLabel==='Server connection'&&<button className="shrink-0 text-indigo-300 underline" title="Reconnect directly" onClick={()=>refresh.current()}>Reconnect</button>}</div>
+          {error&&<p role="alert" className="shrink-0 text-sm text-rose-300">{error}</p>}{notice&&<p role="status" className="shrink-0 text-sm text-indigo-200">{notice}</p>}
         </div>
-        {mine&&<form className="shrink-0 border-t border-zinc-800 p-3" onSubmit={e=>{e.preventDefault();if(text&&hasFrame.current){input({type:'type',text});setText('');}}}><div className="flex gap-2"><input aria-label="Text to type on computer" autoComplete="off" spellCheck={false} maxLength={4096} value={text} onChange={e=>setText(e.target.value)} placeholder="Type or paste text into the computer…" className="min-w-0 flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm"/><button className={button} disabled={busy||!frameAt||!text}>Type</button></div><div className="mt-2 flex flex-wrap gap-2">{[['Return','Enter'],['Tab','Tab'],['Escape','Esc'],['ctrl+l','Address bar'],['ctrl+v','Paste in desktop']].map(([key,label])=><button key={key} type="button" className={button} disabled={busy||!frameAt} onClick={()=>input({type:'key',key})}>{label}</button>)}</div><p className="mt-2 text-sm text-amber-200">Minimizing or closing keeps the agent paused. Choose Give Back to Agent to let it continue.</p></form>}
+        {mine&&<form className="shrink-0 border-t border-zinc-800 p-2" onSubmit={e=>{e.preventDefault();if(text&&hasFrame.current){input({type:'type',text});setText('');}}}><div className="flex gap-2"><input aria-label="Text to type on computer" autoComplete="off" spellCheck={false} maxLength={4096} value={text} onChange={e=>setText(e.target.value)} placeholder="Type or paste into the computer…" className="min-w-0 flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm"/><button className={button} disabled={busy||!frameAt||!text}>Type</button><button type="button" className={button} aria-label="Keyboard shortcuts" title="Keyboard shortcuts" aria-expanded={showKeys} aria-controls="computer-keyboard-shortcuts" onClick={()=>setShowKeys(!showKeys)}><Keyboard size={18}/></button></div>{showKeys&&<div id="computer-keyboard-shortcuts" className="mt-2 flex flex-wrap gap-2">{[['Return','Enter'],['Tab','Tab'],['Escape','Esc'],['ctrl+l','Address bar'],['ctrl+v','Paste in desktop']].map(([key,label])=><button key={key} type="button" className={button} disabled={busy||!frameAt} onClick={()=>input({type:'key',key})}>{label}</button>)}</div>}<p className="mt-1 text-xs text-amber-200">Agent paused until you choose Give Back to Agent.</p></form>}
       </div>
     </dialog>
   </>,document.body)}</ComputerWindowContext.Provider>;

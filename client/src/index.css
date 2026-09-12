@@ -49,5 +49,7 @@ html, body, #root { height: 100%; }
 .audio-briefing-dialog { width: calc(100% - 1rem); height: min(calc(100dvh - 1rem), 56rem); max-width: 64rem; max-height: none; overflow: hidden; color-scheme: dark; }
 
 .computer-live-window { width: min(1000px, calc(100vw - 24px)); height: min(850px, calc(100dvh - 40px)); max-width: none; max-height: none; padding: 0; }
-.computer-live-window-maximized { width: 100vw; height: 100dvh; margin: 0; border-radius: 0; }
+.computer-live-window-maximized { inset: 0; width: 100vw; height: 100dvh; margin: 0; border: 0; border-radius: 0; }
+.computer-live-window button { min-height: 40px; }
+@media (max-height: 520px) { .computer-project-name { display: none; } .computer-window-header, .computer-control-bar { padding-block: 4px; } }
 @media (max-width: 640px) { .computer-live-window { width: calc(100vw - 12px); height: calc(100dvh - 16px); } .computer-live-window-maximized { width: 100vw; height: 100dvh; } }
