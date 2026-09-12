@@ -7,11 +7,11 @@ function trustedOrigin(value){
  if(u.protocol!=='https:'||u.username||u.password||u.pathname!=='/'||u.search||u.hash)throw Error('ComputerUse requires a configured HTTPS origin');return u.origin;
 }
 // Only fixed paths on the configured service origin receive the encrypted key.
-async function requestDesktop(origin,token,command,data){
+async function requestDesktop(origin,token,command,data,extraHeaders={}){
  const paths={account:'/api/v1/account',desktops:'/api/v1/desktops'};
- if(!paths[command]&&!['status','screenshot','lease','release','action','login'].includes(command))throw fail(400,'Unsupported desktop command');
+ if(!paths[command]&&!['status','screenshot','lease','release','action','login','takeover','resume'].includes(command))throw fail(400,'Unsupported desktop command');
  try{
-  const r=await fetch(origin+(paths[command]||'/api/v1/desktops/'+command),{method:paths[command]?'GET':'POST',headers:{Authorization:'Bearer '+token,Accept:command==='screenshot'?'image/jpeg':'application/json','Content-Type':'application/json'},body:paths[command]?undefined:JSON.stringify(data),redirect:'error',signal:AbortSignal.timeout(25000)});
+  const r=await fetch(origin+(paths[command]||'/api/v1/desktops/'+command),{method:paths[command]?'GET':'POST',headers:{...extraHeaders,Authorization:'Bearer '+token,Accept:command==='screenshot'?'image/jpeg':'application/json','Content-Type':'application/json'},body:paths[command]?undefined:JSON.stringify(data),redirect:'error',signal:AbortSignal.timeout(25000)});
   if(!r.ok){const messages={401:'Reconnect ComputerUse: the API key expired or was revoked.',403:'ComputerUse denied access. Check ownership and account:read, desktop:read and desktop:write scopes.',409:'Desktop is busy or under human control. Hand back control in ComputerUse, or wait for the other agent to finish.'};throw fail(r.status,messages[r.status]||'ComputerUse is unavailable. An input may already have occurred; observe before retrying.');}
   let size=0;const parts=[];for await(const part of r.body){size+=part.length;if(size>2000000)throw Error('Too large');parts.push(part);}const raw=Buffer.concat(parts);
   if(command==='screenshot'){if(!r.headers.get('content-type')?.includes('image/jpeg')||raw[0]!==255||raw[1]!==216)throw Error('Invalid screenshot');return {image_url:'data:image/jpeg;base64,'+raw.toString('base64')};}
@@ -22,7 +22,7 @@ async function requestAccount(origin,token){
  const a=await requestDesktop(origin,token,'account');
  const d=await requestDesktop(origin,token,'desktops');return {...a,desktops:d.desktops};
 }
-function createComputerUseConnections({db,key,namespace,origin='',request=requestAccount,desktopRequest=requestDesktop,onepassword}){
+function createComputerUseConnections({db,key,namespace,origin='',request=requestAccount,desktopRequest=requestDesktop,onepassword,viewerKey=''}){
  origin=trustedOrigin(origin);
  db.exec(`CREATE TABLE IF NOT EXISTS cu_account_connection(id INTEGER PRIMARY KEY CHECK(id=1),revision TEXT NOT NULL,encrypted TEXT,account_id TEXT,updated_at INTEGER NOT NULL);
  CREATE TABLE IF NOT EXISTS cu_assignments(id INTEGER PRIMARY KEY,company_id INTEGER UNIQUE REFERENCES companies(id) ON DELETE CASCADE,board_id INTEGER UNIQUE REFERENCES boards(id) ON DELETE CASCADE,rental_ids TEXT NOT NULL,allow_agent INTEGER NOT NULL DEFAULT 0,revision TEXT NOT NULL,updated_at INTEGER NOT NULL,CHECK((company_id IS NULL)!=(board_id IS NULL)));`);
@@ -88,6 +88,7 @@ function createComputerUseConnections({db,key,namespace,origin='',request=reques
    valid();const revision=connection()?.revision,scope=signature('project',id);
    const selected=await inspectForAgent(id,actor,valid);
    if(!selected.rentals.some(r=>r.desktop_id===desktopId&&r.available))throw fail(403,'This desktop is not available to this project');
+   if(command!=='release')viewer.record(id,actor,runId,selected.rentals.find(r=>r.desktop_id===desktopId),command);
    const check=()=>{valid();unchanged(revision);if(signature('project',id)!==scope||!enabled(id))throw fail(403,'Computer assignment changed');};
    check();const token=decrypt(connection()),send=async(c,d)=>{check();const result=await desktopRequest(origin,token,c,{desktop_id:desktopId,...d});check();return result;};
    if(command==='status')return await send('status',{});
@@ -118,7 +119,8 @@ function createComputerUseConnections({db,key,namespace,origin='',request=reques
    finally{if(leases.get(desktopId)===held)leases.delete(desktopId);}
   }
  }
- return{accountState,connect,disconnect:reset,rentals,assignment,assign,clear,enabled,inspectForAgent,controlForAgent,releaseRun};
+ const viewer=require('./computeruse-viewer').createComputerViewer({db,key:viewerKey,namespace,origin,connection,decrypt,unchanged,signature,assignment,rentals,desktopRequest,onHandoff:desktopId=>{leases.delete(desktopId);uncertain.add(desktopId);}});
+ return{accountState,connect,disconnect:reset,rentals,assignment,assign,clear,enabled,inspectForAgent,controlForAgent,releaseRun,viewer};
 }
 function createComputerUseRoutes({memberships}){
  const router=express.Router(),accountBase='/api/account/computeruse';
@@ -128,6 +130,7 @@ function createComputerUseRoutes({memberships}){
   const db=req.tenant.app.db;if(!db.prepare(`SELECT id FROM ${kind==='company'?'companies':'boards'} WHERE id=?`).get(id))throw fail(404,'Company or project not found');
   if(!req.workspaceIsOwner){const access=accessForMember(db,memberships.grants(req.workspaceOwnerId,req.cloudUserId));if(!access[kind](id))throw fail(404,'Company or project not found');if(!access.capabilities(kind,id).includes('computers'))throw fail(403,'The owner must enable your Computer use member permission.');}
  }
+ require('./computeruse-viewer').registerViewerRoutes(router,verify);
  const handler=(kind,fn)=>async(req,res,next)=>{try{const id=kind==='account'?null:Number(req.params.id),valid=()=>verify(req,kind,id);valid();res.set('Cache-Control','private, no-store');await fn(req,res,req.tenant.computeruse,id,valid);}catch(e){next(e);}};
  router.get(accountBase,handler('account',async(req,res,s)=>res.json(s.accountState())));
  router.put(accountBase,express.json({limit:'4kb'}),handler('account',async(req,res,s,id,v)=>res.json(await s.connect(req.body?.token,v))));

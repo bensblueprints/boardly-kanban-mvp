@@ -10,6 +10,7 @@ import GettingStarted from './components/GettingStarted.jsx';
 import AccountSettings from './components/AccountSettings.jsx';
 import BoardsHome from './components/BoardsHome.jsx';
 import BoardView from './components/BoardView.jsx';
+import LiveComputerWindow from './components/LiveComputerWindow.jsx';
 
 function Login({ onLogin }) {
   const [password, setPassword] = useState('');
@@ -112,6 +113,7 @@ export function Workspace({ onLogout, cloud = false, access={workspaceOwner:true
       {access.workspaces?.length>1&&<select aria-label="Workspace account" className="bg-zinc-900 border border-zinc-700 text-xs rounded-lg px-2 py-2 order-last w-full sm:order-none sm:w-auto sm:max-w-44" value={access.workspaceId} onChange={e=>onSwitch(e.target.value)}>{access.workspaces.map(w=><option key={w.owner_id} value={w.owner_id}>{w.name}</option>)}</select>}
       <ProfileMenu profile={profile} access={access} onLogout={onLogout} onHelp={()=>tutorialOpen.current?.()}/>
     </header>}
+    {cloud&&<LiveComputerWindow key={access.workspaceId||'current'} workspaceId={access.workspaceId||'current'}/>}
     {cloud&&<GettingStarted access={access} registerOpen={registerTutorial}/>}
     <div ref={content} className="flex-1 min-h-0 overflow-auto">{settingsRoute&&cloud?<AccountSettings initialSection={accountSection} profile={profile} onManageProfile={onManageProfile} onHelp={()=>tutorialOpen.current?.()} onClose={()=>location.hash=returnRoute.current}/>:boardId?<BoardView key={boardId} boardId={boardId} onBack={()=>openBoard(null)} cloud={cloud}/>:<BoardsHome onOpen={openBoard} onLogout={onLogout} cloud={cloud}/>}</div>
   </div></AccessContext.Provider>;

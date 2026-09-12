@@ -4,7 +4,7 @@ const { SCOPE_CATALOG } = require('./member-permissions');
 const fail = (status, message) => Object.assign(Error(message), { status });
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
 // Runtime infrastructure protocols and provider callbacks are not user settings.
-const excluded = /^\/api\/(?:worker|sync|mcp|coach|login|logout|auth-config|management|webhooks?)(?:\/|$)|\/webhook(?:\/|$)/i;
+const excluded = /^\/api\/(?:worker|sync|mcp|coach|login|logout|auth-config|management|webhooks?)(?:\/|$)|\/webhook(?:\/|$)|\/computeruse\/view\/|^\/api\/computeruse\/activity$/i;
 
 const fieldHints = [
   [/\/skills\/rules$/, ['instructions','revision']],

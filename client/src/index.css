@@ -45,3 +45,7 @@ html, body, #root { height: 100%; }
 .coding-pane-maximized > header { position: sticky; top: 0; z-index: 1; background: #09090b; }
 .coding-pane > *, .coding-pane article { min-width: 0; overflow-wrap: anywhere; }
 .audio-briefing-dialog { width: calc(100% - 1rem); height: min(calc(100dvh - 1rem), 56rem); max-width: 64rem; max-height: none; overflow: hidden; color-scheme: dark; }
+
+.computer-live-window { width: min(1000px, calc(100vw - 24px)); height: min(850px, calc(100dvh - 40px)); max-width: none; max-height: none; padding: 0; }
+.computer-live-window-maximized { width: 100vw; height: 100dvh; margin: 0; border-radius: 0; }
+@media (max-width: 640px) { .computer-live-window { width: calc(100vw - 12px); height: calc(100dvh - 16px); } .computer-live-window-maximized { width: 100vw; height: 100dvh; } }
