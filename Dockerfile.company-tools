@@ -1,4 +1,4 @@
-FROM boardly-cloud:chat-spacing-748ecc4
+FROM boardly-cloud:minimize-1f1b926
 USER root
 COPY package.json package-lock.json /app/
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund && npm rebuild better-sqlite3 && chown -R node:node /app/node_modules
