@@ -17,7 +17,7 @@ function createHostedAI({db,uploadsDir,personal,canEdit,canUse=()=>false,retain,
   create_task:{description:'Create a task in a list in this project.',properties:{list_id:{type:'integer'},title:{type:'string'},description:{type:'string'}}},
   update_task:{description:'Update a task in this project. Read it first; preserve its existing context.',properties:{id:{type:'integer'},title:{type:'string'},description:{type:'string'},list_id:{type:'integer'}}},
   read_file:{description:'Read a text file stored in this project, up to 50 KB.',properties:{id:{type:'integer'}}},
-  save_file:{description:'Save a new text file in this project. Existing files are preserved.',properties:{name:{type:'string'},content:{type:'string'},folder_id:{type:['integer','null']}}},
+  save_file:{description:'Save a new text file in this project and link it to the current task. Set card_id for another relevant task in this project, or null to use the current task. Existing files are preserved.',properties:{name:{type:'string'},content:{type:'string'},folder_id:{type:['integer','null']},card_id:{type:['integer','null']}}},
   create_folder:{description:'Create a folder inside this project. Use null parent_id for the Files root.',properties:{name:{type:'string'},parent_id:{type:['integer','null']}}},
   move_file:{description:'Move an existing file within this project. Use null folder_id for the Files root.',properties:{id:{type:'integer'},folder_id:{type:['integer','null']}}},
  };
@@ -49,7 +49,7 @@ function createHostedAI({db,uploadsDir,personal,canEdit,canUse=()=>false,retain,
  definitions.media_status={description:'Refresh a previously submitted media job. Outputs are provider-hosted expiring URLs. Poll sparingly; do not create another generation to check status.',properties:{job_id:{type:'string'}}};
  definitions.media_cancel={description:'Request cancellation of an existing media job. It may already be running and still incur charges.',properties:{job_id:{type:'string'}}};
  const tools=Object.entries(definitions).map(([name,d])=>({type:'function',name,description:d.description,strict:true,parameters:{type:'object',properties:d.properties,required:Object.keys(d.properties),additionalProperties:false}}));
- function useTool(boardId,name,args){
+ function useTool(boardId,name,args,cardId=null){
   const integer=v=>{if(!Number.isSafeInteger(v)||v<1)throw Error('Invalid resource ID');return v;};
   const task=id=>{const c=db.prepare('SELECT c.* FROM cards c JOIN lists l ON l.id=c.list_id WHERE c.id=? AND l.board_id=?').get(integer(id),boardId);if(!c)throw Error('Task not found in this project');return c;};
   const list=id=>{if(!db.prepare('SELECT id FROM lists WHERE id=? AND board_id=?').get(integer(id),boardId))throw Error('List not found in this project');};
@@ -75,9 +75,10 @@ function createHostedAI({db,uploadsDir,personal,canEdit,canUse=()=>false,retain,
   }
   if(name==='save_file'){
    const folder=projectFolders.folderId(db,boardId,args.folder_id);
+   const targetTask=args.card_id??cardId;if(targetTask!==null)task(targetTask);
    const name=text(args.name,200).replace(/[\/\\\x00-\x1f]/g,'_').trim(),content=text(args.content,50000);if(!name)throw Error('A file needs a name');
    const size=Buffer.byteLength(content),filename='project-'+crypto.randomUUID(),target=path.join(uploadsDir,filename);
-   try{return db.transaction(()=>{const limit=storageLimit();if(limit!==null&&require('./project-assets').storageUsage(db).usedBytes+size>limit)throw Error('This account has reached its storage allowance');fs.writeFileSync(target,content,{flag:'wx',mode:0o600});const id=db.prepare('INSERT INTO project_files(uuid,board_id,name,filename,size,mime,created_at,folder_id) VALUES (?,?,?,?,?,?,?,?)').run(crypto.randomUUID(),boardId,name,filename,size,'text/plain',Date.now(),folder).lastInsertRowid;return{id:Number(id),name,size,folder_id:folder};})();}catch(e){fs.rmSync(target,{force:true});throw e;}
+   try{return db.transaction(()=>{const limit=storageLimit();if(limit!==null&&require('./project-assets').storageUsage(db).usedBytes+size>limit)throw Error('This account has reached its storage allowance');fs.writeFileSync(target,content,{flag:'wx',mode:0o600});const id=db.prepare('INSERT INTO project_files(uuid,board_id,name,filename,size,mime,created_at,folder_id) VALUES (?,?,?,?,?,?,?,?)').run(crypto.randomUUID(),boardId,name,filename,size,'text/plain',Date.now(),folder).lastInsertRowid;require('./task-files').linkGeneratedFile(db,targetTask,Number(id),boardId);return{id:Number(id),name,size,folder_id:folder,card_id:targetTask};})();}catch(e){fs.rmSync(target,{force:true});throw e;}
   }
   throw Error('Tool is unavailable');
  }
@@ -157,7 +158,7 @@ function createHostedAI({db,uploadsDir,personal,canEdit,canUse=()=>false,retain,
        if(call.name==='github_read_file'){if(!Number.isInteger(args.start_line)||args.start_line<1||!Number.isInteger(args.max_lines)||args.max_lines<1||args.max_lines>200)throw Error('Read between 1 and 200 lines');const lines=Buffer.from(result.content,'base64').toString('utf8').split('\n');const text=lines.slice(args.start_line-1,args.start_line-1+args.max_lines).join('\n');result={path:result.path,sha:result.sha,start_line:args.start_line,total_lines:lines.length,text:text.slice(0,40000),truncated:text.length>40000};}
       }
       else if(call.name==='execute_ssh'){if(!ssh||typeof args.command!=='string'||!args.command.trim()||args.command.length>30000)throw Error('Choose an enabled SSH connection and command');const connection=ssh.forJob(j.board_id,companyId,args.connection_id,j.requested_by);result=await ssh.execute(connection,{requireEnabled:true,command:args.command,valid:()=>{try{allowedScope('ssh');return ssh.forJob(j.board_id,companyId,connection.id,j.requested_by).updated_at===connection.updated_at;}catch{return false;}}});}
-      else result=useTool(j.board_id,call.name,args);activity(call.name.replaceAll('_',' '));}catch(e){result={error:e.message};activity('Could not complete '+call.name.replaceAll('_',' '),'status');}// Only the newest frame stays in the in-memory model context, never chat history/activity.
+      else result=useTool(j.board_id,call.name,args,j.card_id??null);activity(call.name.replaceAll('_',' '));}catch(e){result={error:e.message};activity('Could not complete '+call.name.replaceAll('_',' '),'status');}// Only the newest frame stays in the in-memory model context, never chat history/activity.
       if(result?.image_url){for(const item of input)if(item.type==='function_call_output'&&Array.isArray(item.output))item.output='Earlier screenshot omitted; request a fresh frame.';}
       input.push({type:'function_call_output',call_id:call.call_id,output:result?.image_url?[{type:'input_image',image_url:result.image_url,detail:'high'}]:JSON.stringify(result).slice(0,60000)});}
    }

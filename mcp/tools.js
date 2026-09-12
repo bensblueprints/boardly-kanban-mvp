@@ -70,6 +70,7 @@ function createBoardlyServer({ db, uploadsDir, management }) {
       ...card,
       labels: cardLabels(card.id),
       checklist: checklistProgress(card.id),
+      output_count: require('../server/task-files').taskFileCount(db,card.id),
       has_description: card.description.trim().length > 0
     };
   }
@@ -122,15 +123,22 @@ function createBoardlyServer({ db, uploadsDir, management }) {
     mustGet(q.board, board_id, 'Board');
     return db.prepare('SELECT * FROM project_links WHERE board_id=? ORDER BY id').all(board_id);
   });
-  tool('add_project_file', 'Save a generated text/code/document file in a project (up to 1 MB of text)', { board_id: z.number().int(), name: z.string().min(1).max(250), content: z.string().max(1000000), folder_id: z.number().int().nullable().optional() }, ({ board_id, name, content, folder_id }) => {
+  tool('list_task_files', 'List output file shortcuts on a task', { card_id: z.number().int() }, ({card_id}) => {
+    mustGet(q.card,card_id,'Card');return require('../server/task-files').listTaskFiles(db,card_id);
+  });
+  tool('link_task_file', 'Add a shortcut from a task to an existing file in the same project; does not copy file bytes', { card_id: z.number().int(), file_id: z.number().int() }, ({card_id,file_id}) => require('../server/task-files').linkTaskFile(db,card_id,file_id));
+  tool('add_project_file', 'Save a generated text/code/document file in a project (up to 1 MB of text). Set card_id when the output belongs to a task, so it appears on that task.', { board_id: z.number().int(), name: z.string().min(1).max(250), content: z.string().max(1000000), folder_id: z.number().int().nullable().optional(),card_id:z.number().int().optional() }, ({ board_id, name, content, folder_id,card_id }) => {
     mustGet(q.board, board_id, 'Board');
     const destination = projectFolders.folderId(db, board_id, folder_id);
     const uuid = require('crypto').randomUUID(), filename = 'project-' + uuid;
     const size = Buffer.byteLength(content);
     fs.writeFileSync(path.join(uploadsDir, filename), content, { mode: 0o600 });
     try {
-      const r = db.prepare('INSERT INTO project_files (uuid,board_id,name,filename,size,mime,created_at,folder_id) VALUES (?,?,?,?,?,?,?,?)').run(uuid, board_id, name, filename, size, 'text/plain', Date.now(), destination);
-      return { id: Number(r.lastInsertRowid), name, size, folder_id: destination };
+      return db.transaction(()=>{
+        const r = db.prepare('INSERT INTO project_files (uuid,board_id,name,filename,size,mime,created_at,folder_id) VALUES (?,?,?,?,?,?,?,?)').run(uuid, board_id, name, filename, size, 'text/plain', Date.now(), destination);
+        if(card_id!==undefined)require('../server/task-files').linkTaskFile(db,card_id,Number(r.lastInsertRowid),{generated:true});
+        return { id: Number(r.lastInsertRowid), name, size, folder_id: destination,...(card_id!==undefined?{card_id}:{}) };
+      })();
     } catch (e) { fs.rmSync(path.join(uploadsDir, filename), { force: true }); throw e; }
   });
   tool('read_project_file', 'Read an uploaded text project file (up to 100 KB); linked or binary files return their download reference', { file_id: z.number().int() }, ({ file_id }) => {

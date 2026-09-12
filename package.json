@@ -26,7 +26,7 @@
     "start:cloud": "node server/cloud-index.js",
     "test:cloud": "node test/cloud.js",
     "test:computers": "node test/project-computers.js && node test/computeruse-desktops.js && node test/computer-viewer.js",
-    "test:files": "node test/project-folders.js",
+    "test:files": "node test/project-folders.js && node test/task-files.js",
     "test:audio": "node test/audio.js && node test/audio-work.js",
     "test:integrations": "node test/cloud-integrations.js",
     "test:payments": "node test/project-payments.js",
@@ -70,7 +70,8 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "tailwindcss": "^4.1.0",
-    "vite": "^6.3.5"
+    "vite": "^6.3.5",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "build": {
     "appId": "com.bensblueprints.boardly",

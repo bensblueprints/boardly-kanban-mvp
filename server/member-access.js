@@ -63,7 +63,7 @@ function memberGuard({db,memberships,ownerId,userId}){
     if(method==='GET'&&suffix==='files'){const json=res.json.bind(res);res.json=value=>json({...value,storage:null});}
    }else if((match=route.match(/^\/api\/lists\/(\d+)(?:\/(cards))?$/))){
     if(!((method==='PATCH'&&!match[2])||(method==='POST'&&match[2]==='cards')))throw fail(403,'Action not permitted');projectId=find('SELECT board_id FROM lists WHERE id=?',match[1]);
-   }else if((match=route.match(/^\/api\/cards\/(\d+)(?:\/(move|labels\/\d+|checklists|comments|attachments))?$/))){
+   }else if((match=route.match(/^\/api\/cards\/(\d+)(?:\/(move|labels\/\d+|checklists|comments|attachments|files(?:\/\d+)?))?$/))){
     projectId=card(match[1]);
     if(match[2]==='move')check(find('SELECT board_id FROM lists WHERE id=?',Number(req.body?.list_id)));
     if(match[2]?.startsWith('labels/')){const labelId=match[2].split('/')[1];if(find('SELECT board_id FROM labels WHERE id=?',labelId)!==projectId)throw fail(404,'Label not found');}

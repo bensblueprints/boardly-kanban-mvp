@@ -257,13 +257,15 @@ function createProjectChat({ db, connections, userId, uploadsDir, environment, p
     res.download(path.join(uploadsDir, file.filename), file.name);
   });
   db.exec('CREATE TABLE IF NOT EXISTS chat_outputs (job_id TEXT REFERENCES chat_jobs(id) ON DELETE CASCADE,name TEXT NOT NULL,sha256 TEXT NOT NULL,file_id INTEGER NOT NULL REFERENCES project_files(id) ON DELETE CASCADE,PRIMARY KEY(job_id,name,sha256))');
+  require('./task-files').backfillTaskOutputs(db);
   const outputUpload = multer({ storage: multer.diskStorage({ destination: uploadsDir, filename: (req, file, cb) => cb(null, 'project-' + crypto.randomUUID()) }), limits: { fileSize: 100 * 1024 * 1024 } });
   router.post('/api/worker/jobs/:id/outputs', activeJob, outputUpload.single('file'), (req, res, next) => {
     if (!req.file) return res.status(400).json({ error: 'Choose an output file' });
     try {
       const name=req.file.originalname.slice(0,250),hash=crypto.createHash('sha256').update(fs.readFileSync(req.file.path)).digest('hex');
-      const prior=db.prepare('SELECT file_id FROM chat_outputs WHERE job_id=? AND name=? AND sha256=?').get(req.projectJob.id,name,hash);if(prior){fs.rmSync(req.file.path,{force:true});return res.json({id:prior.file_id});}
-      const id=db.transaction(()=>{const result=db.prepare('INSERT INTO project_files (uuid,board_id,name,filename,size,mime,created_at) VALUES (?,?,?,?,?,?,?)').run(crypto.randomUUID(),req.projectThread.board_id,name,req.file.filename,req.file.size,req.file.mimetype,Date.now());db.prepare('INSERT INTO chat_outputs VALUES (?,?,?,?)').run(req.projectJob.id,name,hash,result.lastInsertRowid);return result.lastInsertRowid;})();res.status(201).json({id});
+      const link=id=>require('./task-files').linkGeneratedFile(db,req.projectThread.card_id,id,req.projectThread.board_id);
+      const prior=db.prepare('SELECT file_id FROM chat_outputs WHERE job_id=? AND name=? AND sha256=?').get(req.projectJob.id,name,hash);if(prior){link(prior.file_id);fs.rmSync(req.file.path,{force:true});return res.json({id:prior.file_id});}
+      const id=db.transaction(()=>{const result=db.prepare('INSERT INTO project_files (uuid,board_id,name,filename,size,mime,created_at) VALUES (?,?,?,?,?,?,?)').run(crypto.randomUUID(),req.projectThread.board_id,name,req.file.filename,req.file.size,req.file.mimetype,Date.now());db.prepare('INSERT INTO chat_outputs VALUES (?,?,?,?)').run(req.projectJob.id,name,hash,result.lastInsertRowid);link(Number(result.lastInsertRowid));return result.lastInsertRowid;})();res.status(201).json({id});
     } catch (error) { fs.rmSync(req.file.path, { force: true }); next(error); }
   });
   router.post('/api/worker/jobs/:id', body, (req, res) => {

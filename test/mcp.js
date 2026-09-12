@@ -69,7 +69,7 @@ function check(label, cond) {
   console.log(`tools/list: ${names.length} tools`);
   for (const t of ['list_boards', 'get_board', 'create_board', 'create_list', 'create_card',
     'move_card', 'create_label', 'assign_label', 'add_checklist', 'add_checklist_item',
-    'set_checklist_item', 'add_comment', 'update_card', 'delete_card']) {
+    'set_checklist_item', 'add_comment', 'update_card', 'delete_card', 'list_task_files', 'link_task_file']) {
     check(`tool exposed: ${t}`, names.includes(t));
   }
 
@@ -122,6 +122,19 @@ function check(label, cond) {
   await callTool('update_project', {project_id:project.id,name:'New website'});
   const scoped = await callTool('get_board', {board_id:project.id});
   check('company and project MCP tools preserve task API compatibility', scoped.hierarchy.company_id === company.id && scoped.hierarchy.project_name === 'New website' && scoped.lists.length === 4);
+
+  const generated = await callTool('add_project_file', {board_id:board.id,card_id:card.id,name:'task-report.md',content:'# Task output'});
+  const reference = await callTool('add_project_file', {board_id:board.id,name:'reference.txt',content:'Original reference'});
+  await callTool('link_task_file', {card_id:card.id,file_id:reference.id});
+  await callTool('link_task_file', {card_id:card.id,file_id:reference.id});
+  const outputs = await callTool('list_task_files', {card_id:card.id});
+  check('MCP saves and links task outputs without duplicates', outputs.length===2 && outputs.find(f=>f.id===generated.id).generated===1);
+  check('MCP board card includes output count', (await callTool('get_board',{board_id:board.id})).lists.find(l=>l.id===listB.id).cards[0].output_count===2);
+  const otherTask=await callTool('create_card',{list_id:scoped.lists[0].id,title:'Other project task'});
+  const foreignLink=await rpc('tools/call',{name:'link_task_file',arguments:{card_id:otherTask.id,file_id:reference.id}});
+  const rejectedSave=await rpc('tools/call',{name:'add_project_file',arguments:{board_id:board.id,card_id:otherTask.id,name:'rejected.txt',content:'Should roll back'}});
+  check('MCP rejects links and saves across projects', foreignLink.isError===true && rejectedSave.isError===true && (await callTool('list_project_files',{board_id:board.id})).length===2);
+  check('MCP linking preserves original contents', (await callTool('read_project_file',{file_id:reference.id})).content==='Original reference');
 
   const err = await rpc('tools/call' , { name: 'get_board', arguments: { board_id: 9999 } });
   check('missing board -> isError', err.isError === true);

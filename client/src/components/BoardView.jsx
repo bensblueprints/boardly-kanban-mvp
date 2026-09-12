@@ -3,7 +3,7 @@ import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   ArrowLeft, Plus, Star, Search, Filter, Download, Upload, Archive,
-  Settings2, Plug, History, X, Clock, MessageSquare, Paperclip, CheckSquare, AlignLeft, RotateCcw, Sparkles
+  Settings2, Plug, History, X, Clock, MessageSquare, Paperclip, CheckSquare, AlignLeft, RotateCcw, Sparkles, FileText
 } from 'lucide-react';
 import { api } from '../api.js';
 import CardModal from './CardModal.jsx';
@@ -49,6 +49,7 @@ function CardChip({ card, onClick }) {
         </div>
       )}
       <p className="text-sm text-zinc-100 leading-snug">{card.title}</p>
+      {card.output_count>0&&<button type="button" aria-label={`View ${card.output_count} output files for ${card.title}`} onClick={e=>{e.stopPropagation();onClick();}} className="mt-2 inline-flex max-w-full items-center gap-1.5 rounded-md border border-indigo-500/30 bg-indigo-500/10 px-2 py-1 text-xs text-indigo-200 hover:bg-indigo-500/20"><FileText size={13}/>{card.output_count} {card.output_count===1?'output file':'output files'}</button>}
       {(due || cl.total > 0 || card.comment_count > 0 || card.attachment_count > 0 || card.has_description) && (
         <div className="flex flex-wrap items-center gap-2 mt-2.5 text-[11px] text-zinc-500">
           {due && (

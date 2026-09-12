@@ -117,6 +117,7 @@ function createApp(opts = {}) {
       checklist: checklistProgress(card.id),
       comment_count: counts.comments,
       attachment_count: counts.attachments,
+      output_count: require('./task-files').taskFileCount(db,card.id),
       has_description: card.description.trim().length > 0
     };
   }
@@ -134,6 +135,7 @@ function createApp(opts = {}) {
       checklists,
       comments: db.prepare('SELECT * FROM comments WHERE card_id = ? ORDER BY id DESC').all(card.id),
       attachments: db.prepare('SELECT * FROM attachments WHERE card_id = ? ORDER BY id DESC').all(card.id),
+      output_count: require('./task-files').taskFileCount(db,card.id),
       activity: db.prepare('SELECT * FROM activity WHERE card_id = ? ORDER BY id DESC LIMIT 50').all(card.id)
     };
   }
@@ -145,6 +147,8 @@ function createApp(opts = {}) {
   }
 
   // ================= AUTH =================
+
+  require('./task-files').registerTaskFileRoutes(app,{db,requireAuth});
 
   app.get('/api/auth-config', (req, res) => res.json({ mode: 'local' }));
 

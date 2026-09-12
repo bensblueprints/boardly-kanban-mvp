@@ -17,6 +17,7 @@ function installProjectAssets(db) {
     title TEXT NOT NULL, url TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL
   );`);
   folders.installFolders(db);
+  require('./task-files').installTaskFiles(db);
 }
 function safeUrl(value) {
   const u = new URL(String(value));
