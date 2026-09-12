@@ -11,6 +11,7 @@ async function fixture({publicAccess=false,providerRequest,billing,openaiApiKey,
  const request=(route,{user='user_owner',workspace,method='GET',body}={})=>fetch(base+route,{method,headers:{authorization:'Bearer '+token(user),...(workspace?{'x-boardly-workspace':workspace}:{}),...(body instanceof FormData?{}:{'content-type':'application/json'})},body:body===undefined?undefined:body instanceof FormData?body:JSON.stringify(body)});
  async function api(route,options){const r=await request(route,options),d=await r.json();assert.ok(r.ok,`${route}: ${r.status} ${JSON.stringify(d)}`);return d;}
  async function project(companyName='Company',projectName='Project',user='user_owner'){const company=await api('/api/companies',{user,method:'POST',body:{name:companyName}}),board=await api('/api/company-boards',{user,method:'POST',body:{name:'Board',company_id:company.id}}),project=await api('/api/projects',{user,method:'POST',body:{name:projectName,parent_board_id:board.id}}),full=await api('/api/boards/'+project.id,{user});return{company,board,project,list:full.lists[0]};}
- return{root,config,app,server,base,users,identity,token,request,api,project,async close(){await new Promise(r=>server.close(r));app.closeWorkspaces();fs.rmSync(root,{recursive:true,force:true});}};
+ async function mcpTokenFile(){const key=await api('/api/connections',{method:'POST',body:{name:'Worker MCP fixture',scope:'mcp'}});const file=path.join(root,'mcp-'+crypto.randomUUID());fs.writeFileSync(file,key.token,{mode:0o600});return file;}
+ return{root,config,app,server,base,users,identity,token,request,api,project,mcpTokenFile,async close(){await new Promise(r=>server.close(r));app.closeWorkspaces();fs.rmSync(root,{recursive:true,force:true});}};
 }
 module.exports={fixture};
