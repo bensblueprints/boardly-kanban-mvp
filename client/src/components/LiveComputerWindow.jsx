@@ -1,4 +1,4 @@
-import React,{useEffect,useRef,useState} from 'react';
+import React,{createContext,useContext,useEffect,useRef,useState} from 'react';
 import {createPortal} from 'react-dom';
 import {Monitor,Maximize2,Minimize2,X,Hand,Play,Loader2} from 'lucide-react';
 import {api} from '../api.js';
@@ -6,9 +6,14 @@ import DesktopInputQueue from '../computer-input-queue.js';
 import DesktopDirect from '../computer-direct.js';
 
 const button='inline-flex items-center justify-center gap-2 rounded-lg border border-zinc-600 px-3 py-2 text-sm hover:bg-zinc-800 disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-indigo-400';
+const ComputerWindowContext=createContext(null);
+export function ComputerWindowButton(){
+  const launch=useContext(ComputerWindowContext);
+  return launch&&<button type="button" onClick={launch} className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg border border-indigo-400 px-3 py-2 text-sm text-indigo-100 hover:bg-zinc-800 focus-visible:outline-2 focus-visible:outline-indigo-400"><Monitor size={17}/>Open computer</button>;
+}
 const identity=item=>item?`${item.run_id||'manual'}:${item.project_id}:${item.desktop_id}`:'';
 const keys={Enter:'Return',Escape:'Escape',Backspace:'BackSpace',Delete:'Delete',Insert:'Insert',Tab:'Tab',ArrowLeft:'Left',ArrowRight:'Right',ArrowUp:'Up',ArrowDown:'Down',Home:'Home',End:'End',PageUp:'Page_Up',PageDown:'Page_Down',' ':'space','-':'minus','+':'plus','=':'equal','.':'period',',':'comma','/':'slash'};
-export default function LiveComputerWindow({workspaceId}) {
+export default function LiveComputerWindow({workspaceId,children}) {
   const [items,setItems]=useState([]),[item,setItem]=useState(null),[open,setOpen]=useState(false),[maximized,setMaximized]=useState(false);
   const [state,setState]=useState(null),[error,setError]=useState(''),[notice,setNotice]=useState(''),[busy,setBusy]=useState(false),[frameAt,setFrameAt]=useState(null),[text,setText]=useState(''),[connectionLabel,setConnectionLabel]=useState('Connecting…'),[frameMs,setFrameMs]=useState(null);
   const dialog=useRef(null),canvas=useRef(null),active=useRef(null),control=useRef(false),hasFrame=useRef(false),handoff=useRef(false),generation=useRef(0),down=useRef(null),abort=useRef(null),queue=useRef(null),refresh=useRef(()=>{}),handoffEpoch=useRef(0),direct=useRef(null);
@@ -102,8 +107,7 @@ export default function LiveComputerWindow({workspaceId}) {
     if(key)input({type:'key',key:[e.ctrlKey?'ctrl':null,e.altKey?'alt':null,e.shiftKey?'shift':null,e.metaKey?'super':null,key].filter(Boolean).join('+')});
   }
   const human=state?.mode==='human',mine=human&&state?.can_control;
-  return createPortal(<>
-    {item&&!open&&<button className="fixed bottom-5 right-5 z-[90] inline-flex items-center gap-2 rounded-xl border border-indigo-400 bg-zinc-950 px-4 py-3 text-sm text-white shadow-xl" onClick={()=>select(item)}><Monitor size={18}/>Open computer</button>}
+  return <ComputerWindowContext.Provider value={item&&!open?()=>select(item):null}>{children}{createPortal(<>
     <dialog ref={dialog} aria-label="Live computer window" onCancel={e=>{e.preventDefault();if(maximized)setMaximized(false);else close();}} className={`computer-live-window ${maximized?'computer-live-window-maximized':''} m-auto overflow-hidden rounded-2xl border border-zinc-600 bg-zinc-950 text-zinc-100 shadow-2xl backdrop:bg-black/50`}>
       <div className="flex h-full min-h-0 flex-col">
         <header className="flex shrink-0 items-center gap-3 border-b border-zinc-800 p-3 sm:p-4"><Monitor className="shrink-0 text-indigo-300" size={22}/><div className="min-w-0 flex-1"><h2 className="truncate font-semibold">{item?.label||'Live computer'}</h2><p className="truncate text-sm text-zinc-400">{item?.project_name||state?.activity?.project_name||'Project computer'}</p></div><button className={button} aria-label={maximized?'Restore computer window':'Maximize computer window'} onClick={()=>setMaximized(!maximized)}>{maximized?<Minimize2 size={18}/>:<Maximize2 size={18}/>}<span className="hidden sm:inline">{maximized?'Restore':'Maximize'}</span></button><button className={button} aria-label="Close computer window" onClick={close}><X size={18}/></button></header>
@@ -122,5 +126,5 @@ export default function LiveComputerWindow({workspaceId}) {
         {mine&&<form className="shrink-0 border-t border-zinc-800 p-3" onSubmit={e=>{e.preventDefault();if(text&&hasFrame.current){input({type:'type',text});setText('');}}}><div className="flex gap-2"><input aria-label="Text to type on computer" autoComplete="off" spellCheck={false} maxLength={4096} value={text} onChange={e=>setText(e.target.value)} placeholder="Type or paste text into the computer…" className="min-w-0 flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm"/><button className={button} disabled={busy||!frameAt||!text}>Type</button></div><div className="mt-2 flex flex-wrap gap-2">{[['Return','Enter'],['Tab','Tab'],['Escape','Esc'],['ctrl+l','Address bar'],['ctrl+v','Paste in desktop']].map(([key,label])=><button key={key} type="button" className={button} disabled={busy||!frameAt} onClick={()=>input({type:'key',key})}>{label}</button>)}</div><p className="mt-2 text-sm text-amber-200">Closing this window keeps the agent paused. Give control back when you’re ready.</p></form>}
       </div>
     </dialog>
-  </>,document.body);
+  </>,document.body)}</ComputerWindowContext.Provider>;
 }

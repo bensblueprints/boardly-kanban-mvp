@@ -9,6 +9,7 @@ let v,vite,browser,page;const directTest=process.env.BOARDLY_TEST_DIRECT==='1';
  browser=await chromium.launch({executablePath:process.env.BOARDLY_CHROME_PATH||'/usr/bin/google-chrome',headless:true,args:['--no-sandbox']});page=await browser.newPage({viewport:{width:1440,height:1000}});const errors=[];page.on('pageerror',e=>errors.push(e.message));
  if(directTest)await require('./rtc-browser-fixture.cjs')(page);
  await page.goto(vite.resolvedUrls.local[0]+'qa#/board/'+p.project.id);
+ await page.getByRole('button',{name:'Set up later',exact:true}).click();
  const frame=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=1280;c.height=800;const x=c.getContext('2d');x.fillStyle='#172554';x.fillRect(0,0,1280,800);x.fillStyle='#fff';x.font='32px sans-serif';x.fillText('Permit portal — synthetic test desktop',60,90);x.fillStyle='#dbeafe';x.fillRect(60,140,1160,590);x.fillStyle='#1e3a8a';x.font='24px sans-serif';x.fillText('Account details',100,200);return c.toDataURL('image/jpeg');});v.setFrame(frame);await page.evaluate(value=>window.__rtcFrame=value,frame);
  const {job}=await v.start();const dialog=page.getByRole('dialog',{name:'Live computer window',exact:true});await dialog.waitFor();await dialog.getByText('Agent has control',{exact:true}).waitFor();await dialog.getByLabel('Computer connection').filter({hasText:/[0-9]+ ms/}).waitFor();
  if(directTest){await dialog.getByLabel('Computer connection').filter({hasText:/Direct connection/}).waitFor();assert.equal(await page.evaluate(()=>window.__rtcConnections.at(-1).readOnly),true);}

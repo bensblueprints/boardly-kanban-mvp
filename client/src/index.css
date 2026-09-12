@@ -40,10 +40,12 @@ html, body, #root { height: 100%; }
 [data-layout="side"] > .workspace-divider span { width: 3px; height: 32px; }
 [data-layout="stacked"] > .workspace-divider { cursor: row-resize; }
 [data-layout="stacked"] > .workspace-divider span { height: 3px; width: 32px; }
-.coding-pane { overscroll-behavior: contain; }
+.coding-pane { overscroll-behavior: contain; scrollbar-gutter: stable; }
 .coding-pane-maximized { position: fixed; inset: 0; z-index: 60; height: 100dvh; }
 .coding-pane-maximized > header { position: sticky; top: 0; z-index: 1; background: #09090b; }
 .coding-pane > *, .coding-pane article { min-width: 0; overflow-wrap: anywhere; }
+.chat-composer { padding: 1.25rem max(1.5rem, env(safe-area-inset-right)) max(1.25rem, env(safe-area-inset-bottom)) max(1.25rem, env(safe-area-inset-left)); }
+.chat-composer fieldset { min-width: 0; }
 .audio-briefing-dialog { width: calc(100% - 1rem); height: min(calc(100dvh - 1rem), 56rem); max-width: 64rem; max-height: none; overflow: hidden; color-scheme: dark; }
 
 .computer-live-window { width: min(1000px, calc(100vw - 24px)); height: min(850px, calc(100dvh - 40px)); max-width: none; max-height: none; padding: 0; }
