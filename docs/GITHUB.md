@@ -19,3 +19,6 @@ Codex integration: `scripts/project-github-client.cjs`, through a private per-jo
 Verification: `npm run test:github` covers encryption, inheritance, concurrent updates, actual broker requests, worker execution, hosted tool loops, permission revocation and release gating with a GitHub-shaped fixture. It makes no writes to real repositories.
 
 Reference: [GitHub fine-grained token permissions](https://docs.github.com/en/rest/authentication/permissions-required-for-fine-grained-personal-access-tokens), [Git trees](https://docs.github.com/en/rest/git/trees).
+
+
+Connected Work agents commit and push each completed, verified set of intended source or deliverable changes to the saved repository and branch, including work that does not deploy anything. They verify the remote SHA before reporting completion. Read-only work does not create an empty commit. A denied push or unresolved concurrent edit leaves the work preserved with an actionable blocker. Account tokens, passwords and unrelated private files stay out of GitHub.

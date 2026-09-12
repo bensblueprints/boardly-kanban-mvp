@@ -29,10 +29,10 @@ function createComputerViewer({ db, key, namespace, origin, connection, decrypt,
   let inventoryCache=null;
   async function request(projectId, actor, sessionId, command, data, valid) {
     if (!key) throw fail(503, 'The live computer viewer is being connected. Please try again shortly.');
-    if (!['status','screenshot','takeover','resume','action'].includes(command) || typeof data.desktop_id !== 'string' || data.desktop_id.length > 128) throw fail(400,'Invalid computer request');
+    if (!['status','screenshot','takeover','resume','action','direct-connect','direct-renew','direct-close'].includes(command) || typeof data.desktop_id !== 'string' || data.desktop_id.length > 128) throw fail(400,'Invalid computer request');
     valid(); const revision = connection()?.revision, scope = signature('project',projectId);
     const assigned = assignment('project',projectId);
-    if(!inventoryCache || inventoryCache.revision!==revision || inventoryCache.expires<Date.now())inventoryCache={revision,expires:Date.now()+2000,items:await rentals(valid)};
+    if(!inventoryCache || inventoryCache.revision!==revision || inventoryCache.expires<Date.now())inventoryCache={revision,expires:Date.now()+30000,items:await rentals(valid)};
     const inventory=inventoryCache.items;
     const selected = inventory.find(d=>d.desktop_id===data.desktop_id && assigned.rental_ids.includes(d.id) && d.state==='active');
     if (!selected) throw fail(403,'This computer is not assigned to the project');
@@ -65,6 +65,12 @@ function registerViewerRoutes(router, verify) {
     const data={desktop_id:req.params.desktopId};
     if(command==='action') { data.operation_id=req.body?.operation_id; data.action=req.body?.action;
       if(typeof data.operation_id!=='string'||!/^[0-9a-f-]{36}$/.test(data.operation_id)||!data.action||JSON.stringify(data.action).length>20000)throw fail(400,'Invalid computer input'); }
+    if(command.startsWith('direct-')) {
+      if(typeof req.body?.read_only!=='boolean')throw fail(400,'Choose viewing or human control');
+      data.read_only=req.body.read_only;
+      if(command==='direct-connect'){data.sdp=req.body.sdp;if(typeof data.sdp!=='string'||!data.sdp.length||data.sdp.length>12000)throw fail(400,'Invalid direct connection offer');}
+      else {data.stream_id=req.body.stream_id;if(typeof data.stream_id!=='string'||!/^[0-9a-f-]{36}$/.test(data.stream_id))throw fail(400,'Invalid direct connection');}
+    }
     const result=await req.tenant.computeruse.viewer.request(id,req.cloudUserId,req.cloudSessionId,command,data,valid);
     res.set('Cache-Control','private, no-store');
     if(command==='screenshot'){
@@ -76,6 +82,6 @@ function registerViewerRoutes(router, verify) {
     res.json({...result,activity:recent||null,job:job?{id:job.id,status:job.status,thread_id:job.thread_id,can_resume:['blocked','failed','interrupted'].includes(job.status)&&(req.workspaceIsOwner||job.requested_by===req.cloudUserId)}:null});
   }catch(e){next(e);}};
   router.get(base,handle('status'));router.get(base+'/screen',handle('screenshot'));
-  for(const command of ['takeover','resume','action'])router.post(base+'/'+command,express.json({limit:'24kb'}),handle(command));
+  for(const command of ['takeover','resume','action','direct-connect','direct-renew','direct-close'])router.post(base+'/'+command,express.json({limit:'24kb'}),handle(command));
 }
 module.exports={createComputerViewer,registerViewerRoutes};

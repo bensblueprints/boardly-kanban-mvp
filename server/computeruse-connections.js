@@ -9,7 +9,7 @@ function trustedOrigin(value){
 // Only fixed paths on the configured service origin receive the encrypted key.
 async function requestDesktop(origin,token,command,data,extraHeaders={}){
  const paths={account:'/api/v1/account',desktops:'/api/v1/desktops'};
- if(!paths[command]&&!['status','screenshot','lease','release','action','login','takeover','resume'].includes(command))throw fail(400,'Unsupported desktop command');
+ if(!paths[command]&&!['status','screenshot','lease','release','action','login','takeover','resume','direct-connect','direct-renew','direct-close'].includes(command))throw fail(400,'Unsupported desktop command');
  try{
   const r=await fetch(origin+(paths[command]||'/api/v1/desktops/'+command),{method:paths[command]?'GET':'POST',headers:{...extraHeaders,Authorization:'Bearer '+token,Accept:command==='screenshot'?'image/jpeg':'application/json','Content-Type':'application/json'},body:paths[command]?undefined:JSON.stringify(data),redirect:'error',signal:AbortSignal.timeout(25000)});
   if(!r.ok){const messages={401:'Reconnect ComputerUse: the API key expired or was revoked.',403:'ComputerUse denied access. Check ownership and account:read, desktop:read and desktop:write scopes.',409:'Desktop is busy or under human control. Hand back control in ComputerUse, or wait for the other agent to finish.'};throw fail(r.status,messages[r.status]||'ComputerUse is unavailable. An input may already have occurred; observe before retrying.');}
