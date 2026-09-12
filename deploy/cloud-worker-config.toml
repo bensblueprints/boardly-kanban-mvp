@@ -4,6 +4,8 @@ sandbox_mode = "workspace-write"
 [sandbox_workspace_write]
 network_access = true
 [mcp_servers.boardly]
-url = "https://boardly.onetimesuite.com/mcp"
-http_headers_helper = "/app/scripts/cloud-mcp-headers.cjs"
-startup_timeout_sec = 20
+url = "https://boardlyagent.com/mcp"
+http_headers_helper = "node /app/scripts/cloud-mcp-headers.cjs"
+startup_timeout_sec = 60
+required = true
+default_tools_approval_mode = "approve"

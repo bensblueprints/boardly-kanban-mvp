@@ -1,0 +1,11 @@
+# Cloud worker MCP readiness
+
+Boardly Work assignments need the workspace's Boardly tools before the AI starts. The managed cloud worker derives the MCP URL from its configured Boardly origin and invokes the private authentication helper through Node, so archive or Docker file permissions cannot prevent helper execution. MCP is required and receives the worker's existing tool approval policy.
+
+Before accessing project files, GitHub or desktop brokers, the worker initializes MCP, checks the required tool catalog and reads the assigned project. A transient failure keeps the saved assignment pending execution with “Reconnecting Boardly · retrying automatically” progress. It retries with a bounded backoff while retaining its heartbeat and respecting cancellation. The credential file is reread on every check, so operator credential rotation is picked up without restarting the worker. Credentials remain in the private mount and are never included in logs or prompts.
+
+If Codex itself reports that required Boardly MCP failed before a model turn starts, the worker checks readiness and retries startup. It does not automatically replay a failed model turn or a possibly executed tool mutation. Human takeover, signup, missing provider access and other genuine dependencies continue to pause normally.
+
+Hosted customer API and ChatGPT agents use the existing server-side project tools and permission checks; they do not require customers to configure an external MCP connection for Boardly's built-in task tools. This repair does not broaden the external MCP endpoint's audience or permissions.
+
+Verification: `npm run test:mcp-worker` reproduces a non-executable helper, temporary outage, inaccessible project, cancellation, credential rotation and required-server startup failure. The worker must perform no AI work before readiness and execute the assignment once after recovery. Cloud-agent, ComputerUse-worker, GitHub-worker, member-scope, personal-AI, owner-funding and swarm tests cover existing behavior. Before deploying a worker image, run a real MCP handshake and project/card reads using that image and its normal runtime user; comparing source hashes alone does not verify executability or authentication.
