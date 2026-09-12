@@ -10,7 +10,7 @@ function createComputerViewer({ db, key, namespace, origin, connection, decrypt,
   function record(projectId, actor, runId, desktop, action) {
     const now = Date.now();
     db.prepare(`INSERT INTO cu_desktop_activity VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(run_id,desktop_id)
-      DO UPDATE SET action=excluded.action,updated_at=excluded.updated_at`).run(runId, desktop.desktop_id, projectId, actor, desktop.label || 'Computer', action, now, now,signature('project',projectId));
+      DO UPDATE SET action=excluded.action,updated_at=excluded.updated_at,scope_signature=excluded.scope_signature,label=excluded.label`).run(runId, desktop.desktop_id, projectId, actor, desktop.label || 'Computer', action, now, now,signature('project',projectId));
   }
   function activity(allowed) {
     return db.prepare(`SELECT a.*,j.status,j.progress,t.title,b.name AS project_name FROM cu_desktop_activity a

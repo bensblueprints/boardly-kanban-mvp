@@ -30,6 +30,10 @@ const {viewerFixture}=require('./computer-viewer-fixture');
  const pending=f.request(base+'/screen',options);await started;
  await f.api(`/api/memberships/${grant}`,{method:'PATCH',body:{scopes:[]}});release();assert.equal((await pending).status,403,'Revoke before delivering an in-flight frame');
  const other=await f.project('Other company','No assigned computer');assert.equal((await f.request(`/api/projects/${other.project.id}/computeruse/view/${desktop_id}`)).status,403);
+ await f.api(`/api/projects/${p.project.id}/computeruse`,{method:'PUT',body:{rental_ids:['desktop:'+desktop_id],allow_agent:true,allow_control:true}});
+ assert.equal((await f.api('/api/computeruse/activity')).activity.length,0);
+ await v.workerApi(`/api/worker/jobs/${job.id}/computeruse/status`,{desktop_id});
+ assert.equal((await f.api('/api/computeruse/activity')).activity[0].run_id,job.id,'Newly authorized desktop work uses the current assignment');
  await v.workerApi(`/api/worker/jobs/${job.id}`,{status:'blocked',blocker:'Awaiting signup',next_action:'Take over then give back',text:'Ready for user signup'});
  assert.equal((await f.api(base+'/takeover',{method:'POST',body:{}})).job.can_resume,true);
  // Human handoffs can outlast the automatic-window activity feed's 30-minute window.
