@@ -1,8 +1,8 @@
 const GiB = 1024 ** 3;
 const PLANS = {
   basic: { slug:'basic', name:'Basic Free', monthly_price:0, companies:1, users:1, storage_bytes:2*GiB },
-  serial_entrepreneur: { slug:'serial_entrepreneur', name:'Serial Entrepreneur', monthly_price:79, companies:3, users:5, storage_bytes:10*GiB },
-  agency: { slug:'agency', name:'Agency', monthly_price:299, companies:100, users:300, storage_bytes:1024*GiB },
+  serial_entrepreneur: { slug:'serial_entrepreneur', name:'Serial Entrepreneur', monthly_price:79, companies:null, users:5, storage_bytes:10*GiB },
+  agency: { slug:'agency', name:'Agency', monthly_price:299, companies:null, users:300, storage_bytes:1024*GiB },
 };
 const OWNER = {slug:'owner',name:'Owner',monthly_price:0,companies:null,users:null,storage_bytes:null};
 function planFor(auth,config) {

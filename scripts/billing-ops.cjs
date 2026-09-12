@@ -10,6 +10,17 @@ async function stripe(route,data,method='GET'){
  const d=await r.json();if(!r.ok){const message=String(d.error?.message||'').split(env.STRIPE_SECRET_KEY).join('[redacted]').replace(/(?:sk|rk|whsec)_[A-Za-z0-9_]+/g,'[redacted]');throw Error(`Stripe ${route.split('/')[0]} returned ${r.status}: ${d.error?.code||d.error?.type||'error'} ${message}`);}return d;
 }
 (async()=>{
+ if(action==='company-entitlements'){
+  const desired={STRIPE_SERIAL_PRICE_ID:'Unlimited companies, 5 users and 10 GiB storage. USD 79 per month.',STRIPE_AGENCY_PRICE_ID:'Unlimited companies, 300 users and 1 TiB storage. USD 299 per month.'},results=[];
+  for(const [key,description] of Object.entries(desired)){
+   const price=await stripe('prices/'+env[key]),product=await stripe('products/'+price.product);
+   if(product.metadata?.application!=='boardly')throw Error('Unexpected product scope');
+   const updated=product.description===description?product:await stripe('products/'+product.id,{description},'POST');
+   if(updated.description!==description)throw Error('Product description was not updated');
+   results.push({product:updated.id,name:updated.name,description:updated.description});
+  }
+  console.log(JSON.stringify({products:results,prices_changed:false,subscriptions_changed:false}));return;
+ }
  if(action==='inspect'){
   console.log(JSON.stringify({origin:env.BOARDLY_ORIGIN,ownerOnly:env.BOARDLY_OWNER_ONLY,credentials:Object.fromEntries(Object.entries(env).filter(([k])=>k.startsWith('STRIPE_')||k==='BOARDLY_OPENAI_API_KEY').map(([k,v])=>[k,!!v]))},null,2));return;
  }
@@ -61,7 +72,7 @@ async function stripe(route,data,method='GET'){
    if(product.metadata?.application!=='boardly')throw Error('Unexpected product scope');
    const taxCode=key==='STRIPE_AI_PRICE_ID'?'txcd_10105002':'txcd_10103001';
    if(product.tax_code&&product.tax_code!==taxCode)throw Error('Existing tax classification differs');
-   const descriptions={STRIPE_SERIAL_PRICE_ID:'3 companies, 5 users and 10 GiB storage. USD 79 per month.',STRIPE_AGENCY_PRICE_ID:'100 companies, 300 users and 1 TiB storage. USD 299 per month.',STRIPE_SEAT_PRICE_ID:'One additional licensed user, USD 9 per month after the included account allowance.',STRIPE_AI_PRICE_ID:'Monthly AI usage at 2 times actual standard OpenAI API token cost. Your boredly AI settings control your monthly spending cap.'};
+   const descriptions={STRIPE_SERIAL_PRICE_ID:'Unlimited companies, 5 users and 10 GiB storage. USD 79 per month.',STRIPE_AGENCY_PRICE_ID:'Unlimited companies, 300 users and 1 TiB storage. USD 299 per month.',STRIPE_SEAT_PRICE_ID:'One additional licensed user, USD 9 per month after the included account allowance.',STRIPE_AI_PRICE_ID:'Monthly AI usage at 2 times actual standard OpenAI API token cost. Your boredly AI settings control your monthly spending cap.'};
    const updated=await stripe('products/'+product.id,{tax_code:taxCode,description:descriptions[key]},'POST');
    results.push({product:updated.id,name:updated.name,tax_code:updated.tax_code});
   }

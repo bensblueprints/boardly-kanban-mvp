@@ -1,7 +1,7 @@
 import React,{useEffect,useState} from 'react';
 import {api} from '../api.js';
 import {settingsButton,settingsInput,accountSettings} from './SettingsShell.jsx';
-const info={claude:{name:'Claude',url:'https://platform.claude.com/settings/keys',description:'Use a Claude API key to power Boardly agents. Your Claude Code client can also connect to Boardly through MCP.'},kimi:{name:'Kimi',url:'https://platform.kimi.ai/',description:'Use your Kimi API Platform key for Boardly agents. Kimi API billing is separate from a Kimi Code or chat subscription.'},local:{name:'Local AI',description:'Connect Ollama, LM Studio, vLLM or another OpenAI-compatible model server running on your own computer.'}};
+const info={claude:{name:'Claude',url:'https://platform.claude.com/settings/keys',description:'Use a Claude API key to power Boardly agents. Your Claude chat subscription is separate from API billing.'},kimi:{name:'Kimi',url:'https://platform.kimi.ai/',description:'Use your Kimi API Platform key for Boardly agents. Kimi API billing is separate from a Kimi Code or chat subscription.'},local:{name:'Local AI',description:'Connect Ollama, LM Studio, vLLM or another OpenAI-compatible model server running on your own computer.'}};
 export default function AIProviderConnection({provider,platformOwner=false}){
  const [data,setData]=useState(null),[form,setForm]=useState({token:'',model:'',device_id:'',port:11434}),[devices,setDevices]=useState([]),[error,setError]=useState(''),[notice,setNotice]=useState(''),[busy,setBusy]=useState(false);
  const config=info[provider];

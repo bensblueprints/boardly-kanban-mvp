@@ -16,7 +16,7 @@ export default function ChatGPTConnection({onChange,ownerSubscription=false}){
   await refresh();changed.current?.();
  }catch(e){if(alive.current)setError(e.message);}finally{if(alive.current)setBusy(false);}}
  return <section aria-label="ChatGPT connection" className="rounded-xl border border-indigo-500/40 bg-indigo-950/20 p-4 space-y-4">
- <div><h3 className="font-semibold text-lg">Use your ChatGPT / Codex account</h3><p className="text-sm text-zinc-300 mt-2">Connect the ChatGPT account you already use. Sign in with OpenAI or use your own API key below. Your ChatGPT plan’s Codex access and usage limits apply.</p></div>
+ <div><h3 className="font-semibold text-lg">Use your ChatGPT / Codex account</h3><p className="text-sm text-zinc-300 mt-2">Connect the ChatGPT account you already use. Sign in with OpenAI. Your ChatGPT plan’s Codex access and usage limits apply.</p></div>
  <p className="text-xs text-zinc-400">Sign in on OpenAI’s website. Boardly saves the connection privately for your account so AI can keep helping with your projects. You can disconnect here at any time. This connects AI access; it does not import your ChatGPT conversations.</p>
  {ownerSubscription&&!state?.active&&<p className="text-sm text-emerald-300">Your account can use its existing cloud Codex worker. Connecting here lets you choose this ChatGPT connection for your AI work.</p>}
  {error&&<p role="alert" className="text-sm text-rose-300">{error}<button className="underline ml-2" onClick={()=>refresh().then(()=>setError('')).catch(e=>setError(e.message))}>Retry connection status</button></p>}

@@ -2,7 +2,7 @@ const express=require('express'),crypto=require('node:crypto');
 const fail=message=>Object.assign(Error(message),{status:503});
 // The owner worker generates text/structured suggestions only. It never runs a
 // member's shell or receives project secrets; hosted-ai checks every tool call.
-function createSubscriptionAI({db,ownerId,canEdit,connections}) {
+function createSubscriptionAI({db,ownerId,canEdit,connections,canGenerate=()=>false}) {
   db.exec(`CREATE TABLE IF NOT EXISTS subscription_requests (
     id TEXT PRIMARY KEY,job_id TEXT NOT NULL,payer_id TEXT NOT NULL,actor_id TEXT NOT NULL,
     model TEXT NOT NULL,status TEXT NOT NULL,payload TEXT,result TEXT,usage_json TEXT,
@@ -10,7 +10,7 @@ function createSubscriptionAI({db,ownerId,canEdit,connections}) {
   ); CREATE TABLE IF NOT EXISTS subscription_workers(id TEXT PRIMARY KEY,last_seen INTEGER NOT NULL);`);
   db.prepare("UPDATE subscription_requests SET status='interrupted',payload=NULL,result=NULL WHERE status IN ('queued','running')").run();
   let closed=false;
-  const live=row=>{const j=db.prepare('SELECT j.status,j.requested_by,t.board_id FROM chat_jobs j JOIN chat_threads t ON t.id=j.thread_id WHERE j.id=?').get(row.job_id);return j?.status==='running'&&j.requested_by===row.actor_id&&canEdit(row.actor_id,j.board_id);};
+  const live=row=>{if(row.actor_id===ownerId&&canGenerate(row.actor_id,row.job_id))return true;const j=db.prepare('SELECT j.status,j.requested_by,t.board_id FROM chat_jobs j JOIN chat_threads t ON t.id=j.thread_id WHERE j.id=?').get(row.job_id);return j?.status==='running'&&j.requested_by===row.actor_id&&canEdit(row.actor_id,j.board_id);};
   const online=()=>connections.list(ownerId).some(c=>c.scope==='worker'&&!c.revoked_at&&c.expires_at>Date.now()&&db.prepare('SELECT 1 FROM subscription_workers WHERE id=? AND last_seen>?').get(c.id,Date.now()-45000));
   async function respond(actor,jobId,payload){
     if(!online())throw fail('The company owner’s subscription worker is offline. Ask the owner to reconnect it.');

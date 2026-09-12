@@ -1,0 +1,4 @@
+FROM boardly-cloud-worker:providers-9f419d2
+COPY --chown=node:node package.json /app/package.json
+COPY --chown=node:node server /app/server
+COPY --chown=node:node scripts /app/scripts

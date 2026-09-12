@@ -9,6 +9,8 @@ import Members from './Members.jsx';
 import GithubConnection from './GithubConnection.jsx';
 import SshConnections from './SshConnections.jsx';
 import ComputerUseAssignment from './ComputerUseAssignment.jsx';
+import ConnectorHelp from './ConnectorHelp.jsx';
+import BotConnection from './BotConnection.jsx';
 import CompanyEmails from './CompanyEmails.jsx';
 import ProjectEnvironment from './ProjectEnvironment.jsx';
 import ProjectPayments from './ProjectPayments.jsx';
@@ -31,8 +33,8 @@ function GeneralSettings({kind,entity,owner,onSaved,onBack,onExport}){
 
 export default function ScopeSettings({kind,entity,section='general',owner,can,onSaved,onBack,onExport}){
  const company=kind==='company',scope=company?'Company':'Project',apiKind=company?'companies':'projects';
- const allowed=id=>['onepassword','fal','higgsfield'].includes(id)?owner:id==='emails'?company&&owner:can(id==='computeruse'?'computers':id);
- const connectors=connectorDefinitions.filter(c=>(company?['github','computeruse','ssh','emails','onepassword','fal','higgsfield']:['github','computeruse','ssh','environment','payments','onepassword','fal','higgsfield']).includes(c.id)&&allowed(c.id));
+ const allowed=id=>['onepassword','fal','higgsfield','discord','telegram'].includes(id)?owner:id==='emails'?company&&owner:can(id==='computeruse'?'computers':id);
+ const connectors=connectorDefinitions.filter(c=>(company?['github','computeruse','ssh','emails','onepassword','fal','higgsfield','discord','telegram']:['github','computeruse','ssh','environment','payments','onepassword','fal','higgsfield']).includes(c.id)&&allowed(c.id));
  const sections=[
   {id:'general',label:'General',icon:company?Building2:FolderCog,description:`Name, ${company?'organization':'description and export'} and ${scope.toLowerCase()} management.`},
   ...(can('members')?[{id:'members',label:'Team & permissions',icon:Users,description:company?'Manage company members and the permissions they inherit in its projects.':'Manage project-only members and review inherited company access.'}]:[]),
@@ -45,6 +47,8 @@ export default function ScopeSettings({kind,entity,section='general',owner,can,o
   {section==='members'&&can('members')&&<Members embedded kind={apiKind} id={entity.id}/>}
   {section==='connectors'&&<><ConnectorCatalog key={kind+entity.id} scope={kind} entityId={entity.id} allowed={allowed} onSelect={select}/>{!connectors.length&&<p className="text-sm text-zinc-400">Ask the account owner for the connector permissions you need. Your project access is unchanged.</p>}{owner&&<button className={settingsButton} onClick={()=>accountSettings('connectors')}>Manage reusable account connections</button>}</>}
   {allowed(section)&&<>
+   <ConnectorHelp id={section}/>
+   {['discord','telegram'].includes(section)&&company&&owner&&<BotConnection key={section+entity.id} companyId={entity.id} provider={section}/>}
    {['fal','higgsfield'].includes(section)&&owner&&<MediaConnection key={section+kind+entity.id} provider={section} kind={kind} id={entity.id}/>}
    {section==='onepassword'&&owner&&<OnePasswordConnection kind={kind} id={entity.id}/>}
    {section==='github'&&<GithubConnection kind={apiKind} id={entity.id}/>}

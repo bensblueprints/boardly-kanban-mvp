@@ -33,7 +33,7 @@ async function run(){
   const plan=await p.api('/api/account/plan',{user:'user_basic'});assert.equal(plan.user_limit,1);assert.equal(plan.plan.storage_bytes,2*1024**3);assert.equal(plan.extra_user_monthly_price,9);
   assert.equal((await p.request('/api/companies',{user:'user_basic',method:'POST',body:{name:'Over quota'}})).status,409);
   assert.equal((await p.request(`/api/projects/${a.project.id}/members`,{user:'user_basic',method:'POST',body:{email:'extra@example.com',role:'editor'}})).status,409);
-  assert.deepEqual(plan.plans.map(x=>[x.monthly_price,x.companies,x.users,x.storage_bytes]),[[0,1,1,2*1024**3],[79,3,5,10*1024**3],[299,100,300,1024**4]]);
+  assert.deepEqual(plan.plans.map(x=>[x.monthly_price,x.companies,x.users,x.storage_bytes]),[[0,1,1,2*1024**3],[79,null,5,10*1024**3],[299,null,300,1024**4]]);
   assert.equal((await p.request('/api/billing/checkout',{user:'user_basic',method:'POST',body:{kind:'agency'}})).status,503);
   const db=new (require('better-sqlite3'))(require('node:path').join(require('../server/cloud').workspacePath(p.root,'user_basic'),'app.db'));
   db.prepare('INSERT INTO project_files(uuid,board_id,name,filename,size,mime,created_at) VALUES (?,?,?,?,?,?,?)').run(require('node:crypto').randomUUID(),a.project.id,'quota fixture','quota-fixture',2*1024**3-1,'text/plain',Date.now());
