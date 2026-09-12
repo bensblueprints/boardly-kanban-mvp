@@ -1,5 +1,5 @@
 import React,{useState} from 'react';
-import {Building2,FolderCog,Users,Plug,Download,Trash2} from 'lucide-react';
+import {Building2,FolderCog,Users,Plug,Download,Trash2,HardDrive,BookOpen} from 'lucide-react';
 import {api} from '../api.js';
 import SettingsShell,{settingsButton,settingsInput,accountSettings} from './SettingsShell.jsx';
 import MediaConnection from './MediaConnection.jsx';
@@ -12,6 +12,8 @@ import ComputerUseAssignment from './ComputerUseAssignment.jsx';
 import ConnectorHelp from './ConnectorHelp.jsx';
 import BotConnection from './BotConnection.jsx';
 import CompanyEmails from './CompanyEmails.jsx';
+import CompanySkills from './CompanySkills.jsx';
+import CompanyStorage from './CompanyStorage.jsx';
 import ProjectEnvironment from './ProjectEnvironment.jsx';
 import ProjectPayments from './ProjectPayments.jsx';
 
@@ -38,12 +40,15 @@ export default function ScopeSettings({kind,entity,section='general',owner,can,o
  const sections=[
   {id:'general',label:'General',icon:company?Building2:FolderCog,description:`Name, ${company?'organization':'description and export'} and ${scope.toLowerCase()} management.`},
   ...(can('members')?[{id:'members',label:'Team & permissions',icon:Users,description:company?'Manage company members and the permissions they inherit in its projects.':'Manage project-only members and review inherited company access.'}]:[]),
+  ...(company&&(owner||['editor','viewer'].includes(entity.role))?[{id:'storage',label:'Storage',icon:HardDrive,description:'Connect S3-compatible or WebDAV storage and browse company files.'},{id:'skills',label:'Rules & Skills',icon:BookOpen,description:'Company workflow rules and reusable AI skills.'}]:[]),
   {id:'connectors',label:'Connectors',icon:Plug,description:`Tools and resources available to this ${scope.toLowerCase()}.`,keywords:'integrations'},
   ...connectors.map(c=>({...c,description:c.guide})),
  ];
  const select=id=>location.hash=`#/${company?'company':'board'}/${entity.id}/settings/${id}`;
  return <SettingsShell scope={scope} name={entity.hierarchy?.project_name||entity.name} sections={sections} section={section} onSelect={select} onBack={onBack}>
   {section==='general'&&<GeneralSettings key={kind+entity.id} kind={kind} entity={entity} owner={owner} onSaved={onSaved} onBack={onBack} onExport={onExport}/>}
+  {company&&(owner||['editor','viewer'].includes(entity.role))&&section==='skills'&&<CompanySkills key={entity.id} companyId={entity.id} owner={owner}/>}
+  {company&&(owner||['editor','viewer'].includes(entity.role))&&section==='storage'&&<CompanyStorage key={entity.id} companyId={entity.id} owner={owner} canUpload={owner||entity.role==='editor'}/>}
   {section==='members'&&can('members')&&<Members embedded kind={apiKind} id={entity.id}/>}
   {section==='connectors'&&<><ConnectorCatalog key={kind+entity.id} scope={kind} entityId={entity.id} allowed={allowed} onSelect={select}/>{!connectors.length&&<p className="text-sm text-zinc-400">Ask the account owner for the connector permissions you need. Your project access is unchanged.</p>}{owner&&<button className={settingsButton} onClick={()=>accountSettings('connectors')}>Manage reusable account connections</button>}</>}
   {allowed(section)&&<>

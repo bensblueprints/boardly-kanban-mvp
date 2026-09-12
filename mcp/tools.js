@@ -179,7 +179,7 @@ function createBoardlyServer({ db, uploadsDir, management }) {
       }));
     const labels = db.prepare('SELECT * FROM labels WHERE board_id = ? ORDER BY id').all(board.id);
     require('../server/hierarchy').ensureProjects(db);
-    return { ...board, hierarchy: hierarchy.scope(board.id), lists, labels };
+    return { ...board, hierarchy: hierarchy.scope(board.id), company_instructions: require('../server/company-skills').projectInstructions(db,board.id), lists, labels };
   });
 
   tool('create_board', 'Create a new board', {

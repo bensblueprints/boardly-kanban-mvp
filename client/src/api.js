@@ -61,5 +61,5 @@ export const api = {
   post: (url, body) => req('POST', url, body),
   put: (url, body) => req('PUT', url, body),
   patch: (url, body) => req('PATCH', url, body),
-  del: (url) => req('DELETE', url)
+  del: (url, body) => req('DELETE', url, body)
 };

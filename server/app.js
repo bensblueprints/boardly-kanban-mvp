@@ -183,6 +183,7 @@ function createApp(opts = {}) {
   }
 
   const hierarchy = require('./hierarchy').createHierarchy(db);
+  require('./company-skills').installSkills(db);
   app.use(['/api/hierarchy','/api/companies','/api/company-boards','/api/projects'], requireAuth);
   app.use(hierarchy.router);
 

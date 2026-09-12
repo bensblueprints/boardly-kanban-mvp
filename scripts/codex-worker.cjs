@@ -146,6 +146,7 @@ async function run(job) {
     if (Array.isArray(settings.codexArgs)) baseArgs.push(...settings.codexArgs);
     if(persistent){const schemaFile=path.join(temp,'outcome-schema.json');fs.writeFileSync(schemaFile,JSON.stringify(outcomeSchema));baseArgs.push('--output-schema',schemaFile);}
     const context = [
+      require('../server/company-skills').formatInstructions(job.company_instructions),
       `This is the saved Boardly conversation for project ${JSON.stringify(job.board.name)}.`,
       `Existing board ID: ${job.board.id}; URL: ${origin}/#/board/${job.board.id}. Working directory: ${cwd}.`,
       'The user is chatting from this existing project. Reuse it; a new working directory is not a new project.',

@@ -36,6 +36,7 @@ function createProjectChat({ db, connections, userId, uploadsDir, environment, p
   for(const [name,type] of [['worker_host',"TEXT NOT NULL DEFAULT 'desktop'"],['continuation_count','INTEGER NOT NULL DEFAULT 0'],['recovery_required','INTEGER NOT NULL DEFAULT 0'],['blocker_card_id','INTEGER REFERENCES cards(id) ON DELETE SET NULL'],['blocker','TEXT'],['next_action','TEXT'],['resume_note','TEXT']])if(!db.prepare('PRAGMA table_info(chat_jobs)').all().some(c=>c.name===name))db.exec(`ALTER TABLE chat_jobs ADD COLUMN ${name} ${type}`);
   const blockers=require('./agent-blockers').createAgentBlockers(db);
   const hierarchy = require('./hierarchy').createHierarchy(db);
+  require('./company-skills').installSkills(db);
   const task = (boardId, cardId) => cardId == null ? null : db.prepare('SELECT c.id,c.title,c.description FROM cards c JOIN lists l ON l.id=c.list_id WHERE c.id=? AND l.board_id=?').get(cardId, boardId);
   const clean = (boardId, text) => { const value = ssh ? ssh.redact(cleanBase(boardId,text)) : cleanBase(boardId,text); return safeText(github ? github.redact(value) : value); };
   const cleanBase = (boardId,text) => safeText(email ? email.clean(cleanProject(boardId,text)) : cleanProject(boardId,text));
@@ -179,6 +180,7 @@ function createProjectChat({ db, connections, userId, uploadsDir, environment, p
       return { ...j, status: 'running', sessionId: t.codex_session_id,
         board: db.prepare('SELECT id,uuid,name,description FROM boards WHERE id=?').get(t.board_id),
         hierarchy: scope,
+        company_instructions: require('./company-skills').projectInstructions(db,t.board_id),
         media: canUseMedia(j.requested_by||userId,t.board_id)&&!!media?.forAgent(t.board_id).length,
         computeruse: canUseComputers(j.requested_by||userId,t.board_id)&&!!computeruse?.enabled(t.board_id),
         emails: email?.agentList(t.board_id) || [],

@@ -41,7 +41,7 @@ function createCompanyOnboarding({db,ownerId,generate,retain=()=>{},release=()=>
    db.prepare("UPDATE company_build_turns SET status='running',error=NULL,updated_at=? WHERE id=?").run(Date.now(),id);
    const d=read(t.draft_id),history=[];let size=0;
    for(const turn of d.turns.slice(-20).reverse()){const pair=[{role:'user',content:turn.prompt},...(turn.reply?[{role:'assistant',content:turn.reply}]:[])];const n=Buffer.byteLength(JSON.stringify(pair));if(size+n>22000)break;history.unshift(...pair);size+=n;}
-   const payload={input:[{role:'developer',content:INSTRUCTIONS},{role:'developer',content:'Saved user-editable brief and proposed projects: '+JSON.stringify({brief:d.brief,projects:d.projects,company_exists:!!d.company_id})},...history],max_output_tokens:6500,tools:[],store:false};
+   const payload={input:[{role:'developer',content:INSTRUCTIONS},{role:'developer',content:require('./company-skills').formatInstructions(require('./company-skills').companyInstructions(db,d.company_id))},{role:'developer',content:'Saved user-editable brief and proposed projects: '+JSON.stringify({brief:d.brief,projects:d.projects,company_exists:!!d.company_id})},...history],max_output_tokens:6500,tools:[],store:false};
    if(Buffer.byteLength(JSON.stringify(payload))>85000)throw fail(400,'The company brief and plan are too long for this conversation. Shorten them in Review & edit, then retry.');
    const result=await generate(ownerId,id,payload);
    if(closed||!live(ownerId,id))return;

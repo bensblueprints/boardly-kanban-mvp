@@ -1,0 +1,8 @@
+*
+!package.json
+!package-lock.json
+!server/**
+!mcp/**
+!scripts/**
+!docs/**
+!dist/**
