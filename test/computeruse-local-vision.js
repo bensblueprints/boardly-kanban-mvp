@@ -5,7 +5,8 @@ const MODEL='Qwen3-VL-8B-Instruct-Q4_K_M',frame='data:image/jpeg;base64,/9j/2Q==
 (async()=>{
  let sshServer,gpu,db,broker,step=0,offline=false,onInspect=()=>{},sawLocal=false,human=false,expectLocal=true;const sockets=new Set(),seen=[];
  const inventory={id:'account-one',rentals:[],desktops:[{id:desktop_id,kind:'pilot',state:'active',available:true,memory_mib:8192,label:'Test desktop'}]};
- const desktopRequest=async(o,k,c,d)=>{assert.equal(k,token);seen.push(c);if(human&&c==='lease')throw Object.assign(Error('Human takeover'),{status:409});if(c==='lease')return{lease:'private-lease',expires:Math.floor(Date.now()/1000)+60};if(c==='screenshot')return{image_url:frame};return{mode:'agent',state:'completed'};};
+ let currentLease=null;
+ const desktopRequest=async(o,k,c,d)=>{assert.equal(k,token);seen.push(c);if(human&&c==='lease')throw Object.assign(Error('Human takeover'),{status:409});if(c==='lease'){if(d.lease)assert.equal(d.lease,currentLease,'renew the current token');currentLease=crypto.randomUUID();return{lease:currentLease,expires:Math.floor(Date.now()/1000)+60};}if(c==='action'||c==='release')assert.equal(d.lease,currentLease,'input/release must use the renewed token');if(c==='screenshot')return{image_url:frame};return{mode:'agent',state:'completed'};};
  const f=await fixture({publicAccess:true,computeruseOrigin:'https://computer.example',computeruseRequest:async()=>inventory,computeruseDesktopRequest:desktopRequest,providerRequest:async(url,opts)=>{
   if(url.includes('/models/'))return Response.json({id:'gpt-6-astra'});
   const b=JSON.parse(opts.body);assert.ok(!opts.body.includes(frame));assert.ok(!opts.body.includes('input_image'));assert.ok(!opts.body.includes(token));
@@ -28,6 +29,19 @@ const MODEL='Qwen3-VL-8B-Instruct-Q4_K_M',frame='data:image/jpeg;base64,/9j/2Q==
   await f.api(base,{method:'PUT',body:{mode:'local',connection_id:cid}});
   await f.api('/api/account/computeruse',{method:'PUT',body:{token}});
   await f.api(`/api/projects/${p.project.id}/computeruse`,{method:'PUT',body:{rental_ids:['desktop:'+desktop_id],allow_agent:true,allow_control:true}});
+  const workerKey=await f.api('/api/connections',{method:'POST',body:{name:'GPU worker fixture',scope:'worker'}});
+  const workerApi=async(route,body={})=>{const r=await fetch(f.base+route,{method:'POST',headers:{authorization:'Bearer '+workerKey.token,'content-type':'application/json'},body:JSON.stringify(body)});const data=await r.json();assert.ok(r.ok,route+': '+r.status+' '+JSON.stringify(data));return data;};
+  const workerThread=await f.api(`/api/boards/${p.project.id}/chat/threads`,{method:'POST',body:{}});
+  const queued=await f.api(`/api/chat/threads/${workerThread.id}/messages`,{method:'POST',body:{mode:'work',content:'Read the current screen through local GPU vision.'}});
+  const claimed=(await workerApi('/api/worker/claim',{cloud:true})).job;assert.equal(claimed.id,queued.id);
+  const leaseCount=seen.filter(c=>c==='lease').length;
+  onInspect=()=>new Promise(r=>setTimeout(r,16200));
+  const workerObservation=await workerApi(`/api/worker/jobs/${claimed.id}/computeruse/inspect`,{desktop_id,question:'Locate Start'});
+  assert.equal(workerObservation.mode,'local');assert.ok(!JSON.stringify(workerObservation).includes(frame));
+  assert.ok(seen.filter(c=>c==='lease').length>=leaseCount+3,'renew during inference and after it, retaining each rotated token');
+  await workerApi(`/api/worker/jobs/${claimed.id}/computeruse/action`,{desktop_id,operation_id:crypto.randomUUID(),action:{type:'move',x:10,y:10}});
+  await workerApi(`/api/worker/jobs/${claimed.id}/computeruse/release`,{desktop_id});onInspect=()=>{};
+  await workerApi(`/api/worker/jobs/${claimed.id}`,{status:'completed',text:'GPU worker request verified.'});
   await f.api('/api/ai/settings',{method:'PUT',body:{mode:'key',model:'gpt-6-astra',monthly_cap:100,api_key:'sk-fixture_'+crypto.randomBytes(24).toString('hex')}});
   async function hostedCycle(user='user_owner',expected=true){
    step=0;sawLocal=false;expectLocal=expected;const opts={user,workspace:'user_owner'};
@@ -41,8 +55,11 @@ const MODEL='Qwen3-VL-8B-Instruct-Q4_K_M',frame='data:image/jpeg;base64,/9j/2Q==
   const run=(command,actor='user_owner',valid=()=>{})=>cu.controlForAgent(p.project.id,actor,'fixture-run',command,{desktop_id,question:'Locate Start'},valid);
   const local=await run('screenshot');assert.equal(local.mode,'local');assert.ok(!JSON.stringify(local).includes(frame));assert.ok(!('unexpected' in local));
   const temp=fs.mkdtempSync(path.join(os.tmpdir(),'local-frames-'));process.env.BOARDLY_COMPUTER_SOCKET=path.join(temp,'computer.sock');process.env.BOARDLY_COMPUTER_FRAMES=temp;
-  broker=await require('../scripts/computeruse-broker.cjs').createComputerUseBroker({socketPath:process.env.BOARDLY_COMPUTER_SOCKET,request:(command)=>command==='release-all'?cu.releaseRun('fixture-run'):run(command)});
+  const brokerActivity=[];
+  broker=await require('../scripts/computeruse-broker.cjs').createComputerUseBroker({socketPath:process.env.BOARDLY_COMPUTER_SOCKET,request:(command)=>command==='release-all'?cu.releaseRun('fixture-run'):run(command),onActivity:(key,title,status)=>brokerActivity.push({key,title,status})});
   const helper=require('../scripts/project-computeruse-client.cjs');assert.equal((await helper.screenshot({desktop_id})).mode,'local');assert.equal((await helper.inspect({desktop_id,question:'Locate Start'})).mode,'local');assert.deepEqual(fs.readdirSync(temp),['computer.sock'],'Codex receives no image file in local mode');
+  offline=true;await assert.rejects(()=>helper.inspect({desktop_id,question:'Locate Start'}),/busy or unavailable/);offline=false;
+  assert.equal(brokerActivity.at(-1).status,'failed','failed observations must not stay displayed as running');
   await broker.close();broker=null;fs.rmSync(temp,{recursive:true,force:true});delete process.env.BOARDLY_COMPUTER_SOCKET;delete process.env.BOARDLY_COMPUTER_FRAMES;
   onInspect=()=>{human=true;};await assert.rejects(()=>run('screenshot'),/Human takeover/);human=false;onInspect=()=>{};
   offline=true;await assert.rejects(()=>run('screenshot'),/busy or unavailable/);assert.equal(vision.context().mode,'local','offline never switches to GPT');offline=false;

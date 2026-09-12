@@ -109,15 +109,21 @@ function createComputerUseConnections({db,key,namespace,origin='',request=reques
     if((vision?.context().mode||'gpt')!==mode)throw fail(409,'Vision mode changed. Inspect again.');
     if(mode==='local'){
      let renewal=null,leaseError=null;
-     const refresh=async()=>{try{const fresh=await send('lease',{lease:lease.lease}),current=leases.get(desktopId);if(current?.lease!==lease.lease||fresh.lease!==lease.lease)throw fail(409,'Desktop control changed while reading the screen.');current.expires=fresh.expires;}catch(e){leaseError=e;}};
-     const timer=setInterval(()=>{if(!renewal)renewal=refresh().finally(()=>{renewal=null;});},15000);
+     const refresh=async()=>{
+      const current=leases.get(desktopId),previous=lease.lease;
+      if(current?.lease!==previous||current.runId!==runId)throw fail(409,'Desktop control changed while reading the screen.');
+      const fresh=await send('lease',{lease:previous});
+      if(leases.get(desktopId)!==current||current.lease!==previous)throw fail(409,'Desktop control changed while reading the screen.');
+      if(typeof fresh.lease!=='string'||!fresh.lease||fresh.lease.length>256||!Number.isSafeInteger(fresh.expires))throw fail(503,'Invalid renewed desktop lease.');
+      // ComputerUse rotates the opaque token on every successful renewal.
+      // Retain it for the next renewal, input and release by this same run.
+      current.lease=lease.lease=fresh.lease;current.expires=lease.expires=fresh.expires;
+     };
+     const timer=setInterval(()=>{if(!renewal&&!leaseError)renewal=refresh().catch(e=>{leaseError=e;}).finally(()=>{renewal=null;});},15000);
      let observed;try{observed=await vision.inspect({actor,projectId:id,image_url:image.image_url,question:data.question,valid:()=>{check();if(leaseError)throw leaseError;}});}finally{clearInterval(timer);if(renewal)await renewal;}
      check();if(leaseError)throw leaseError;
      // Inference can outlive a lease. Revalidate remote handback before returning observations.
-     const renewed=await send('lease',{lease:lease.lease});
-     const current=leases.get(desktopId);
-     if(current?.lease!==lease.lease||renewed.lease!==lease.lease)throw fail(409,'Desktop control changed while reading the screen. Inspect again.');
-     current.expires=renewed.expires;uncertain.delete(desktopId);
+     await refresh();uncertain.delete(desktopId);
      return{...observed,desktop_id:desktopId,captured_at:capturedAt,frame_id:crypto.createHash('sha256').update(image.image_url).digest('hex').slice(0,16),note:'Local Qwen observation only. Use focused inspect questions; never request the raw image. Convert normalized coordinates using desktop status resolution.'};
     }
     uncertain.delete(desktopId);return image;
