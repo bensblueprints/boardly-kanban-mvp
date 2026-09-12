@@ -154,7 +154,8 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
       tenant.ssh=require('./ssh-connections').createSshConnections({db:local.db,key:projectKey,namespace:ownerId,tailnet,members:()=>memberships.db.prepare("SELECT id,user_id,email,name,status FROM account_members WHERE owner_id=? AND status!='provisioning'").all(ownerId)});
       tenant.media=require('./media-connectors').createMediaConnectors({db:local.db,key:projectKey,namespace:ownerId,request:mediaRequest});
       tenant.onepassword=require('./onepassword').createOnePassword({db:local.db,key:projectKey,namespace:ownerId,client:onepasswordClient});
-      tenant.computeruse=require('./computeruse-connections').createComputerUseConnections({db:local.db,key:projectKey,namespace:ownerId,origin:config.computeruseOrigin,request:computeruseRequest,desktopRequest:computeruseDesktopRequest,onepassword:tenant.onepassword,viewerKey:config.computeruseViewerKey});
+      const computerVision=require('./computeruse-vision').createComputerUseVision({db:local.db,ssh:tenant.ssh,namespace:ownerId});
+      tenant.computeruse=require('./computeruse-connections').createComputerUseConnections({db:local.db,key:projectKey,namespace:ownerId,origin:config.computeruseOrigin,request:computeruseRequest,desktopRequest:computeruseDesktopRequest,onepassword:tenant.onepassword,viewerKey:config.computeruseViewerKey,vision:computerVision});
       tenant.github=require('./github-connections').createGithubConnections({db:local.db,key:projectKey,namespace:ownerId,request:githubRequest});
       tenant.bots=require('./company-bots').createCompanyBots({db:local.db,key:projectKey,namespace:ownerId,request:botRequest});
       tenant.teamChat=require('./company-chat').createCompanyChat(local.db);

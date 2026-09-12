@@ -1,6 +1,7 @@
 import React,{useEffect,useRef,useState} from 'react';
 import {Monitor,PlugZap} from 'lucide-react';
 import {api} from '../api.js';
+import ComputerVisionSettings from './ComputerVisionSettings.jsx';
 const button='rounded-lg border border-zinc-700 px-3 py-2 text-sm hover:bg-zinc-800 disabled:opacity-40';
 export function ComputerDetails({computer:r}){
  return <><span className="block font-medium text-zinc-100">{r.label||(r.plan==='creator'?'Creator desktop':'Standard desktop')}</span><span className="block text-xs text-zinc-400 mt-1">{r.kind==='pilot'?'Free Desktop':'Rental'} · {r.available===true?'Online':r.available===false?'Offline':'Awaiting desktop'}{Number.isSafeInteger(r.memory_mib)?` · ${r.memory_mib/1024} GB desktop RAM`:''}{Number.isSafeInteger(r.vcpus)?` · ${r.vcpus} vCPU`:''}</span></>;
@@ -26,6 +27,7 @@ export default function AccountComputerUse({focus=false,home=false,companies=[],
  <button className={button+' bg-indigo-600'} disabled={busy||token.length<16}>{busy?'Connecting…':state.saved?'Replace API key':'Connect ComputerUse'}</button></form>
  {state.saved&&<button disabled={busy} className={button} onClick={()=>{if(window.confirm('Disconnect ComputerUse and clear its company and project assignments? Your ComputerUse account and billing will continue.'))act(async()=>{await api.del(base);setToken('');setEditing(false);setNotice('ComputerUse disconnected.');});}}>Disconnect ComputerUse</button>}</>}
  </>}
+ {state?.saved&&<ComputerVisionSettings/>}
  <p className="text-xs text-zinc-400">Inventory comes from your ComputerUse API. Assigning an existing computer in Boardly does not buy another rental.</p>
  <a className="text-sm text-indigo-300 underline" href="https://computeruse.space/portal" target="_blank" rel="noopener noreferrer">Manage computers at ComputerUse</a>
  </section>;

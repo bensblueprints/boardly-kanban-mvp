@@ -1,6 +1,6 @@
 # Private account GPU vision — comparison and proposed design
 
-Prepared 2026-09-12 for Boardly card 204. Status: proposal; no model installation or production routing change has been made.
+Prepared 2026-09-12 for Boardly card 204 as the original proposal. The implemented mode switch, customer setup, privacy boundaries and measured verification are documented in [Private Qwen vision](PRIVATE-QWEN-VISION.md). The comparison below records the proposal's starting assumptions.
 
 Ben's RTX 5060 Ti should serve his account only. Other customers should be able to connect their own GPU computers to their own accounts. Connected computers are private resources, not a shared Boardly compute pool.
 

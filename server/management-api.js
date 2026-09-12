@@ -16,6 +16,7 @@ const fieldHints = [
   [/^\/api\/memberships\/:id$/, ['role', 'scopes', 'owner_ssh']],
   [/\/team-chat$/, ['body', 'client_id']],
   [/\/ssh\/setup$/, ['host', 'username', 'label', 'port', 'tailnet_device_id']],
+  [/\/computeruse\/vision$/, ['mode', 'connection_id']],
   [/\/ssh\/:connectionId\/activate$/, ['fingerprint', 'allow_agent']],
   [/\/ssh(?:\/:connectionId)?$/, ['label', 'host', 'port', 'username', 'auth_type', 'private_key', 'passphrase', 'password', 'fingerprint', 'allow_agent', 'jump_id', 'access', 'tailnet_device_id']],
 ];
@@ -99,7 +100,8 @@ function createManagement({ app, parent, origin, routers, authorizeRequest }) {
       parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${file.field}"; filename="${file.name}"\r\nContent-Type: ${file.content_type || 'application/octet-stream'}\r\n\r\n`), data, Buffer.from(`\r\n--${boundary}--\r\n`));
       payload = Buffer.concat(parts); headers['content-type'] = 'multipart/form-data; boundary=' + boundary;
     } else if (body !== undefined) headers['content-type'] = 'application/json';
-    const result = await internalRequest(app, { method: operation.method, url: path, headers, body: payload, prepare: authorizeRequest });
+    const result = await internalRequest(app, { method: operation.method, url: path, headers, body: payload, prepare: authorizeRequest,
+      ...(operation.path==='/api/account/computeruse/vision/test'?{timeout:100000}:{}) });
     if (result.status >= 400) throw fail(result.status, `API ${result.status}: ${result.data?.error || 'Request failed'}`);
     return result;
   }

@@ -22,7 +22,7 @@ async function requestAccount(origin,token){
  const a=await requestDesktop(origin,token,'account');
  const d=await requestDesktop(origin,token,'desktops');return {...a,desktops:d.desktops};
 }
-function createComputerUseConnections({db,key,namespace,origin='',request=requestAccount,desktopRequest=requestDesktop,onepassword,viewerKey=''}){
+function createComputerUseConnections({db,key,namespace,origin='',request=requestAccount,desktopRequest=requestDesktop,onepassword,viewerKey='',vision}){
  origin=trustedOrigin(origin);
  db.exec(`CREATE TABLE IF NOT EXISTS cu_account_connection(id INTEGER PRIMARY KEY CHECK(id=1),revision TEXT NOT NULL,encrypted TEXT,account_id TEXT,updated_at INTEGER NOT NULL);
  CREATE TABLE IF NOT EXISTS cu_assignments(id INTEGER PRIMARY KEY,company_id INTEGER UNIQUE REFERENCES companies(id) ON DELETE CASCADE,board_id INTEGER UNIQUE REFERENCES boards(id) ON DELETE CASCADE,rental_ids TEXT NOT NULL,allow_agent INTEGER NOT NULL DEFAULT 0,revision TEXT NOT NULL,updated_at INTEGER NOT NULL,CHECK((company_id IS NULL)!=(board_id IS NULL)));`);
@@ -47,7 +47,7 @@ function createComputerUseConnections({db,key,namespace,origin='',request=reques
   }
   return{id:data.id,rentals:items};
  }
- function accountState(){const r=connection();return{configured:!!origin,saved:!!r?.encrypted,updated_at:r?.updated_at||null,desktop_control_available:true};}
+ function accountState(){const r=connection();return{configured:!!origin,saved:!!r?.encrypted,updated_at:r?.updated_at||null,desktop_control_available:true,vision:vision?.context()||{mode:'gpt',model:null}};}
  function unchanged(revision){if(connection()?.revision!==revision)throw fail(409,'The ComputerUse account changed. Refresh and retry.');}
  function reset(){db.transaction(()=>{db.prepare('INSERT INTO cu_account_connection(id,revision,updated_at) VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,encrypted=NULL,account_id=NULL,updated_at=excluded.updated_at').run(crypto.randomUUID(),Date.now());db.prepare('DELETE FROM cu_assignments').run();})();return accountState();}
  async function connect(token,valid=()=>{}){
@@ -76,12 +76,12 @@ function createComputerUseConnections({db,key,namespace,origin='',request=reques
  function clear(kind,id){resource(kind,id);db.prepare(`DELETE FROM cu_assignments WHERE ${kind==='company'?'company_id':'board_id'}=?`).run(id);return assignment(kind,id);}
  function enabled(id){const a=assignment('project',id);return a.configured&&a.saved&&a.allow_agent&&a.rental_ids.length>0;}
  async function inspectForAgent(id,actor,valid=()=>{}){
-  valid();if(!enabled(id))throw fail(403,'No ComputerUse computers are enabled for agents in this project.');const a=assignment('project',id),scope=signature('project',id),items=await rentals(valid);valid();if(signature('project',id)!==scope)throw fail(409,'Computer assignment changed. Retry.');const selected=items.filter(r=>a.rental_ids.includes(r.id)&&r.state==='active');if(selected.length!==a.rental_ids.length)throw fail(403,'An assigned rental is no longer active. Refresh the assignment.');return{rentals:selected,inherited:a.inherited,desktop_control_available:true,message:'Owned computers verified. Use desktop status before control; human takeover pauses agents.'};
+  valid();if(!enabled(id))throw fail(403,'No ComputerUse computers are enabled for agents in this project.');const a=assignment('project',id),scope=signature('project',id),items=await rentals(valid);valid();if(signature('project',id)!==scope)throw fail(409,'Computer assignment changed. Retry.');const selected=items.filter(r=>a.rental_ids.includes(r.id)&&r.state==='active');if(selected.length!==a.rental_ids.length)throw fail(403,'An assigned rental is no longer active. Refresh the assignment.');return{rentals:selected,inherited:a.inherited,desktop_control_available:true,vision:vision?.context()||{mode:'gpt',model:null},message:'Owned computers verified. Use desktop status before control; human takeover pauses agents. '+(vision?.context().mode==='local'?'GPT + my GPU is active: use inspect({desktop_id,question}) for short Qwen observations. No raw screenshot or image path is returned. Do not bypass this with SSH screenshots or cloud vision.':'GPT only is active: view the screenshot returned by the tool.')};
  }
  // A lease belongs to one Work run, never to every agent sharing the API key.
  const leases=new Map(),busy=new Set(),uncertain=new Set();
  async function controlForAgent(id,actor,runId,command,data,valid=()=>{}){
-  if(!['status','screenshot','action','release','logins','login'].includes(command)||!identifier(data?.desktop_id)||!identifier(runId))throw fail(400,'Invalid desktop request');
+  if(!['status','screenshot','inspect','action','release','logins','login'].includes(command)||!identifier(data?.desktop_id)||!identifier(runId))throw fail(400,'Invalid desktop request');
   const desktopId=data.desktop_id;
   if(busy.has(desktopId))throw fail(409,'Another desktop operation is in progress');busy.add(desktopId);
   try{
@@ -104,7 +104,24 @@ function createComputerUseConnections({db,key,namespace,origin='',request=reques
    const lease=await send('lease',held?{lease:held.lease}:{});
    if(typeof lease.lease!=='string'||!Number.isSafeInteger(lease.expires))throw fail(503,'Invalid desktop lease');
    leases.set(desktopId,{runId,projectId:id,actor,revision,lease:lease.lease,expires:lease.expires});
-   if(command==='screenshot'){const image=await send('screenshot',{});uncertain.delete(desktopId);return image;}
+   if(['screenshot','inspect'].includes(command)){
+    const mode=vision?.context().mode||'gpt',image=await send('screenshot',{}),capturedAt=Date.now();
+    if((vision?.context().mode||'gpt')!==mode)throw fail(409,'Vision mode changed. Inspect again.');
+    if(mode==='local'){
+     let renewal=null,leaseError=null;
+     const refresh=async()=>{try{const fresh=await send('lease',{lease:lease.lease}),current=leases.get(desktopId);if(current?.lease!==lease.lease||fresh.lease!==lease.lease)throw fail(409,'Desktop control changed while reading the screen.');current.expires=fresh.expires;}catch(e){leaseError=e;}};
+     const timer=setInterval(()=>{if(!renewal)renewal=refresh().finally(()=>{renewal=null;});},15000);
+     let observed;try{observed=await vision.inspect({actor,image_url:image.image_url,question:data.question,valid:()=>{check();if(leaseError)throw leaseError;}});}finally{clearInterval(timer);if(renewal)await renewal;}
+     check();if(leaseError)throw leaseError;
+     // Inference can outlive a lease. Revalidate remote handback before returning observations.
+     const renewed=await send('lease',{lease:lease.lease});
+     const current=leases.get(desktopId);
+     if(current?.lease!==lease.lease||renewed.lease!==lease.lease)throw fail(409,'Desktop control changed while reading the screen. Inspect again.');
+     current.expires=renewed.expires;uncertain.delete(desktopId);
+     return{...observed,desktop_id:desktopId,captured_at:capturedAt,frame_id:crypto.createHash('sha256').update(image.image_url).digest('hex').slice(0,16),note:'Local Qwen observation only. Use focused inspect questions; never request the raw image. Convert normalized coordinates using desktop status resolution.'};
+    }
+    uncertain.delete(desktopId);return image;
+   }
    if(command==='login'){
     if(!onepassword||!identifier(data.login_id)||typeof data.operation_id!=='string'||!/^[-0-9a-f]{36}$/.test(data.operation_id))throw fail(400,'Choose an approved login and operation ID.');
     try{return await onepassword.use({projectId:id,actor,desktopId,loginId:data.login_id,operationId:data.operation_id,mode:data.mode,field:data.field,valid:check,send:(payload,v)=>{v();return send('login',{lease:lease.lease,...payload});}});}catch(e){uncertain.add(desktopId);throw e;}
@@ -120,7 +137,7 @@ function createComputerUseConnections({db,key,namespace,origin='',request=reques
   }
  }
  const viewer=require('./computeruse-viewer').createComputerViewer({db,key:viewerKey,namespace,origin,connection,decrypt,unchanged,signature,assignment,rentals,desktopRequest,onHandoff:desktopId=>{leases.delete(desktopId);uncertain.add(desktopId);}});
- return{accountState,connect,disconnect:reset,rentals,assignment,assign,clear,enabled,inspectForAgent,controlForAgent,releaseRun,viewer};
+ return{accountState,connect,disconnect:reset,rentals,assignment,assign,clear,enabled,inspectForAgent,controlForAgent,releaseRun,viewer,vision};
 }
 function createComputerUseRoutes({memberships}){
  const router=express.Router(),accountBase='/api/account/computeruse';
@@ -136,6 +153,11 @@ function createComputerUseRoutes({memberships}){
  router.put(accountBase,express.json({limit:'4kb'}),handler('account',async(req,res,s,id,v)=>res.json(await s.connect(req.body?.token,v))));
  router.delete(accountBase,handler('account',async(req,res,s)=>res.json(s.disconnect())));
  router.get(accountBase+'/rentals',handler('account',async(req,res,s,id,v)=>res.json({rentals:await s.rentals(v)})));
+ router.get(accountBase+'/vision',handler('account',async(req,res,s)=>res.json(s.vision.state())));
+ router.put(accountBase+'/vision',express.json({limit:'4kb'}),handler('account',async(req,res,s)=>res.json(s.vision.save(req.body))));
+ router.post(accountBase+'/vision/test',express.json({limit:'4kb'}),handler('account',async(req,res,s,id,v)=>res.json(await s.vision.test(req.body?.connection_id,v))));
+ router.post(accountBase+'/vision/install',express.json({limit:'4kb'}),handler('account',async(req,res,s,id,v)=>res.json(await s.vision.install(req.body?.connection_id,v))));
+ router.post(accountBase+'/vision/install-status',express.json({limit:'4kb'}),handler('account',async(req,res,s,id,v)=>res.json(await s.vision.installStatus(req.body?.connection_id,v))));
  for(const [plural,kind] of [['companies','company'],['projects','project']]){
   const base=`/api/${plural}/:id/computeruse`;
   router.get(base,handler(kind,async(req,res,s,id)=>res.json({...s.assignment(kind,id),can_manage_account:req.workspaceIsOwner})));
