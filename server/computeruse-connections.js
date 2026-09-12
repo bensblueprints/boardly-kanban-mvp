@@ -111,7 +111,7 @@ function createComputerUseConnections({db,key,namespace,origin='',request=reques
      let renewal=null,leaseError=null;
      const refresh=async()=>{try{const fresh=await send('lease',{lease:lease.lease}),current=leases.get(desktopId);if(current?.lease!==lease.lease||fresh.lease!==lease.lease)throw fail(409,'Desktop control changed while reading the screen.');current.expires=fresh.expires;}catch(e){leaseError=e;}};
      const timer=setInterval(()=>{if(!renewal)renewal=refresh().finally(()=>{renewal=null;});},15000);
-     let observed;try{observed=await vision.inspect({actor,image_url:image.image_url,question:data.question,valid:()=>{check();if(leaseError)throw leaseError;}});}finally{clearInterval(timer);if(renewal)await renewal;}
+     let observed;try{observed=await vision.inspect({actor,projectId:id,image_url:image.image_url,question:data.question,valid:()=>{check();if(leaseError)throw leaseError;}});}finally{clearInterval(timer);if(renewal)await renewal;}
      check();if(leaseError)throw leaseError;
      // Inference can outlive a lease. Revalidate remote handback before returning observations.
      const renewed=await send('lease',{lease:lease.lease});
@@ -156,6 +156,7 @@ function createComputerUseRoutes({memberships}){
  router.get(accountBase+'/vision',handler('account',async(req,res,s)=>res.json(s.vision.state())));
  router.put(accountBase+'/vision',express.json({limit:'4kb'}),handler('account',async(req,res,s)=>res.json(s.vision.save(req.body))));
  router.post(accountBase+'/vision/test',express.json({limit:'4kb'}),handler('account',async(req,res,s,id,v)=>res.json(await s.vision.test(req.body?.connection_id,v))));
+ router.post(accountBase+'/vision/detect',express.json({limit:'4kb'}),handler('account',async(req,res,s,id,v)=>res.json(await s.vision.detect(req.body?.connection_id,v))));
  router.post(accountBase+'/vision/install',express.json({limit:'4kb'}),handler('account',async(req,res,s,id,v)=>res.json(await s.vision.install(req.body?.connection_id,v))));
  router.post(accountBase+'/vision/install-status',express.json({limit:'4kb'}),handler('account',async(req,res,s,id,v)=>res.json(await s.vision.installStatus(req.body?.connection_id,v))));
  for(const [plural,kind] of [['companies','company'],['projects','project']]){

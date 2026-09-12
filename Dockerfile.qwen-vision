@@ -1,4 +1,4 @@
-FROM boardly-cloud:minimize-1f1b926
+FROM boardly-cloud:qwen-1a23b7a
 COPY --chown=node:node server/cloud.js server/computeruse-connections.js server/computeruse-vision.js server/hosted-ai.js server/ssh-connections.js server/management-api.js /app/server/
 COPY --chown=node:node scripts/codex-worker.cjs scripts/computeruse-broker.cjs scripts/project-computeruse-client.cjs /app/scripts/
 COPY --chown=node:node scripts/qwen-vision /app/scripts/qwen-vision

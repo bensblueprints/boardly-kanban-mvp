@@ -154,7 +154,11 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
       tenant.ssh=require('./ssh-connections').createSshConnections({db:local.db,key:projectKey,namespace:ownerId,tailnet,members:()=>memberships.db.prepare("SELECT id,user_id,email,name,status FROM account_members WHERE owner_id=? AND status!='provisioning'").all(ownerId)});
       tenant.media=require('./media-connectors').createMediaConnectors({db:local.db,key:projectKey,namespace:ownerId,request:mediaRequest});
       tenant.onepassword=require('./onepassword').createOnePassword({db:local.db,key:projectKey,namespace:ownerId,client:onepasswordClient});
-      const computerVision=require('./computeruse-vision').createComputerUseVision({db:local.db,ssh:tenant.ssh,namespace:ownerId});
+      const computerVision=require('./computeruse-vision').createComputerUseVision({db:local.db,ssh:tenant.ssh,namespace:ownerId,canUseShared:(actor,id)=>{
+        const grants=memberships.grants(ownerId,actor),access=require('./member-access').accessForMember(local.db,grants);
+        const company=local.db.prepare('SELECT b.company_id FROM company_projects p JOIN company_boards b ON b.id=p.parent_board_id WHERE p.workspace_id=?').get(id)?.company_id;
+        return grants.some(g=>g.kind==='company'&&g.resource_id===company)&&access.project(id)==='editor'&&access.capabilities('project',id).includes('computers');
+      }});
       tenant.computeruse=require('./computeruse-connections').createComputerUseConnections({db:local.db,key:projectKey,namespace:ownerId,origin:config.computeruseOrigin,request:computeruseRequest,desktopRequest:computeruseDesktopRequest,onepassword:tenant.onepassword,viewerKey:config.computeruseViewerKey,vision:computerVision});
       tenant.github=require('./github-connections').createGithubConnections({db:local.db,key:projectKey,namespace:ownerId,request:githubRequest});
       tenant.bots=require('./company-bots').createCompanyBots({db:local.db,key:projectKey,namespace:ownerId,request:botRequest});

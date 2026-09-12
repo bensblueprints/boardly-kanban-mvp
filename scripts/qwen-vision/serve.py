@@ -78,6 +78,7 @@ def start_model(deadline):
         raise Unavailable("GPU is busy generating images. Retry after the image job finishes.")
     if PROCESS and PROCESS.poll() is None:
         return
+    manifest = json.loads((ROOT / "installation.json").read_text())
     # /free queues a cache release in ComfyUI's worker; it does not abort a job.
     try:
         call(8188, "/free", {"unload_models": True, "free_memory": True})
@@ -85,6 +86,11 @@ def start_model(deadline):
             if comfy_busy():
                 raise Unavailable("GPU is busy generating images. Retry after the image job finishes.")
             try:
+                if manifest.get('device', 'Vulkan0') != 'Vulkan0':
+                    # Vulkan and NVIDIA device indexes need not match. Let the
+                    # selected Vulkan device enforce allocation after cache release.
+                    time.sleep(1)
+                    break
                 free = subprocess.check_output(["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"], timeout=3, text=True)
                 if int(free.splitlines()[0]) >= 9500:
                     break
@@ -98,9 +104,8 @@ def start_model(deadline):
             raise Unavailable("Image-generation memory could not be released. Retry later.")
     if time.monotonic() >= deadline:
         raise Unavailable("GPU memory is in use. Finish the other GPU workload and retry.")
-    manifest = json.loads((ROOT / "installation.json").read_text())
     command = [manifest["binary"], "--model", manifest["model"], "--mmproj", manifest["projector"],
-               "--host", "127.0.0.1", "--port", str(RUNTIME_PORT), "--device", "Vulkan0",
+               "--host", "127.0.0.1", "--port", str(RUNTIME_PORT), "--device", manifest.get('device', 'Vulkan0'),
                "--gpu-layers", "99", "--ctx-size", "4096", "--parallel", "1",
                "--batch-size", "512", "--ubatch-size", "256", "--flash-attn", "on",
                "--image-max-tokens", "1536", "--no-webui", "--no-warmup", "--log-disable"]
