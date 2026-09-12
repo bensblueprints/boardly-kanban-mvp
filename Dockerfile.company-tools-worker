@@ -1,4 +1,4 @@
-FROM boardly-cloud-worker:onboarding-aa883e4
+FROM boardly-cloud-worker:mcp-ac67b46
 USER root
 COPY package.json package-lock.json /app/
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund && npm rebuild better-sqlite3 && chown -R node:node /app/node_modules
