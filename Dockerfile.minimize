@@ -1,0 +1,2 @@
+FROM boardly-cloud:chat-spacing-748ecc4
+COPY --chown=node:node dist /app/dist
