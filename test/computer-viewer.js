@@ -32,6 +32,11 @@ const {viewerFixture}=require('./computer-viewer-fixture');
  const other=await f.project('Other company','No assigned computer');assert.equal((await f.request(`/api/projects/${other.project.id}/computeruse/view/${desktop_id}`)).status,403);
  await v.workerApi(`/api/worker/jobs/${job.id}`,{status:'blocked',blocker:'Awaiting signup',next_action:'Take over then give back',text:'Ready for user signup'});
  assert.equal((await f.api(base+'/takeover',{method:'POST',body:{}})).job.can_resume,true);
+ // Human handoffs can outlast the automatic-window activity feed's 30-minute window.
+ const Database=require('better-sqlite3'),path=require('node:path'),{workspacePath}=require('../server/cloud');
+ const inspection=new Database(path.join(workspacePath(f.config.dataDir,'user_owner'),'app.db'));
+ inspection.prepare('UPDATE cu_desktop_activity SET updated_at=? WHERE run_id=?').run(Date.now()-45*60*1000,job.id);inspection.close();
+ assert.equal((await f.api('/api/computeruse/activity')).activity.length,0);
  const returned=await f.api(base+'/resume',{method:'POST',body:{}});assert.equal(returned.job.id,job.id);assert.equal(returned.job.can_resume,true);
  await f.api(`/api/projects/${p.project.id}/computeruse`,{method:'PUT',body:{rental_ids:[],allow_agent:false}});
  assert.equal((await f.api('/api/computeruse/activity')).activity.length,0);assert.equal((await f.request(base)).status,403);

@@ -19,6 +19,13 @@ function createComputerViewer({ db, key, namespace, origin, connection, decrypt,
       .filter(row => allowed(row.project_id) && assignment('project', row.project_id).rental_ids.length && signature('project',row.project_id)===row.scope_signature)
       .map(({actor,scope_signature,...row})=>row);
   }
+  function latest(projectId,desktopId) {
+    const row=db.prepare(`SELECT a.*,j.status,j.progress,t.title,b.name AS project_name FROM cu_desktop_activity a
+      JOIN chat_jobs j ON j.id=a.run_id JOIN chat_threads t ON t.id=j.thread_id JOIN boards b ON b.id=a.project_id
+      WHERE a.project_id=? AND a.desktop_id=? ORDER BY a.updated_at DESC LIMIT 1`).get(projectId,desktopId);
+    if(!row||signature('project',projectId)!==row.scope_signature)return null;
+    const {actor,scope_signature,...publicRow}=row;return publicRow;
+  }
   let inventoryCache=null;
   async function request(projectId, actor, sessionId, command, data, valid) {
     if (!key) throw fail(503, 'The live computer viewer is being connected. Please try again shortly.');
@@ -41,7 +48,7 @@ function createComputerViewer({ db, key, namespace, origin, connection, decrypt,
     check(); if(['takeover','resume'].includes(command))onHandoff(data.desktop_id);
     return result;
   }
-  return {record,activity,request,configured:!!key};
+  return {record,activity,latest,request,configured:!!key};
 }
 function registerViewerRoutes(router, verify) {
   function browser(req) {
@@ -64,7 +71,7 @@ function registerViewerRoutes(router, verify) {
       if(!result?.image_url?.startsWith('data:image/jpeg;base64,'))throw fail(503,'The computer screen is unavailable');
       return res.type('image/jpeg').send(Buffer.from(result.image_url.slice(23),'base64'));
     }
-    const recent=req.tenant.computeruse.viewer.activity(projectId=>projectId===id).find(a=>a.desktop_id===data.desktop_id);
+    const recent=req.tenant.computeruse.viewer.latest(id,data.desktop_id);
     const job=recent?req.tenant.app.db.prepare('SELECT j.id,j.status,j.requested_by,t.id AS thread_id FROM chat_jobs j JOIN chat_threads t ON t.id=j.thread_id WHERE j.id=?').get(recent.run_id):null;
     res.json({...result,activity:recent||null,job:job?{id:job.id,status:job.status,thread_id:job.thread_id,can_resume:['blocked','failed','interrupted'].includes(job.status)&&(req.workspaceIsOwner||job.requested_by===req.cloudUserId)}:null});
   }catch(e){next(e);}};
