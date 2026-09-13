@@ -1,13 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
-import { marked } from 'marked';
+import { renderDescription } from '../markdown.mjs';
 import {
   X, AlignLeft, CheckSquare, Tag, Clock, Paperclip, MessageSquare, History,
   Archive, Trash2, Plus, Pencil, Download, RotateCcw
 } from 'lucide-react';
+import CompanyChat from './CompanyChat.jsx';
+import AiActions from './AiActions.jsx';
 import { api } from '../api.js';
-
-marked.setOptions({ breaks: true, gfm: true });
+import AttachmentImage from './AttachmentImage.jsx';
+import TaskFiles from './TaskFiles.jsx';
 
 const LABEL_COLORS = ['#ef4444', '#f59e0b', '#22c55e', '#14b8a6', '#3b82f6', '#8b5cf6', '#ec4899', '#64748b'];
 
@@ -25,7 +27,9 @@ function Section({ icon: Icon, title, action, children }) {
   );
 }
 
-export default function CardModal({ cardId, board, onClose, onBoardChange }) {
+export default function CardModal({ cardId, board, onClose, onBoardChange, onDeployAgent, onChat, onAudio }) {
+  const readOnly=board.permissions?.role==='viewer';
+  const [teamChat,setTeamChat]=useState(false);
   const [card, setCard] = useState(null);
   const [editingDesc, setEditingDesc] = useState(false);
   const [desc, setDesc] = useState('');
@@ -36,12 +40,13 @@ export default function CardModal({ cardId, board, onClose, onBoardChange }) {
   const [newItemFor, setNewItemFor] = useState(null);
   const [newItemText, setNewItemText] = useState('');
   const fileRef = useRef(null);
+  const [attachmentUpload,setAttachmentUpload]=useState(null),[attachmentError,setAttachmentError]=useState('');
 
   const load = () => api.get(`/api/cards/${cardId}`).then((c) => { setCard(c); setDesc(c.description); });
   useEffect(() => { load(); }, [cardId]);
 
   useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape' && !e.target.closest('textarea, input')) onClose(); };
+    const onKey = (e) => { if (e.key === 'Escape' && !e.target.closest('textarea, input, dialog[open]')) onClose(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
@@ -109,10 +114,10 @@ export default function CardModal({ cardId, board, onClose, onBoardChange }) {
   }
 
   async function uploadFile(file) {
-    if (!file) return;
-    const form = new FormData();
-    form.append('file', file);
-    await api.post(`/api/cards/${card.id}/attachments`, form);
+    if (!file||attachmentUpload) return;setAttachmentError('');setAttachmentUpload({name:file.name,loaded:0,total:file.size});
+    try { await api.uploadFile({file,boardId:board.id,cardId:card.id,kind:'attachment',onProgress:setAttachmentUpload}); }
+    catch(error) { setAttachmentError(error.message+' Select the same file again to resume.'); return; }
+    finally { setAttachmentUpload(null); }
     load();
     onBoardChange();
   }
@@ -128,10 +133,11 @@ export default function CardModal({ cardId, board, onClose, onBoardChange }) {
         className="w-full max-w-2xl bg-zinc-900 border border-zinc-800 rounded-2xl shadow-2xl"
       >
         {/* header */}
+        {onChat && <div className="px-6 pt-4 flex flex-wrap gap-2"><AiActions chatLabel="Chat about this task" onChat={() => onChat(card)} onAudio={onAudio} audioDisabled={readOnly} audioTitle="Hear a summary of this project and its tasks"/>{onDeployAgent && <button onClick={() => onDeployAgent(card)} className="px-3 py-2 rounded-lg border border-indigo-500/40 text-indigo-200 text-sm">Deploy agent on this task</button>}</div>}
         <div className="flex items-start gap-3 p-5 pb-2">
           <div className="flex-1 min-w-0">
             <input
-              key={card.id + card.title}
+              readOnly={readOnly} key={card.id + card.title}
               defaultValue={card.title}
               onBlur={(e) => e.target.value.trim() && e.target.value !== card.title && patch({ title: e.target.value.trim() })}
               onKeyDown={(e) => e.key === 'Enter' && e.target.blur()}
@@ -147,7 +153,9 @@ export default function CardModal({ cardId, board, onClose, onBoardChange }) {
           </button>
         </div>
 
-        <div className="px-5 pb-5">
+        {board.hierarchy?.company_id&&<div className="px-5 py-3"><button aria-expanded={teamChat} onClick={()=>setTeamChat(!teamChat)} className="text-sm text-indigo-300 rounded-lg border border-indigo-500/30 px-3 py-2">Company team chat</button>{teamChat&&<div className="mt-3"><CompanyChat key={cardId} cardId={cardId}/></div>}</div>}
+        <TaskFiles key={card.id} cardId={card.id} board={board} onBoardChange={onBoardChange}/>
+        <fieldset disabled={readOnly} className="px-5 pb-5">
           {/* labels + due */}
           <div className="flex flex-wrap items-center gap-2 mb-5 pl-0">
             {card.labels.map((l) => (
@@ -230,7 +238,7 @@ export default function CardModal({ cardId, board, onClose, onBoardChange }) {
               </div>
             ) : card.description.trim() ? (
               <div className="md-body" onClick={() => setEditingDesc(true)}
-                dangerouslySetInnerHTML={{ __html: marked.parse(card.description) }} />
+                dangerouslySetInnerHTML={{ __html: renderDescription(card.description) }} />
             ) : (
               <button onClick={() => setEditingDesc(true)}
                 className="w-full text-left text-sm text-zinc-600 bg-zinc-950/70 hover:bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-3">
@@ -313,25 +321,28 @@ export default function CardModal({ cardId, board, onClose, onBoardChange }) {
             icon={Paperclip}
             title="Attachments"
             action={
-              <button onClick={() => fileRef.current?.click()} className="flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-200">
+              <button disabled={!!attachmentUpload} onClick={() => fileRef.current?.click()} className="flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-200">
                 <Plus className="w-3 h-3" /> Upload file
               </button>
             }
           >
-            <input ref={fileRef} type="file" className="hidden"
+            <input ref={fileRef} aria-label="Upload task attachment" disabled={!!attachmentUpload} type="file" className="hidden"
               onChange={(e) => { uploadFile(e.target.files[0]); e.target.value = ''; }} />
+            {attachmentError&&<p role="alert" className="mb-2 text-sm text-rose-300">{attachmentError}</p>}
+            {attachmentUpload&&<div className="mb-3"><p role="status" className="break-words text-sm text-indigo-200">{attachmentUpload.name} · {attachmentUpload.finalizing?'Finishing upload…':`${Math.round(100*attachmentUpload.loaded/(attachmentUpload.total||1))}%`}</p><progress aria-label="Attachment upload progress" max={attachmentUpload.total||1} value={attachmentUpload.loaded} className="w-full accent-indigo-500"/></div>}
             {card.attachments.length === 0 && <p className="text-sm text-zinc-600">No attachments.</p>}
             <div className="space-y-2">
               {card.attachments.map((a) => (
                 <div key={a.id} className="flex items-center gap-3 bg-zinc-950/70 border border-zinc-800 rounded-lg px-3 py-2">
                   {/^image\//.test(a.mime)
-                    ? <img src={`/uploads/${a.filename}`} alt="" className="w-10 h-10 rounded object-cover shrink-0" />
+                    ? <AttachmentImage src={`/uploads/${a.filename}`} alt="" className="w-10 h-10 rounded object-cover shrink-0" />
                     : <div className="w-10 h-10 rounded bg-zinc-800 flex items-center justify-center shrink-0"><Paperclip className="w-4 h-4 text-zinc-500" /></div>}
                   <div className="flex-1 min-w-0">
                     <p className="text-sm text-zinc-200 truncate">{a.original_name}</p>
                     <p className="text-[11px] text-zinc-600">{(a.size / 1024).toFixed(1)} KB</p>
                   </div>
                   <a href={`/uploads/${a.filename}`} download={a.original_name}
+                    onClick={async event => { event.preventDefault(); try { await api.download(`/uploads/${a.filename}`, a.original_name); } catch (error) { window.alert(error.message); } }}
                     className="p-1.5 rounded hover:bg-zinc-800 text-zinc-500 hover:text-zinc-200" title="Download">
                     <Download className="w-4 h-4" />
                   </a>
@@ -405,7 +416,7 @@ export default function CardModal({ cardId, board, onClose, onBoardChange }) {
               <Trash2 className="w-4 h-4" /> Delete
             </button>
           </div>
-        </div>
+        </fieldset>
       </motion.div>
     </motion.div>
   );

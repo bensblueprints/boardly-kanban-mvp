@@ -1,0 +1,54 @@
+name: Boardly mobile builds
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['feature/boardly-mobile-*']
+    paths: ['mobile/**', '.github/workflows/mobile-build.yml']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  ios:
+    name: iOS ${{ matrix.target }}
+    runs-on: macos-26
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: simulator
+            sdk: iphonesimulator
+            destination: generic/platform=iOS Simulator
+          - target: device
+            sdk: iphoneos
+            destination: generic/platform=iOS
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - run: npm ci
+      - run: node scripts/configure-cloud.cjs
+      - run: npm run typecheck
+      - run: npx expo prebuild --platform ios --no-install --template expo-template-bare-minimum@56.0.35
+      - run: pod install --project-directory=ios
+      - name: Compile the iOS app
+        run: xcodebuild -workspace ios/Boardly.xcworkspace -scheme Boardly -configuration Release -sdk '${{ matrix.sdk }}' -destination '${{ matrix.destination }}' -derivedDataPath build/ios CODE_SIGNING_ALLOWED=NO ARCHS=arm64 build
+      - name: Package app
+        run: tar -czf Boardly-ios-${{ matrix.target }}.tar.gz -C build/ios/Build/Products/Release-${{ matrix.sdk }} Boardly.app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Boardly-iOS-${{ matrix.target }}
+          path: mobile/Boardly-ios-${{ matrix.target }}.tar.gz
+          if-no-files-found: error

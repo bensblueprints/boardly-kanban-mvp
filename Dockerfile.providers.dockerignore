@@ -1,0 +1,10 @@
+**
+!Dockerfile.providers
+!server/
+!server/**
+!scripts/
+!scripts/**
+!docs/
+!docs/**
+!dist/
+!dist/**

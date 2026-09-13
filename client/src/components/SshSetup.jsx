@@ -1,0 +1,32 @@
+import React,{useState} from 'react';
+import {api} from '../api.js';
+const button='rounded-lg border border-zinc-700 px-3 py-2 text-sm hover:bg-zinc-800 disabled:opacity-40';
+const field='w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm';
+
+export default function SshSetup({base,kind,network,saved,onDone,onCancel}){
+ const [form,setForm]=useState({host:'',username:'',label:'',port:22,tailnet_device_id:''});
+ const [setup,setSetup]=useState(saved||null),[probe,setProbe]=useState(null),[os,setOs]=useState('linux'),[allow,setAllow]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
+ async function act(fn){setBusy(true);setError('');setNotice('');try{await fn();}catch(e){setError(e.message);}finally{setBusy(false);}}
+ async function copy(value){try{await navigator.clipboard.writeText(value);setNotice('Copied');}catch{setNotice('Select the text below and copy it.');}}
+ const connection=setup?.connection;
+ return <div className="rounded-xl border border-indigo-500/30 p-4 space-y-4" aria-label="Guided SSH setup">
+  <div><h4 className="font-medium">{setup?'Install your Boardly key':'Connect a machine'}</h4><p className="text-sm text-zinc-400 mt-1">Boardly generates a dedicated SSH key. Add its public key to your machine once; the private key stays encrypted in your account.</p></div>
+  {error&&<p role="alert" className="text-sm text-rose-300">{error}</p>}{notice&&<p role="status" className="text-sm text-emerald-300">{notice}</p>}
+  {!setup?<form className="space-y-3" onSubmit={e=>{e.preventDefault();act(async()=>setSetup(await api.post(base+'/setup',form)));}}>
+   {network?.state==='Running'&&<label className="block text-sm">Machine<select aria-label="Machine" className={field+' mt-1'} value={form.tailnet_device_id} onChange={e=>setForm({...form,tailnet_device_id:e.target.value})}><option value="">Enter an SSH address</option>{network.devices.map(d=><option key={d.id} value={d.id}>{d.name}{d.online?'':' (offline)'} · Tailscale</option>)}</select></label>}
+   {form.tailnet_device_id?<label className="block text-sm">SSH username<input required autoComplete="off" className={field+' mt-1'} value={form.username} placeholder="ben" onChange={e=>setForm({...form,username:e.target.value})}/></label>:<label className="block text-sm">SSH address<input aria-label="SSH address" required autoComplete="off" className={field+' mt-1'} value={form.host} placeholder="ben@my-machine.example.com" onChange={e=>setForm({...form,host:e.target.value})}/><span className="block text-xs text-zinc-400 mt-1">Use username@hostname or username@IP. For a private machine, connect Tailscale in Settings → Tailscale first.</span></label>}
+   <details><summary className="cursor-pointer text-sm text-zinc-400">Optional name and port</summary><div className="grid sm:grid-cols-2 gap-3 mt-3"><label className="text-sm">Connection name<input className={field+' mt-1'} value={form.label} onChange={e=>setForm({...form,label:e.target.value})}/></label><label className="text-sm">Port<input required type="number" min="1" max="65535" className={field+' mt-1'} value={form.port} onChange={e=>setForm({...form,port:Number(e.target.value)})}/></label></div></details>
+   <div className="flex flex-wrap gap-2"><button disabled={busy} className={button+' bg-indigo-600'}>Generate connection key</button><button type="button" disabled={busy} className={button} onClick={onCancel}>Cancel</button></div>
+  </form>:<>
+   <p className="text-sm text-zinc-300 break-all">{connection.username}@{connection.host}:{connection.port}</p>
+   <label className="block text-sm">Machine operating system<select aria-label="Machine operating system" className={field+' mt-1'} value={os} onChange={e=>setOs(e.target.value)}><option value="linux">Linux / macOS</option><option value="windows">Windows (PowerShell)</option></select></label>
+   <p className="text-sm text-zinc-400">Run this on the destination machine as <strong className="text-zinc-200">{connection.username}</strong>. {os==='windows'?'Use an elevated PowerShell window for an administrator login. OpenSSH Server must be running.':'SSH / Remote Login must be enabled.'}</p>
+   <button type="button" className={button} onClick={()=>copy(setup.commands[os])}>Copy install command</button>
+   <textarea aria-label="Public key install command" readOnly spellCheck={false} className={field+' font-mono text-xs'} rows={5} value={setup.commands[os]}/>
+   <details><summary className="cursor-pointer text-sm text-zinc-400">Public key for manual installation</summary><textarea aria-label="Generated public key" readOnly className={field+' mt-2 font-mono text-xs'} rows={3} value={setup.public_key}/><button type="button" className={button+' mt-2'} onClick={()=>copy(setup.public_key)}>Copy public key</button></details>
+   {probe?<div className="rounded-lg bg-zinc-900 p-3 space-y-3"><h5 className="text-sm font-medium">Trust this machine</h5><p className="text-sm text-zinc-400">Boardly reached your machine. Compare this fingerprint with one printed by the install command. Trust it to finish connecting.</p><p className="font-mono text-xs break-all">{probe.fingerprint}</p><label className="flex gap-2 text-sm"><input type="checkbox" checked={allow} onChange={e=>setAllow(e.target.checked)}/>{kind==='owner'?'Allow Work agents in all my companies':'Allow Work agents to use this connection'}</label><button disabled={busy} className={button+' bg-indigo-600'} onClick={()=>act(async()=>{await api.post(base+'/'+connection.id+'/activate',{fingerprint:probe.fingerprint,allow_agent:allow});onDone(connection.label+': connected and tested'+(allow?' · Work agent access enabled':''));})}>Trust and connect</button></div>:<button disabled={busy} className={button+' bg-indigo-600'} onClick={()=>act(async()=>{if(connection.fingerprint){await api.post(base+'/'+connection.id+'/test',{});onDone(connection.label+': authenticated successfully from Boardly cloud');}else setProbe(await api.post(base+'/'+connection.id+'/probe',{}));})}>{busy?'Checking…':"I've installed the key — check connection"}</button>}
+   <p className="text-xs text-zinc-500">{kind==='owner'?'This connection belongs to your account and is available across your companies. Only you can use it until you change computer sharing.':'This connection follows the SSH permissions for this '+(kind==='companies'?'company.':'project.')}</p>
+   <button type="button" disabled={busy} className={button} onClick={onCancel}>Close setup</button>
+  </>}
+ </div>;
+}
