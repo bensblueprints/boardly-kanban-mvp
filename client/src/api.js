@@ -1,3 +1,4 @@
+import {uploadFile} from './file-upload.js';
 let tokenProvider = null;
 let downloadProvider = null;
 export function setDownloadProvider(provider) { downloadProvider = provider; }
@@ -29,6 +30,11 @@ async function req(method, url, body) {
 }
 
 export const api = {
+  uploadFile: options => uploadFile({...options,workspaceId,request:async(url,body,signal)=>{
+    const token=tokenProvider?await tokenProvider():null,binary=body instanceof Blob;
+    const res=await fetch(url,{method:'POST',signal,headers:{...(token?{authorization:'Bearer '+token}:{}),...(workspaceId?{'x-boardly-workspace':workspaceId}:{}),'content-type':binary?'application/octet-stream':'application/json'},body:binary?body:JSON.stringify(body)});
+    const data=await res.json().catch(()=>({}));if(!res.ok)throw Object.assign(Error(data.error||`Upload failed (${res.status})`),{status:res.status});return data;
+  }}),
   blob: async (url, signal) => {
     const token = tokenProvider ? await tokenProvider() : null;
     const response = await fetch(url, { signal, headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), ...(workspaceId ? { 'x-boardly-workspace': workspaceId } : {}) } });

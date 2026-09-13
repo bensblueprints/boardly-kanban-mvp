@@ -6,7 +6,7 @@ const multer = require('multer');
 const { safeText } = require('./agent-activity');
 const { MAX_AGENTS, nextProjectJob, projectQueue, snapshot, cleanValues } = require('./agent-scheduling');
 
-function createProjectChat({ db, connections, userId, uploadsDir, environment, payments, email, ssh, github, computeruse, media, canUseMedia=(actor)=>actor===userId, canUseComputers=(actor)=>actor===userId, canUseGithub=(actor)=>actor===userId, canUseSsh=(actor)=>actor===userId }) {
+function createProjectChat({ db, connections, userId, uploadsDir, environment, payments, email, ssh, github, computeruse, media, canWriteFiles=(actor)=>actor===userId, canUseMedia=(actor)=>actor===userId, canUseComputers=(actor)=>actor===userId, canUseGithub=(actor)=>actor===userId, canUseSsh=(actor)=>actor===userId }) {
   const router = express.Router();
   db.exec(`CREATE TABLE IF NOT EXISTS chat_threads (
     id TEXT PRIMARY KEY, board_id INTEGER NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
@@ -258,6 +258,8 @@ function createProjectChat({ db, connections, userId, uploadsDir, environment, p
   });
   db.exec('CREATE TABLE IF NOT EXISTS chat_outputs (job_id TEXT REFERENCES chat_jobs(id) ON DELETE CASCADE,name TEXT NOT NULL,sha256 TEXT NOT NULL,file_id INTEGER NOT NULL REFERENCES project_files(id) ON DELETE CASCADE,PRIMARY KEY(job_id,name,sha256))');
   require('./task-files').backfillTaskOutputs(db);
+  const transfers=require('./file-uploads');
+  transfers.mountUploadRoutes(router,{base:'/api/worker/jobs/:id/uploads',guard:activeJob,service:transfers.createFileUploads({db,uploadsDir}),context:req=>({boardId:req.projectThread.board_id,cardId:req.projectThread.card_id,jobId:req.projectJob.id,actor:'worker:'+req.projectJob.id,limit:req.accountPlan?.storage_bytes??null,valid:()=>{const current=job(req.params.id);if(current?.status!=='running'||current.worker_id!==req.boardlyConnection.id||!canWriteFiles(current.requested_by||userId,req.projectThread.board_id))throw Object.assign(Error('Active run not found'),{status:404});}})});
   const outputUpload = multer({ storage: multer.diskStorage({ destination: uploadsDir, filename: (req, file, cb) => cb(null, 'project-' + crypto.randomUUID()) }), limits: { fileSize: 100 * 1024 * 1024 } });
   router.post('/api/worker/jobs/:id/outputs', activeJob, outputUpload.single('file'), (req, res, next) => {
     if (!req.file) return res.status(400).json({ error: 'Choose an output file' });

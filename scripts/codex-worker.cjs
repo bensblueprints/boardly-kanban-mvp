@@ -24,10 +24,10 @@ const children = new Set();
 const maxAgents = Math.max(1,Math.min(4,Number(settings.maxAgents)||4));
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function request(route, data, method = 'POST') {
-  const form = data instanceof FormData;
+  const form = data instanceof FormData,binary=Buffer.isBuffer(data);
   const response = await fetch(origin + route, { method, signal: AbortSignal.timeout(route.includes('/github/')?180000:route.includes('/computeruse/')?100000:60000),
-    headers: { authorization: `Bearer ${token}`, ...(form || method === 'GET' ? {} : { 'content-type': 'application/json' }) },
-    body: method === 'GET' ? undefined : form ? data : JSON.stringify(data || {}) });
+    headers: { authorization: `Bearer ${token}`, ...(form || method === 'GET' ? {} : { 'content-type': binary?'application/octet-stream':'application/json' }) },
+    body: method === 'GET' ? undefined : form||binary ? data : JSON.stringify(data || {}) });
   if (!response.ok) { const detail = await response.json().catch(() => ({})); throw Object.assign(Error(safeText(detail.error || `Boardly worker request failed (${response.status})`)), { status: response.status }); }
   return response;
 }
@@ -79,8 +79,13 @@ async function run(job) {
     finally { updating = false; }
   };
   const timer = setInterval(heartbeat, 2000), started = Date.now();
-  let status = 'failed', failure, wallet, email, ssh, github, computeruse, media, githubStatus=null, checkpoint=null, round=Number(job.continuation_count)||0;
+  let status = 'failed', failure, wallet, email, ssh, github, computeruse, media, outputBroker, outputUploader, githubStatus=null, checkpoint=null, round=Number(job.continuation_count)||0;
   try {
+    fs.mkdirSync(outputDir,{recursive:true,mode:0o700});
+    const outputs=require('./output-upload.cjs');
+    outputUploader=outputs.createOutputUploader({outputDir,jobId:job.id,api,request,secrets:privateValues,stopped:()=>cancelled||stopping,onProgress:(name,label)=>step('worker:upload',label,label==='Saved file to project'?'completed':'running',name)});
+    const fileSocket=path.join(temp,'files.sock');outputBroker=await outputs.createOutputBroker({socketPath:fileSocket,uploader:outputUploader});
+    projectEnv.BOARDLY_FILES_SOCKET=fileSocket;
     if (managedMcp) {
       await managedMcp.waitUntilReady({ boardId: job.board.id, stopped: () => cancelled || stopping,
         onStatus: async ready => { step('worker:mcp', ready ? 'Boardly connection ready' : 'Reconnecting Boardly · retrying automatically', ready ? 'completed' : 'running'); await heartbeat(); } });
@@ -172,7 +177,7 @@ async function run(job) {
       `Project environment variable names: ${JSON.stringify(Object.keys(projectEnv))}. Values are already in the process environment. Use them only for this project; never print, log, commit or put secret values in chat or output files.`,
       `Project payment wallet (masked metadata only): ${JSON.stringify(job.payments || null)}.`,
       wallet ? `For a purchase the user requests, use the checkout helper at ${path.join(__dirname, 'project-card-client.cjs')}. It exports fillCheckout(page, checkout, selectors), withCardForCheckout(checkout, async card => { /* fill fields only */ }), and finishCheckout({purchase_id,status,actual_minor}). The checkout object requires card_id, amount_minor (integer final total including shipping/tax), currency matching the project budget, merchant_url (actual HTTPS checkout origin), description and a stable request_key (8–100 letters/digits/underscores/hyphens). It reserves budget before making the card available inside the callback and returns only a purchase_id and masked metadata. fillCheckout verifies the page merchant and accepts selectors for number, cardholder, exp_month, exp_year, expiry (MM/YYYY), expiry_short (MM/YY), billing_line1, billing_line2, billing_city, billing_region, billing_postal_code and billing_country. Inspect the checkout and total first. Never print, log, save, screenshot or return card data; do not put it in command arguments or environment files. Do not submit an order unless it is within the user's purchase instruction. After a confirmed payment, call finishCheckout with status paid and the actual_minor total; use released only when you know no charge occurred, or uncertain if unclear. Never automatically retry a possibly submitted order. Missing outcomes retain the budget hold. Security codes/PINs are not stored; stop for the user if the site requires missing security codes or bank approval that needs the user. For an authorized email verification step, use this project's enabled company email helper.` : 'No project payment card is enabled for this run. Do not retrieve cards from another project or request card numbers in chat.',
-      `Place finished files you want stored in Boardly in ${outputDir}. Regular files up to 100 MB each will be uploaded to this project's Files section after the run. Do not put credentials there.`,
+      `Place finished files you want stored in Boardly in ${outputDir}. To save and verify an output NOW, call require(${JSON.stringify(path.join(__dirname,'project-file-client.cjs'))}).upload({name:'exact filename'}). This streams any regular file type in resumable chunks without a per-file size cap; available account/server storage still applies. It returns a verified file ID, size and SHA256. Use this helper for binary or large outputs instead of putting base64 through the AI's direct-upload tool. Retry the same filename after a connection interruption; do not regenerate a finished file. Remaining files are also uploaded automatically after the run. Never mark a task blocked solely because post-run upload has not happened: use this helper before verifying delivery, or return the finished result so the worker can upload it. Do not put credentials in outputs.`,
       !sessionId ? `Saved conversation: ${JSON.stringify(job.history || [])}` : '',
       persistent?persistentInstruction:'Work on the current user message below. Return a clear result and save relevant project progress. Record actual blockers and exact next actions.',
       job.recovery_required?'This assignment recovered after a worker restart. First inspect saved files, task updates and external operation outcomes. Never blindly repeat a purchase, deployment, message or remote mutation. If the prior outcome cannot be established, record that uncertainty as a blocker.':'',
@@ -228,12 +233,8 @@ async function run(job) {
       if (cancelled) status = 'cancelled';
       else for (const entry of fs.readdirSync(outputDir, { withFileTypes: true })) {
         if (!entry.isFile()) continue; // Do not follow symlinks or upload arbitrary directories.
-        const file = path.join(outputDir, entry.name), stat = fs.lstatSync(file);
-        if (stat.size > 100 * 1024 * 1024) { text += `\nOutput ${safeName(entry.name)} stays in the agent workspace because it exceeds 100 MB.`; continue; }
-        const bytes = fs.readFileSync(file);
-        if (clean(bytes.toString('utf8')) !== bytes.toString('utf8')) { text += '\nAn output containing a project secret was kept private and was not uploaded.'; continue; }
-        const form = new FormData(); form.set('file', new Blob([bytes]), safeName(entry.name));
-        await request(`/api/worker/jobs/${job.id}/outputs`, form);
+        try { await outputUploader.upload(entry.name); }
+        catch(e) { status='blocked';checkpoint={state:'blocked',summary:text,blocker:'Could not save output '+safeName(entry.name)+': '+clean(e.message),next_action:'Retry this saved file upload after correcting the reported transfer or storage error. Existing files remain in the agent workspace.'};throw e; }
         step(`worker:output:${activities.size}`, 'Saved file to project', 'completed', safeName(entry.name));
       }
       step('worker:save', 'Project outputs saved');
@@ -244,6 +245,7 @@ async function run(job) {
     if(status==='blocked'){text=checkpoint.summary;failure=checkpoint.blocker;}
     else failure = 'The project run could not finish. Check the agent runtime, then resume the saved assignment.';
   } finally {
+    if(outputBroker)await outputBroker.close();
     if(computeruse)await computeruse.close();
     if(media)await media.close();
     if(ssh)await ssh.close();

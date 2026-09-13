@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Upload, File, Folder, FolderPlus, FolderInput, Download, ExternalLink, Link, Trash2, Pencil, ChevronRight } from 'lucide-react';
 import { api } from '../api.js';
 
-const bytes = n => n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`;
+const bytes = n => n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : n<1073741824?`${(n / 1048576).toFixed(1)} MB`:`${(n/1073741824).toFixed(1)} GB`;
 const button = 'flex items-center justify-center gap-2 rounded-lg border border-zinc-700 px-3 py-2 text-sm hover:bg-zinc-800 disabled:opacity-40';
 const field = 'min-w-0 rounded-lg bg-zinc-950 border border-zinc-700 p-2 text-sm';
 
@@ -12,6 +12,7 @@ export default function ProjectFiles({ board }) {
   const [folder, setFolder] = useState(null), [busy, setBusy] = useState(false), [ready, setReady] = useState(false), [error, setError] = useState('');
   const [editing, setEditing] = useState(null), [name, setName] = useState(''), [moving, setMoving] = useState(null), [destination, setDestination] = useState('');
   const [title, setTitle] = useState(''), [url, setUrl] = useState('');
+  const [transfer,setTransfer]=useState(null),[pending,setPending]=useState(null);const uploadAbort=useRef(null);
   const base = `/api/boards/${board.id}`;
   async function load() {
     const data = await api.get(base + '/files'); setFiles(data.files); setFolders(data.folders || []); setStorage(data.storage); setReady(true);
@@ -27,10 +28,14 @@ export default function ProjectFiles({ board }) {
     try { await action(); await load(); } catch (e) { setError(e.message); await load().catch(() => {}); }
     finally { setBusy(false); }
   }
-  const upload = e => {
-    const selected = [...(e.target.files || [])]; e.target.value = ''; if (!selected.length) return;
-    mutate(async () => { for (const file of selected) { const form = new FormData(); if (folder !== null) form.set('folder_id', String(folder)); form.set('file', file); await api.post(base + '/files', form); } });
-  };
+  useEffect(()=>()=>uploadAbort.current?.abort(),[]);
+  async function sendFiles(selected,destinationFolder){
+    if(busy||readOnly)return;setBusy(true);setError('');setPending(null);const abort=new AbortController();uploadAbort.current=abort;let index=0;
+    try{for(;index<selected.length;index++)await api.uploadFile({file:selected[index],boardId:board.id,folderId:destinationFolder,signal:abort.signal,onProgress:setTransfer});}
+    catch(e){setPending({files:selected.slice(index),folder:destinationFolder});setError(e.name==='AbortError'?'Upload paused. Resume to continue from the saved position.':e.message);}
+    finally{setTransfer(null);setBusy(false);uploadAbort.current=null;await load().catch(()=>{});}
+  }
+  const upload=e=>{const selected=[...(e.target.files||[])];e.target.value='';if(selected.length)sendFiles(selected,folder);};
   return <div className="p-5 space-y-4">
     <div className="flex flex-wrap items-center justify-between gap-3"><div className="min-w-0"><h3 className="font-medium">Project files</h3>{storage && <p className="text-xs text-zinc-500 mt-1">{bytes(storage.usedBytes)} used across your account · {storage.unlimited ? 'Unlimited owner storage' : bytes(storage.limitBytes) + ' allowance'}</p>}</div>
       <div className="flex flex-wrap gap-2"><button disabled={!ready || busy || readOnly} className={button} onClick={() => { setEditing('new'); setName(''); setMoving(null); }}><FolderPlus size={16} />New folder</button><button disabled={!ready || busy || readOnly} onClick={() => uploadInput.current?.click()} className={button + ' bg-indigo-600 border-indigo-500'}><Upload size={16} />Upload files</button><input ref={uploadInput} aria-label="Upload project files" type="file" multiple hidden onChange={upload} /></div>
@@ -38,7 +43,8 @@ export default function ProjectFiles({ board }) {
     <nav aria-label="File folders" className="flex flex-wrap items-center gap-1 text-sm"><button disabled={busy} onClick={() => navigate(null)} className="p-1 text-indigo-300" aria-current={folder === null ? 'page' : undefined}>Files</button>{crumbs.map(f => <React.Fragment key={f.id}><ChevronRight size={14} className="shrink-0 text-zinc-500" /><button disabled={busy} aria-current={f.id === folder ? 'page' : undefined} onClick={() => navigate(f.id)} className="min-w-0 max-w-full break-words p-1 text-indigo-300">{f.name}</button></React.Fragment>)}</nav>
     <p className="text-xs text-zinc-400">Uploads and file links are added to {current ? `“${current.name}”` : 'Files'}. Use Move beside a file to organize it.</p>
     {error && <p role="alert" className="text-sm text-rose-300">{error}</p>}
-    {busy && <p role="status" className="text-xs text-indigo-300">Saving…</p>}
+    {transfer?<div className="space-y-2 rounded-xl border border-indigo-500/30 p-3"><p role="status" className="break-words text-sm text-indigo-200">{transfer.name} · {transfer.finalizing?'Finishing upload…':transfer.retrying?'Reconnecting…':`${Math.round(100*transfer.loaded/(transfer.total||1))}%`}</p><progress aria-label="File upload progress" max={transfer.total||1} value={transfer.loaded} className="w-full accent-indigo-500"/><div className="flex items-center justify-between gap-2"><span className="text-xs text-zinc-400">{bytes(transfer.loaded)} / {bytes(transfer.total)}</span><button type="button" className={button} onClick={()=>uploadAbort.current?.abort()}>Pause upload</button></div></div>:busy&&<p role="status" className="text-xs text-indigo-300">Saving…</p>}
+    {pending&&!busy&&<button className={button+' bg-indigo-600'} onClick={()=>sendFiles(pending.files,pending.folder)}>Resume upload</button>}
     {current && !readOnly && <div className="flex flex-wrap gap-2"><button disabled={busy} className={button} onClick={() => { setEditing('rename'); setName(current.name); setMoving(null); }}><Pencil size={14} />Rename folder</button><button disabled={busy || !!children.length || !!visible.length} title="Only empty folders can be deleted" className={button} onClick={() => mutate(async () => { await api.del(`/api/project-folders/${folder}`); navigate(current.parent_id); })}><Trash2 size={14} />Delete empty folder</button></div>}
     {editing && <form aria-label={editing === 'new' ? 'Create folder' : 'Rename folder'} className="rounded-xl border border-zinc-700 p-3 space-y-2" onSubmit={e => { e.preventDefault(); mutate(async () => { if (editing === 'new') { const created = await api.post(base + '/folders', { name, parent_id: folder }); setFolder(created.id); } else await api.patch(`/api/project-folders/${folder}`, { name }); setEditing(null); }); }}><label className="block text-xs text-zinc-400">Folder name<input autoFocus required maxLength={120} aria-label="Folder name" disabled={busy} className={field + ' mt-1 w-full'} value={name} onChange={e => setName(e.target.value)} /></label><div className="flex flex-wrap gap-2"><button disabled={busy || !name.trim()} className={button + ' bg-indigo-600'}>{editing === 'new' ? 'Create folder' : 'Save folder name'}</button><button type="button" disabled={busy} className={button} onClick={() => setEditing(null)}>Cancel</button></div></form>}
     {moving && <form aria-label={`Move ${moving.name}`} className="rounded-xl border border-indigo-700 p-3 space-y-2" onSubmit={e => { e.preventDefault(); mutate(async () => { await api.patch(`/api/project-files/${moving.id}`, { folder_id: destination ? Number(destination) : null }); setMoving(null); }); }}><p className="text-sm break-words">Move {moving.name}</p><label className="block text-xs text-zinc-400">Destination folder<select aria-label="Destination folder" disabled={busy} className={field + ' mt-1 w-full'} value={destination} onChange={e => setDestination(e.target.value)}><option value="">Files (top level)</option>{[...folders].sort((a,b) => a.path.localeCompare(b.path)).map(f => <option key={f.id} value={f.id}>{f.path}</option>)}</select></label><div className="flex gap-2"><button disabled={busy || (destination ? Number(destination) : null) === moving.folder_id} className={button + ' bg-indigo-600'}>Move file</button><button type="button" disabled={busy} onClick={() => setMoving(null)} className={button}>Cancel</button></div></form>}

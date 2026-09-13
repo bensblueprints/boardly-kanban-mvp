@@ -127,6 +127,19 @@ function createBoardlyServer({ db, uploadsDir, management }) {
     mustGet(q.card,card_id,'Card');return require('../server/task-files').listTaskFiles(db,card_id);
   });
   tool('link_task_file', 'Add a shortcut from a task to an existing file in the same project; does not copy file bytes', { card_id: z.number().int(), file_id: z.number().int() }, ({card_id,file_id}) => require('../server/task-files').linkTaskFile(db,card_id,file_id));
+  const uploadTools=require('../server/file-uploads').createFileUploads({db,uploadsDir});
+  async function transfer(method,boardId,id,suffix,body,local){
+    if(management)return(await management.invoke({operation_id:method+' /api/boards/:boardId/uploads'+(id?'/:uploadId':'')+suffix,parameters:{boardId,...(id?{uploadId:id}:{})},body})).data;
+    return local({boardId,actor:'local',limit:null});
+  }
+  tool('start_file_upload','Start or resume an upload of any file type and size within available storage. Use chunks instead of the 2 MB inline upload. Reuse upload_id on retry.',{board_id:z.number().int(),upload_id:z.string().uuid().optional(),name:z.string().min(1).max(250),size:z.number().int().nonnegative(),mime:z.string().optional(),folder_id:z.number().int().nullable().optional(),card_id:z.number().int().nullable().optional(),sha256:z.string().regex(/^[a-f0-9]{64}$/).optional()},({board_id,...body})=>transfer('POST',board_id,null,'',body,ctx=>uploadTools.begin(ctx,body)));
+  tool('file_upload_status','Read the saved byte offset before resuming a file upload.',{board_id:z.number().int(),upload_id:z.string().uuid()},({board_id,upload_id})=>transfer('GET',board_id,upload_id,'',undefined,ctx=>uploadTools.status(ctx,upload_id)));
+  tool('upload_file_chunk','Append at most 1 MB of original bytes as base64. Supply the saved offset; retrying the same chunk is safe. Use a script to transfer file bytes; never echo file contents in chat.',{board_id:z.number().int(),upload_id:z.string().uuid(),offset:z.number().int().nonnegative(),content_base64:z.string().max(1400000)},({board_id,upload_id,...body})=>transfer('POST',board_id,upload_id,'/chunks',body,ctx=>{
+    if(!body.content_base64.length||body.content_base64.length%4||!/^[A-Za-z0-9+/]*={0,2}$/.test(body.content_base64))throw Error('Invalid base64 chunk');
+    return uploadTools.append(ctx,upload_id,body.offset,Buffer.from(body.content_base64,'base64'));
+  }));
+  tool('finish_file_upload','Verify and publish a fully uploaded file. Safe to retry; returns the saved file ID.',{board_id:z.number().int(),upload_id:z.string().uuid()},({board_id,upload_id})=>transfer('POST',board_id,upload_id,'/complete',{},ctx=>uploadTools.finish(ctx,upload_id)));
+  tool('cancel_file_upload','Remove an unfinished upload and release reserved storage. A completed file is preserved.',{board_id:z.number().int(),upload_id:z.string().uuid()},({board_id,upload_id})=>transfer('DELETE',board_id,upload_id,'',undefined,ctx=>uploadTools.cancel(ctx,upload_id)));
   tool('add_project_file', 'Save a generated text/code/document file in a project (up to 1 MB of text). Set card_id when the output belongs to a task, so it appears on that task.', { board_id: z.number().int(), name: z.string().min(1).max(250), content: z.string().max(1000000), folder_id: z.number().int().nullable().optional(),card_id:z.number().int().optional() }, ({ board_id, name, content, folder_id,card_id }) => {
     mustGet(q.board, board_id, 'Board');
     const destination = projectFolders.folderId(db, board_id, folder_id);

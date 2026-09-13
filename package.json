@@ -26,7 +26,7 @@
     "start:cloud": "node server/cloud-index.js",
     "test:cloud": "node test/cloud.js",
     "test:computers": "node test/project-computers.js && node test/computeruse-desktops.js && node test/computer-viewer.js",
-    "test:files": "node test/project-folders.js && node test/task-files.js",
+    "test:files": "node test/project-folders.js && node test/task-files.js && node test/file-uploads.js && node test/output-upload.js",
     "test:audio": "node test/audio.js && node test/audio-work.js",
     "test:integrations": "node test/cloud-integrations.js",
     "test:payments": "node test/project-payments.js",

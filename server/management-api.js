@@ -92,7 +92,7 @@ function createManagement({ app, parent, origin, routers, authorizeRequest }) {
       if (!/^[\w.-]{1,80}$/.test(file.field) || /[\r\n"\\/]/.test(file.name) || !file.name || file.name.length > 250 || !/^[\w.+-]+\/[\w.+-]+$/.test(file.content_type || 'application/octet-stream')) throw fail(400, 'Invalid file metadata');
       if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(file.content_base64)) throw fail(400, 'Invalid base64 file');
       const data = Buffer.from(file.content_base64, 'base64');
-      if (data.length > 2 * 1024 * 1024) throw fail(413, 'MCP uploads are limited to 2 MB; use the app for larger files');
+      if (data.length > 2 * 1024 * 1024) throw fail(413, 'Inline uploads are limited to 2 MB per request. Use start_file_upload, upload_file_chunk and finish_file_upload for larger files.');
       const boundary = 'boardly-' + require('node:crypto').randomUUID(), parts = [];
       for (const [key, value] of Object.entries(body || {})) {
         if (!/^[\w.-]+$/.test(key)) throw fail(400, 'Invalid form field');

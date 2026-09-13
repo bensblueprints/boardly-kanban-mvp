@@ -45,6 +45,8 @@ function addProjectLink(db, boardId, title, url, description = '') {
 function createProjectAssets({ db, uploadsDir, limitBytes = null }) {
   installProjectAssets(db);
   const router = express.Router(), json = express.json({ limit: '16kb' });
+  const transfers=require('./file-uploads');
+  transfers.mountUploadRoutes(router,{base:'/api/boards/:boardId/uploads',service:transfers.createFileUploads({db,uploadsDir}),context:req=>({boardId:Number(req.params.boardId),actor:req.cloudUserId||'local',limit:req.accountPlan?req.accountPlan.storage_bytes:limitBytes,valid:()=>req.revalidateMember?.()})});
   const exists = (req, res, next) => db.prepare('SELECT id FROM boards WHERE id=?').get(req.params.boardId) ? next() : res.status(404).json({ error: 'Project not found' });
   router.get('/api/storage', (req, res) => res.json(storageUsage(db, req.accountPlan ? req.accountPlan.storage_bytes : limitBytes)));
   router.get('/api/boards/:boardId/files', exists, (req, res) => res.json({ files: folders.listFiles(db, req.params.boardId), folders: folders.listFolders(db, req.params.boardId), storage: storageUsage(db, req.accountPlan ? req.accountPlan.storage_bytes : limitBytes) }));

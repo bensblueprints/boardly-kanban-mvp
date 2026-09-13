@@ -5,7 +5,7 @@ preview or download it. Editors can link an existing file from the same project
 and remove a shortcut without deleting the original file. Viewers can read and
 download outputs within their existing project access.
 
-Native task-chat output uploads and hosted AI `save_file` calls link saved files
+[Resumable uploads](FILE_UPLOADS.md), native task-chat output uploads and hosted AI `save_file` calls link saved files
 to the current task. MCP `add_project_file` accepts `card_id`; `list_task_files`
 and `link_task_file` support other task workflows. Whole-project conversations
 without a task require an explicit link to the relevant task.

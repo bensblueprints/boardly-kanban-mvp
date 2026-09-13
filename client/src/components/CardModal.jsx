@@ -40,6 +40,7 @@ export default function CardModal({ cardId, board, onClose, onBoardChange, onDep
   const [newItemFor, setNewItemFor] = useState(null);
   const [newItemText, setNewItemText] = useState('');
   const fileRef = useRef(null);
+  const [attachmentUpload,setAttachmentUpload]=useState(null),[attachmentError,setAttachmentError]=useState('');
 
   const load = () => api.get(`/api/cards/${cardId}`).then((c) => { setCard(c); setDesc(c.description); });
   useEffect(() => { load(); }, [cardId]);
@@ -113,10 +114,10 @@ export default function CardModal({ cardId, board, onClose, onBoardChange, onDep
   }
 
   async function uploadFile(file) {
-    if (!file) return;
-    const form = new FormData();
-    form.append('file', file);
-    await api.post(`/api/cards/${card.id}/attachments`, form);
+    if (!file||attachmentUpload) return;setAttachmentError('');setAttachmentUpload({name:file.name,loaded:0,total:file.size});
+    try { await api.uploadFile({file,boardId:board.id,cardId:card.id,kind:'attachment',onProgress:setAttachmentUpload}); }
+    catch(error) { setAttachmentError(error.message+' Select the same file again to resume.'); return; }
+    finally { setAttachmentUpload(null); }
     load();
     onBoardChange();
   }
@@ -320,13 +321,15 @@ export default function CardModal({ cardId, board, onClose, onBoardChange, onDep
             icon={Paperclip}
             title="Attachments"
             action={
-              <button onClick={() => fileRef.current?.click()} className="flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-200">
+              <button disabled={!!attachmentUpload} onClick={() => fileRef.current?.click()} className="flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-200">
                 <Plus className="w-3 h-3" /> Upload file
               </button>
             }
           >
-            <input ref={fileRef} type="file" className="hidden"
+            <input ref={fileRef} aria-label="Upload task attachment" disabled={!!attachmentUpload} type="file" className="hidden"
               onChange={(e) => { uploadFile(e.target.files[0]); e.target.value = ''; }} />
+            {attachmentError&&<p role="alert" className="mb-2 text-sm text-rose-300">{attachmentError}</p>}
+            {attachmentUpload&&<div className="mb-3"><p role="status" className="break-words text-sm text-indigo-200">{attachmentUpload.name} · {attachmentUpload.finalizing?'Finishing upload…':`${Math.round(100*attachmentUpload.loaded/(attachmentUpload.total||1))}%`}</p><progress aria-label="Attachment upload progress" max={attachmentUpload.total||1} value={attachmentUpload.loaded} className="w-full accent-indigo-500"/></div>}
             {card.attachments.length === 0 && <p className="text-sm text-zinc-600">No attachments.</p>}
             <div className="space-y-2">
               {card.attachments.map((a) => (

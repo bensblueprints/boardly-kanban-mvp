@@ -57,7 +57,8 @@ function memberGuard({db,memberships,ownerId,userId}){
     const read=['','cards','activity','archived','export','files','folders','links','chat/threads','chat/context'];
     const edits=['lists','lists/reorder','labels','files','folders','file-links','links','chat/threads','agent'];
     if(write&&suffix==='agent'&&!req.personalAiAllowed)throw fail(402,'Ask the company owner to connect AI funding');
-    if(method==='GET'?!read.includes(suffix):!edits.includes(suffix))throw fail(403,'This setting is managed by the account owner');
+    const transfer=/^uploads(?:\/[0-9a-f-]{36}(?:\/(chunks|complete))?)?$/.test(suffix);
+    if(!transfer&&(method==='GET'?!read.includes(suffix):!edits.includes(suffix)))throw fail(403,'This setting is managed by the account owner');
     if(method==='POST'&&suffix==='lists/reorder'&&Array.isArray(req.body?.order))for(const id of req.body.order){if(find('SELECT board_id FROM lists WHERE id=?',id)!==projectId)throw fail(404,'List not found');}
     if(method==='GET'&&!suffix){const json=res.json.bind(res);res.json=value=>json({...value,permissions:{owner:false,role:scope.project(projectId),can_ai:scope.project(projectId)==='editor',scopes:scope.capabilities('project',projectId)}});}
     if(method==='GET'&&suffix==='files'){const json=res.json.bind(res);res.json=value=>json({...value,storage:null});}
