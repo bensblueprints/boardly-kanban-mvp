@@ -92,7 +92,9 @@ function createComputerUseConnections({db,key,namespace,origin='',request=reques
   try{
    valid();const revision=connection()?.revision,scope=signature('project',id);
    const selected=await inspectForAgent(id,actor,valid);
-   if(!selected.rentals.some(r=>r.desktop_id===desktopId&&r.available))throw fail(403,'This desktop is not available to this project');
+   const desktop=selected.rentals.find(r=>r.desktop_id===desktopId);
+   if(!desktop)throw fail(403,'This desktop is not available to this project');
+   if(!desktop.available)throw fail(503,'The assigned ComputerUse host is offline or has stopped reporting health. Its saved connection and project permissions are retained. Restore the host network/power or ComputerUse worker, then resume this assignment.');
    if(command!=='release')viewer.record(id,actor,runId,selected.rentals.find(r=>r.desktop_id===desktopId),command);
    const check=()=>{valid();unchanged(revision);if(signature('project',id)!==scope||!enabled(id))throw fail(403,'Computer assignment changed');};
    check();const token=decrypt(connection()),send=async(c,d)=>{check();const result=await desktopRequest(origin,token,c,{desktop_id:desktopId,...d});check();return result;};

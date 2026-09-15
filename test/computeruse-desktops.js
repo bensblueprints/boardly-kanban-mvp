@@ -20,6 +20,7 @@ const {fixture}=require('./member-fixture'),{workspacePath}=require('../server/c
   await assert.rejects(()=>service.connect('invalid_replacement_token_fixture'),/Provider unavailable/);assert.equal(service.accountState().saved,true);assert.deepEqual(service.assignment('project',p.project.id).rental_ids,['desktop:'+desktopId]);
   const run=(job,command,extra={},valid=()=>{})=>service.controlForAgent(p.project.id,'user_owner',job,command,{desktop_id:desktopId,operation_id,action:{type:'key',key:'Escape'},...extra},valid);
   await assert.rejects(()=>run('one','status',{desktop_id:otherId}),/not available/);assert.deepEqual(calls,[]);
+  data.desktops[0].available=false;await assert.rejects(()=>run('one','status'),e=>e.status===503&&/host is offline/.test(e.message));assert.equal(service.assignment('project',p.project.id).allow_control,true);assert.deepEqual(calls,[]);data.desktops[0].available=true;
   human=true;await assert.rejects(()=>run('one','action'),/Human control/);assert.ok(!calls.includes('action'));human=false;
   await run('one','screenshot');await assert.rejects(()=>run('two','action'),/Another Work agent/);
   await run('one','action');unknown=true;await assert.rejects(()=>run('one','action'),/Unknown outcome/);unknown=false;
