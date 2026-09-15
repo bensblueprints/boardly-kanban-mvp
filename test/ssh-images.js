@@ -4,12 +4,14 @@ const {fixture}=require('./member-fixture'),{workspacePath}=require('../server/c
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
 (async()=>{
  const bytes=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aM1sAAAAASUVORK5CYII=','base64');
+ const large=Buffer.concat([bytes,Buffer.alloc(1700000)]);let inflight=0,peakReads=0;
  const imagePath="/frames/one's $(touch not-a-command).png",paths=[],STATUS=utils.sftp.STATUS_CODE;
  const hostKey=crypto.generateKeyPairSync('rsa',{modulusLength:2048}).privateKey.export({type:'pkcs1',format:'pem'}),fingerprint='SHA256:'+crypto.createHash('sha256').update(utils.parseKey(hostKey).getPublicSSH()).digest('base64').replace(/=+$/,'');
  const server=new Server({hostKeys:[hostKey]},client=>{client.on('error',()=>{});client.on('authentication',ctx=>ctx.method==='password'&&ctx.password==='fixture-password'?ctx.accept():ctx.reject());client.on('ready',()=>client.on('session',accept=>{const session=accept();session.on('exec',()=>assert.fail('Image inspection must not invoke a shell'));session.on('sftp',accept=>{const sftp=accept();let file;
-  sftp.on('STAT',(id,p)=>{paths.push(p);if(p==='/missing.png')return sftp.status(id,STATUS.NO_SUCH_FILE);sftp.attrs(id,{mode:0o100644,size:p==='/huge.png'?6*1024*1024:bytes.length,uid:0,gid:0,atime:0,mtime:0});});
+  sftp.on('STAT',(id,p)=>{paths.push(p);if(p==='/missing.png')return sftp.status(id,STATUS.NO_SUCH_FILE);sftp.attrs(id,{mode:0o100644,size:p==='/huge.png'?6*1024*1024:p==='/large.png'?large.length:p==='/invalid.jpg'?20:bytes.length,uid:0,gid:0,atime:0,mtime:0});});
   sftp.on('OPEN',(id,p)=>{file=p;sftp.handle(id,Buffer.from('file'));});
-  sftp.on('READ',(id,handle,offset,length)=>{const data=file==='/invalid.jpg'?Buffer.from('this is not an image'):bytes;if(offset>=data.length)sftp.status(id,STATUS.EOF);else sftp.data(id,data.subarray(offset,offset+length));});
+  sftp.on('READ',(id,handle,offset,length)=>{const data=file==='/invalid.jpg'?Buffer.from('this is not an image'):file==='/large.png'?large:bytes;inflight++;peakReads=Math.max(peakReads,inflight);setTimeout(()=>{inflight--;if(offset>=data.length)sftp.status(id,STATUS.EOF);else sftp.data(id,data.subarray(offset,offset+length));},file==='/large.png'?30:0);});
+  sftp.on('FSTAT',(id)=>sftp.attrs(id,{mode:0o100644,size:file==='/large.png'?large.length:file==='/invalid.jpg'?20:bytes.length,uid:0,gid:0,atime:0,mtime:0}));
   sftp.on('CLOSE',id=>sftp.status(id,STATUS.OK));
  });}));});
  await new Promise(r=>server.listen(0,'127.0.0.1',r));
@@ -17,6 +19,7 @@ const pause=ms=>new Promise(r=>setTimeout(r,ms));
  let f,connection,providerCalls=0;
  try{
   const result=await connectSSH(config,{imagePath});assert.deepEqual(Buffer.from(result.image_url.split(',')[1],'base64'),bytes);assert.equal(result.sha256,crypto.createHash('sha256').update(bytes).digest('hex'));assert.ok(paths.includes(imagePath));
+  const largeResult=await connectSSH(config,{imagePath:'/large.png'});assert.equal(largeResult.sha256,crypto.createHash('sha256').update(large).digest('hex'));assert.ok(peakReads>1&&peakReads<=8,'bounded pipelining avoids serial round trips');
   const {inspectImage}=require('../server/ssh-image');let inspections=0;
   const local={context:()=>({mode:'local'}),inspect:async args=>{inspections++;assert.equal(args.image_url,result.image_url);args.valid();return{mode:'local',observation:'Local GPU reviewed the frame.'};}};
   const inspectArgs={ssh:{execute:connectSSH},connection:config,path:imagePath,question:'Describe the frame.',vision:local,actor:'owner',projectId:1,valid:()=>true};

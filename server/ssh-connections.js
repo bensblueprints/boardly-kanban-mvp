@@ -6,7 +6,7 @@ function connectSSH(config,{command,forward,imagePath,probe=false,valid=()=>true
  return new Promise((resolve,reject)=>{
   const {Client}=require('ssh2'),client=new Client();let ended=false,stdout='',stderr='',truncated=false;
   const finish=(error,result)=>{if(ended)return;ended=true;clearTimeout(timer);clearInterval(check);client.end();error?reject(error):resolve(result);};
-  const timer=setTimeout(()=>finish(fail(504,'SSH timed out. A remote command may still be running; inspect before retrying.')),Math.min(timeout,45000));
+  const timer=setTimeout(()=>finish(fail(504,imagePath!==undefined?'SSH image transfer timed out. The file was not changed; retry or use a smaller review frame.':'SSH timed out. A remote command may still be running; inspect before retrying.')),imagePath!==undefined?180000:Math.min(timeout,45000));
   const check=setInterval(()=>{if(!valid())finish(fail(403,'SSH permission or run access was removed'));},1000);
   client.on('error',()=>finish(fail(502,'SSH connection failed. Check credentials, network access and the pinned host fingerprint.')));
   client.on('close',()=>{if(!ended)finish(fail(502,'SSH disconnected. Inspect the remote result before retrying.'));});
@@ -20,10 +20,21 @@ function connectSSH(config,{command,forward,imagePath,probe=false,valid=()=>true
      sftp.stat(imagePath,(error,stat)=>{
       if(error||!stat.isFile())return finish(fail(404,'Image file was not found on this computer'));
       if(stat.size<1||stat.size>5*1024*1024)return finish(fail(400,'Use an image up to 5 MB; extract or resize a review frame on the GPU computer first'));
-      const chunks=[];let bytes=0;const stream=sftp.createReadStream(imagePath);
-      stream.on('data',chunk=>{bytes+=chunk.length;if(bytes>5*1024*1024){stream.destroy();finish(fail(400,'Image exceeds the 5 MB limit'));}else chunks.push(chunk);});
-      stream.on('error',()=>finish(fail(502,'Image transfer failed; inspect the file before trying again')));
-      stream.on('end',()=>{if(ended)return;if(!valid())return finish(fail(403,'SSH permission was removed'));try{finish(null,require('./ssh-image').imageResult(Buffer.concat(chunks)));}catch(error){finish(error);}});
+      // Pipeline bounded reads: a sequential stream costs a network round trip
+      // per packet and can time out on multi-hop GPU connections.
+      const call=(method,...args)=>new Promise((resolve,reject)=>sftp[method](...args,(error,result)=>error?reject(error):resolve(result)));
+      (async()=>{
+       const handle=await call('open',imagePath,'r'),bytes=Buffer.alloc(stat.size);let offset=0;
+       await Promise.all(Array.from({length:8},async()=>{
+        while(offset<bytes.length){const start=offset,length=Math.min(32768,bytes.length-start);offset+=length;let read=0;
+         while(read<length){if(ended||!valid())throw fail(403,'SSH image inspection stopped or permission was removed');const n=await call('read',handle,bytes,start+read,length-read,start+read);if(!n)throw fail(409,'Image changed or ended during transfer; retry after rendering finishes');read+=n;}
+        }
+       }));
+       const after=await call('fstat',handle);await call('close',handle);
+       if(after.size!==stat.size||after.mtime!==stat.mtime)throw fail(409,'Image changed during transfer; retry after rendering finishes');
+       if(!valid())throw fail(403,'SSH permission was removed');
+       finish(null,require('./ssh-image').imageResult(bytes));
+      })().catch(error=>finish(error.status?error:fail(502,'Image transfer failed; retry after the file finishes rendering')));
      });
     });
    }
