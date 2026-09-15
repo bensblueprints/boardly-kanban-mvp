@@ -10,8 +10,9 @@ function cleanValues(value, clean) {
 const projectBlocker = `(r.status IN ('running','recovering') OR (r.status='cancelled' AND r.worker_id IS NOT NULL AND r.settled_at IS NULL AND r.updated_at>strftime('%s','now')*1000-604800000)) AND (r.thread_id=j.thread_id OR (rt.board_id=t.board_id AND r.mode='work' AND j.mode='work' AND NOT (r.runtime='api' AND j.runtime='api' AND rt.card_id IS NOT NULL AND t.card_id IS NOT NULL AND rt.card_id!=t.card_id)))`;
 // Keep writers to a shared project in order; other projects and discussions can run together.
 function nextProjectJob(db, runtime) {
+  const waiting=db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='employee_waits'").get();
   return db.prepare(`SELECT j.*,t.board_id,t.card_id FROM chat_jobs j JOIN chat_threads t ON t.id=j.thread_id
-    WHERE j.status='queued' AND j.runtime=? AND NOT EXISTS (
+    WHERE j.status='queued' AND j.runtime=? ${waiting?'AND NOT EXISTS(SELECT 1 FROM employee_waits w WHERE w.job_id=j.id)':''} AND NOT EXISTS (
       SELECT 1 FROM chat_jobs r JOIN chat_threads rt ON rt.id=r.thread_id
       WHERE ${projectBlocker})
     ORDER BY j.created_at,j.rowid LIMIT 1`).get(runtime);
@@ -19,6 +20,7 @@ function nextProjectJob(db, runtime) {
 function projectQueue(db, id) {
   const job = db.prepare("SELECT runtime FROM chat_jobs WHERE id=? AND status='queued'").get(id);
   if (!job) return null;
+  if(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='employee_waits'").get()&&db.prepare('SELECT 1 FROM employee_waits WHERE job_id=?').get(id))return{reason:'employees'};
   const blocker = db.prepare(`SELECT r.status,r.thread_id=j.thread_id AS same_thread
     FROM chat_jobs j JOIN chat_threads t ON t.id=j.thread_id
     JOIN chat_jobs r JOIN chat_threads rt ON rt.id=r.thread_id

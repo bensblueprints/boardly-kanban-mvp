@@ -16,6 +16,7 @@ import {useAccess} from '../access.jsx';
 import ProjectAssets from './ProjectAssets.jsx';
 import ProjectComputers from './ProjectComputers.jsx';
 import ScopeSettings from './ScopeSettings.jsx';
+import {chatNavigationKey,readChatNavigation,saveChatNavigation} from '../chat-navigation.js';
 
 function dueState(due) {
   if (!due) return null;
@@ -118,7 +119,10 @@ function AddCard({ listId, onAdded, autoFocus }) {
 }
 
 export default function BoardView({ boardId, onBack, cloud = false }) {
-  const owner=useAccess().workspaceOwner!==false;
+  const access=useAccess(),owner=access.workspaceOwner!==false;
+  const chatMemoryKey=chatNavigationKey(access,boardId);
+  const rememberChat=useCallback(thread=>{saveChatNavigation(chatMemoryKey,{open:true,threadId:thread?.id||null});if(new RegExp(`^#/board/${boardId}(?:\\?|$)`).test(location.hash))history.replaceState(history.state,'',`#/board/${boardId}${thread?.id?'?chat='+encodeURIComponent(thread.id):''}`);},[chatMemoryKey,boardId]);
+  const closeChat=()=>{saveChatNavigation(chatMemoryKey,{open:false});history.replaceState(history.state,'',`#/board/${boardId}`);setShowChat(false);};
   const [settingsSection,setSettingsSection]=useState(()=>location.hash.match(/\/settings(?:\/([^/?]+))?/)?.[1]||(location.hash.includes('/settings')?'general':null));
   useEffect(()=>{const changed=()=>setSettingsSection(location.hash.match(/\/settings(?:\/([^/?]+))?/)?.[1]||(location.hash.includes('/settings')?'general':null));window.addEventListener('hashchange',changed);return()=>window.removeEventListener('hashchange',changed);},[]);
   const openSettings=section=>{location.hash=`#/board/${boardId}/settings/${section}`;};
@@ -152,9 +156,10 @@ export default function BoardView({ boardId, onBack, cloud = false }) {
   useEffect(()=>{
     if(!cloud)return;
     let active=true;
-    const open=async()=>{const match=location.hash.match(/^#\/board\/(\d+)\?(.*)$/);if(!match||Number(match[1])!==Number(boardId))return;const id=new URLSearchParams(match[2]).get('chat');if(!id)return;try{const data=await api.get('/api/chat/threads/'+encodeURIComponent(id));if(active&&data.thread.board_id===Number(boardId)){setChatTask(data.task);setChatThread(id);setShowChat(true);load();}}catch(e){if(active)setAgentError(e.message);}};
+    let request=0;
+    const open=async()=>{const match=location.hash.match(/^#\/board\/(\d+)(?:\?(.*))?$/);if(!match||Number(match[1])!==Number(boardId))return;const explicit=new URLSearchParams(match[2]||'').get('chat'),saved=readChatNavigation(chatMemoryKey);const id=explicit||(saved.open?saved.threadId:null);if(!id){if(saved.open){setChatThread('');setShowChat(true);}return;}const current=++request;try{const data=await api.get('/api/chat/threads/'+encodeURIComponent(id));if(active&&current===request&&data.thread.board_id===Number(boardId)){setChatTask(data.task);setChatThread(id);setShowChat(true);rememberChat(data.thread);load();}else if(active&&current===request&&!explicit)saveChatNavigation(chatMemoryKey,{open:false,threadId:null});}catch(e){if(active&&current===request){if(explicit)setAgentError(e.message);else if([403,404].includes(e.status))saveChatNavigation(chatMemoryKey,{open:false,threadId:null});else setAgentError(e.message);}}};
     open();window.addEventListener('hashchange',open);return()=>{active=false;window.removeEventListener('hashchange',open);};
-  },[boardId,cloud]);
+  },[boardId,cloud,chatMemoryKey,rememberChat]);
   useEffect(() => { load(); }, [load]);
   useEffect(()=>{
     if(!cloud)return;let active=true,pending=false;
@@ -428,7 +433,7 @@ export default function BoardView({ boardId, onBack, cloud = false }) {
       </div>
 
       {/* Board and coding pane share the available workspace, without an overlay. */}
-      <SplitWorkspace secondary={cloud && showChat ? <ProjectChat key={`${board.id}:${chatTask?.id || ''}:${chatThread || ''}`} initialThreadId={chatThread} task={chatTask} board={{...board,name:board.hierarchy?.project_name || board.name}} onClose={() => setShowChat(false)} onUpdated={load} /> : null}>
+      <SplitWorkspace secondary={cloud && showChat ? <ProjectChat key={`${board.id}:${chatTask?.id || ''}:${chatThread || ''}`} initialThreadId={chatThread} task={chatTask} board={{...board,name:board.hierarchy?.project_name || board.name}} onConversationChange={rememberChat} onClose={closeChat} onUpdated={load} /> : null}>
       <DragDropContext onDragEnd={onDragEnd}>
         <Droppable droppableId="board" direction="horizontal" type="list">
           {(provided) => (

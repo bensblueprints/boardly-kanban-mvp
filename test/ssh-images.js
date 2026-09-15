@@ -1,0 +1,43 @@
+const assert=require('node:assert/strict'),crypto=require('node:crypto'),path=require('node:path'),Database=require('better-sqlite3');
+const {Server,utils}=require('ssh2'),{connectSSH}=require('../server/ssh-connections');
+const {fixture}=require('./member-fixture'),{workspacePath}=require('../server/cloud');
+const pause=ms=>new Promise(r=>setTimeout(r,ms));
+(async()=>{
+ const bytes=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aM1sAAAAASUVORK5CYII=','base64');
+ const imagePath="/frames/one's $(touch not-a-command).png",paths=[],STATUS=utils.sftp.STATUS_CODE;
+ const hostKey=crypto.generateKeyPairSync('rsa',{modulusLength:2048}).privateKey.export({type:'pkcs1',format:'pem'}),fingerprint='SHA256:'+crypto.createHash('sha256').update(utils.parseKey(hostKey).getPublicSSH()).digest('base64').replace(/=+$/,'');
+ const server=new Server({hostKeys:[hostKey]},client=>{client.on('error',()=>{});client.on('authentication',ctx=>ctx.method==='password'&&ctx.password==='fixture-password'?ctx.accept():ctx.reject());client.on('ready',()=>client.on('session',accept=>{const session=accept();session.on('exec',()=>assert.fail('Image inspection must not invoke a shell'));session.on('sftp',accept=>{const sftp=accept();let file;
+  sftp.on('STAT',(id,p)=>{paths.push(p);if(p==='/missing.png')return sftp.status(id,STATUS.NO_SUCH_FILE);sftp.attrs(id,{mode:0o100644,size:p==='/huge.png'?6*1024*1024:bytes.length,uid:0,gid:0,atime:0,mtime:0});});
+  sftp.on('OPEN',(id,p)=>{file=p;sftp.handle(id,Buffer.from('file'));});
+  sftp.on('READ',(id,handle,offset,length)=>{const data=file==='/invalid.jpg'?Buffer.from('this is not an image'):bytes;if(offset>=data.length)sftp.status(id,STATUS.EOF);else sftp.data(id,data.subarray(offset,offset+length));});
+  sftp.on('CLOSE',id=>sftp.status(id,STATUS.OK));
+ });}));});
+ await new Promise(r=>server.listen(0,'127.0.0.1',r));
+ const config={host:'127.0.0.1',port:server.address().port,username:'qa',auth_type:'password',password:'fixture-password',fingerprint};
+ let f,connection,providerCalls=0;
+ try{
+  const result=await connectSSH(config,{imagePath});assert.deepEqual(Buffer.from(result.image_url.split(',')[1],'base64'),bytes);assert.equal(result.sha256,crypto.createHash('sha256').update(bytes).digest('hex'));assert.ok(paths.includes(imagePath));
+  const {inspectImage}=require('../server/ssh-image');let inspections=0;
+  const local={context:()=>({mode:'local'}),inspect:async args=>{inspections++;assert.equal(args.image_url,result.image_url);args.valid();return{mode:'local',observation:'Local GPU reviewed the frame.'};}};
+  const inspectArgs={ssh:{execute:connectSSH},connection:config,path:imagePath,question:'Describe the frame.',vision:local,actor:'owner',projectId:1,valid:()=>true};
+  const observed=await inspectImage(inspectArgs);assert.equal(inspections,1);assert.equal(observed.image_url,undefined);assert.equal(observed.observation,'Local GPU reviewed the frame.');assert.equal(observed.sha256,result.sha256);
+  await assert.rejects(()=>inspectImage({...inspectArgs,vision:{...local,inspect:async()=>{throw Error('Local vision unavailable');}}}),/Local vision unavailable/,'local mode never leaks pixels to cloud on failure');
+  for(const [p,error] of [['relative.png',/absolute/],['/huge.png',/5 MB/],['/invalid.jpg',/supported PNG/],['/missing.png',/not found/]])await assert.rejects(()=>connectSSH(config,{imagePath:p}),error);
+  await assert.rejects(()=>connectSSH(config,{imagePath,valid:()=>false}),/permission/);
+  f=await fixture({providerConnectorRequest:async(url,options)=>{
+   if(url.endsWith('/models'))return Response.json({data:[{id:'image-fixture'}]});
+   const body=JSON.parse(options.body);providerCalls++;
+   assert.ok(body.tools.some(t=>t.function.name==='inspect_ssh_image'));
+   if(providerCalls===1)return Response.json({choices:[{message:{content:'',tool_calls:[{id:'inspect',type:'function',function:{name:'inspect_ssh_image',arguments:JSON.stringify({connection_id:connection.id,path:imagePath,question:'Describe the test image.'})}}]}}]});
+   const all=JSON.stringify(body.messages);assert.ok(all.includes(bytes.toString('base64')),'provider receives pixels, not base64 text in a shell result');assert.ok(all.includes(result.sha256));assert.ok(!all.includes('fixture-password'));
+   return Response.json({choices:[{message:{content:'Observed the requested frame directly through SSH.'}}]});
+  }});
+  const p=await f.project('Image QA','Headless review');
+  connection=await f.api(`/api/companies/${p.company.id}/ssh`,{method:'POST',body:{...config,label:'GPU fixture',allow_agent:true}});
+  await f.api('/api/account/ai-providers/kimi',{method:'PUT',body:{token:'fixture-token-123456789'}});await f.api('/api/account/ai-providers/kimi/activate',{method:'POST'});
+  const thread=await f.api(`/api/boards/${p.project.id}/chat/threads`,{method:'POST',body:{}});await f.api(`/api/chat/threads/${thread.id}/messages`,{method:'POST',body:{mode:'work',content:'Inspect this image through the enabled GPU SSH connection.'}});
+  let job;for(let i=0;i<300;i++){job=(await f.api(`/api/chat/threads/${thread.id}`)).job;if(job.status==='completed'||job.status==='blocked')break;await pause(20);}assert.equal(job.status,'completed');assert.equal(providerCalls,2);
+  const db=new Database(path.join(workspacePath(f.root,'user_owner'),'app.db'),{readonly:true});const saved=db.prepare('SELECT input_json FROM chat_run_checkpoints WHERE job_id=?').get(job.id).input_json;assert.ok(!saved.includes('data:image'));assert.ok(!saved.includes(bytes.toString('base64')));db.close();
+  console.log('PASS: real pinned SSH/SFTP image transfer, exact hash, no shell interpolation, size/format/access rejection, hosted vision tool cycle and image-free checkpoints');
+ }finally{await f?.close();await new Promise(r=>server.close(r));}
+})().catch(e=>{console.error(e);process.exitCode=1;});

@@ -143,6 +143,7 @@ function createProjectChat({ db, connections, userId, uploadsDir, environment, p
       if (t.title === 'New conversation') db.prepare('UPDATE chat_threads SET title=? WHERE id=?').run(clean(t.board_id, content.trim()).slice(0, 80), t.id);
     })();
     db.prepare('UPDATE chat_jobs SET runtime=?,requested_by=?,mode=?,billing_owner_id=? WHERE id=?').run(req.aiRuntime||'codex',req.cloudUserId||userId,mode,userId,id);
+    router.employees.continueThread(id);
     if(req.aiRuntime==='api')router.hosted.enqueue();
     res.status(202).json({ id, status: 'queued' });
   });
@@ -156,7 +157,7 @@ function createProjectChat({ db, connections, userId, uploadsDir, environment, p
   router.post('/api/chat/jobs/:id/cancel', (req, res) => {
     const j = job(req.params.id);
     if (!j) return res.status(404).json({ error: 'Run not found' });
-    db.prepare("UPDATE chat_jobs SET status='cancelled',progress='Stop requested',updated_at=? WHERE id=? AND status IN ('queued','running')").run(Date.now(), j.id);
+    router.employees.cancel(j.id);router.employees.tick();
     res.json({ ok: true });
   });
   router.post('/api/worker/reconnect', body, (req,res)=>{

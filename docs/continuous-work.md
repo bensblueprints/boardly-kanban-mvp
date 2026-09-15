@@ -7,17 +7,35 @@ are stopping conditions. Ask and Plan remain single replies.
 ## Project employees
 
 Open a project's chat and choose **Employees**. Every project has Morgan
-(Coordinator), Alex (Engineer), Sam (Designer), and Casey (Reviewer). **Call an
-employee** assigns an existing task by number with your instructions. The assignment
-has a saved conversation, status, output files, and its own Stop control.
+(Manager), Alex (Engineer), Sam (Designer), and Casey (Reviewer). **Call an
+employee** assigns an existing task by number with your instructions. Choose
+Morgan to have a manager break the task into specialist assignments and review
+the combined result. You can also call a specialist directly.
 
-**Enable continuous team** authorizes the coordinator to dispatch that project's
-unclaimed To Do tasks. The coordinator is a durable scheduler; the assigned employees
-perform AI work. It checks every 15 seconds, skips blocked or previously assigned
-tasks, and shares completion/blocker handoffs. Employees can read and post scoped
-team messages. Team messages do not grant additional permissions. Pausing the team
-stops new dispatch; Stop controls cancel individual existing assignments. Project
-owners control continuous dispatch; editors may call employees within their project.
+Morgan uses `employee_delegate` to create a linked subtask and saved employee
+conversation. Delegations inherit the requesting member's current permissions;
+foreign-project employees and recursive manager spawning are rejected. A stable
+request key prevents duplicate assignments after retries or restart. Morgan can
+call each of the three specialists concurrently for independent work, then use
+`employee_wait` to release its worker slot until they report. This works even with
+one available slot. Results survive restart, and Morgan resumes to review them.
+An unfinished child cannot silently become a completed parent task. Stopping a
+manager cancels its running and queued children; already produced work is retained.
+The manager must assign separate file ownership or sequence shared edits.
+
+**Enable continuous team** authorizes Morgan to manage that project's unclaimed
+To Do tasks. The dispatcher checks every 15 seconds, skips blocked or previously
+assigned tasks, and shares completion/blocker handoffs. Employees can read and post
+project team messages; those messages do not grant additional permissions. Pausing
+the team stops new parent assignments; existing managers can finish their assigned
+work and call the specialists it requires. Stop cancels an existing assignment.
+Owners control continuous dispatch; editors may call employees within their project.
+
+Returning to a project restores the conversation you selected, including task chats
+and older threads. The selection survives refresh in the current browser tab and
+is isolated by user and workspace. An explicit conversation link takes priority;
+closing chat keeps it closed on the next project visit. Only navigation metadata
+is stored in browser session storage.
 
 Existing projects receive rosters automatically. Continuous dispatch starts paused
 to preserve existing backlog and dependencies. Existing requested Work jobs still
@@ -94,6 +112,21 @@ deliverables. After resolving that specific outcome:
 ComfyUI's own controls after identifying the correct job; do not interrupt a shared
 GPU's unrelated work. Empty queues mean the workers are waiting, not rendering.
 
+## Review GPU files without a desktop
+
+Hosted Work provides `inspect_ssh_image`: read an absolute PNG/JPEG path (up to
+5 MB) through an already enabled, pinned SSH connection. It uses SFTP, respects the selected GPT/local-Qwen vision mode, returns the exact
+file SHA256 and either pixels or a focused local observation, and requires current SSH/member
+permissions as command execution. There is no shell interpolation or desktop lease.
+Images stay out of saved chat/checkpoint data; their hash remains in the tool result.
+Local-Qwen mode never falls back to cloud image inspection without a settings change.
+
+For video review, use `execute_ssh` to extract frames with ffmpeg on the GPU computer,
+then inspect the relevant frames. Review adequate frames for motion/continuity and
+run full decode, original-audio and timing checks separately. One sampled frame
+cannot certify an entire video. ThinkCentre availability does not gate GPU rendering
+or this file-review path. ComputerUse is still needed for actual desktop interactions.
+
 ## Operations and verification
 
 Keep owner workspace SQLite backups, the pre-release compose file, and previous
@@ -104,7 +137,7 @@ Do not change the separate legacy Boardly database or deployment.
 
 Targeted regressions: `test/platform-reliability.js`, `test/runtime-recovery.js`,
 `test/gpu-queue.py`, existing chat/concurrency/cloud/provider/member/management tests,
-and `test/employees-browser.cjs`. Fault coverage includes 16 simultaneous connector
+`test/employees-browser.cjs`, `test/employee-manager.js` and `test/ssh-images.js`. Fault coverage includes 16 simultaneous connector
 requests, allowance-to-local tool execution, transient retries, persisted public
 tool results, cancelled writer settlement, lease credential replacement, lost GPU
 submission acknowledgments, and employee handoff deduplication.

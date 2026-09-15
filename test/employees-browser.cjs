@@ -19,7 +19,22 @@ const {chromium}=require(process.env.BOARDLY_PLAYWRIGHT_MODULE||'/home/ben/.npm/
   await team.getByRole('button',{name:'Enable continuous team',exact:true}).click();await team.getByText('Continuous team enabled',{exact:true}).waitFor();await team.getByRole('button',{name:'Pause new assignments',exact:true}).click();await team.getByText('Continuous team paused',{exact:true}).waitFor();
   await page.screenshot({path:'/home/ben/.local/share/boardly-ops/reliability-20260915/employees-desktop.png',fullPage:true});
   await team.getByRole('link',{name:'Open assignment',exact:true}).click();await page.getByRole('dialog').getByLabel('Conversation history').waitFor();assert.ok(page.url().includes('?chat='));
+  // The selected task chat, not the newest thread, follows project navigation.
+  const older=await f.api(`/api/boards/${project.project.id}/chat/threads`,{method:'POST',body:{title:'Older conversation to continue',card_id:task.id}});
+  await f.api(`/api/boards/${project.project.id}/chat/threads`,{method:'POST',body:{title:'Newer unrelated conversation',card_id:task.id}});
+  const history=page.getByRole('dialog').getByLabel('Conversation history');
+  await history.locator(`option[value="${older.id}"]`).waitFor({state:'attached'});
+  await history.selectOption(older.id);assert.ok(page.url().includes('?chat='+older.id));
+  const second=await f.project('Navigation QA','Second project');
+  await page.evaluate(id=>location.hash='#/board/'+id,second.project.id);await page.getByRole('button',{name:'Chat with AI',exact:true}).waitFor();
+  await page.evaluate(id=>location.hash='#/board/'+id,project.project.id);await history.waitFor();assert.equal(await history.inputValue(),older.id);
+  await page.reload();await history.waitFor();await page.waitForFunction(id=>document.querySelector('[aria-label="Conversation history"]')?.value===id,older.id);assert.equal(await history.inputValue(),older.id);
+  await page.getByRole('button',{name:'Close project chat',exact:true}).click();
+  await page.evaluate(id=>location.hash='#/board/'+id,second.project.id);await page.getByRole('button',{name:'Chat with AI',exact:true}).waitFor();
+  await page.evaluate(id=>location.hash='#/board/'+id,project.project.id);await page.getByRole('button',{name:'Chat with AI',exact:true}).waitFor();assert.equal(await page.getByRole('dialog').count(),0,'explicitly closed chat stays closed');
+  await page.evaluate(({board,id})=>location.hash=`#/board/${board}?chat=${id}`,{board:project.project.id,id:older.id});await history.waitFor();
+  const isolated=await page.evaluate(async()=>{const n=await import('/src/chat-navigation.js');return n.chatNavigationKey({userId:'a',workspaceId:'one'},1)!==n.chatNavigationKey({userId:'a',workspaceId:'two'},1)&&n.chatNavigationKey({userId:'a',workspaceId:'one'},1)!==n.chatNavigationKey({userId:'b',workspaceId:'one'},1);});assert.ok(isolated);
   await page.setViewportSize({width:390,height:844});await page.getByRole('button',{name:'Employees',exact:true}).click();await page.getByRole('region',{name:'Project employees'}).waitFor();assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));assert.deepEqual(errors,[]);
-  console.log('PASS: real API roster, named task assignment, shared message, continuous dispatch toggle, saved conversation link, mobile layout and no browser errors');
+  console.log('PASS: real API roster, named task assignment, shared message, continuous dispatch toggle, saved conversation link, older-thread restoration across projects/refresh, close state and workspace isolation, mobile layout and no browser errors');
  }finally{await browser?.close();await vite?.close();await f.close();await c.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

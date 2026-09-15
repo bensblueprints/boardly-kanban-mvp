@@ -2,7 +2,7 @@ const crypto=require('node:crypto'),express=require('express');
 const {redact}=require('./project-environment');
 const {safeText}=require('./agent-activity');
 const fail=(status,message)=>Object.assign(Error(message),{status});
-function connectSSH(config,{command,forward,probe=false,valid=()=>true,timeout=30000}={}){
+function connectSSH(config,{command,forward,imagePath,probe=false,valid=()=>true,timeout=30000}={}){
  return new Promise((resolve,reject)=>{
   const {Client}=require('ssh2'),client=new Client();let ended=false,stdout='',stderr='',truncated=false;
   const finish=(error,result)=>{if(ended)return;ended=true;clearTimeout(timer);clearInterval(check);client.end();error?reject(error):resolve(result);};
@@ -13,6 +13,20 @@ function connectSSH(config,{command,forward,probe=false,valid=()=>true,timeout=3
   client.on('ready',()=>{
    if(!valid())return finish(fail(403,'SSH permission was removed'));
    if(forward)return client.forwardOut('127.0.0.1',0,forward.host,forward.port,(err,sock)=>{if(err)return finish(fail(502,'SSH jump host could not reach the destination'));ended=true;clearTimeout(timer);clearInterval(check);sock.once('close',()=>client.end());resolve({sock,close:()=>{sock.destroy();client.end();}});});
+   if(imagePath!==undefined){
+    if(typeof imagePath!=='string'||!imagePath.startsWith('/')||imagePath.length>4096||/[\x00-\x1f]/.test(imagePath)||!(/\.(png|jpe?g)$/i.test(imagePath)))return finish(fail(400,'Choose an absolute PNG or JPEG path on the enabled SSH computer'));
+    return client.sftp((error,sftp)=>{
+     if(error)return finish(fail(502,'SSH file transfer is unavailable on this computer'));
+     sftp.stat(imagePath,(error,stat)=>{
+      if(error||!stat.isFile())return finish(fail(404,'Image file was not found on this computer'));
+      if(stat.size<1||stat.size>5*1024*1024)return finish(fail(400,'Use an image up to 5 MB; extract or resize a review frame on the GPU computer first'));
+      const chunks=[];let bytes=0;const stream=sftp.createReadStream(imagePath);
+      stream.on('data',chunk=>{bytes+=chunk.length;if(bytes>5*1024*1024){stream.destroy();finish(fail(400,'Image exceeds the 5 MB limit'));}else chunks.push(chunk);});
+      stream.on('error',()=>finish(fail(502,'Image transfer failed; inspect the file before trying again')));
+      stream.on('end',()=>{if(ended)return;if(!valid())return finish(fail(403,'SSH permission was removed'));try{finish(null,require('./ssh-image').imageResult(Buffer.concat(chunks)));}catch(error){finish(error);}});
+     });
+    });
+   }
    if(command===undefined)return finish(null,{connected:true});
    client.exec(command,(err,stream)=>{
     if(err)return finish(fail(502,'SSH command could not start'));
@@ -79,7 +93,7 @@ function createSshConnections({db,key,namespace,connector=connectSSH,tailnet,mem
   const hops=chain(config,!!options.requireEnabled),handles=[];
   const valid=()=>{if(options.valid&&!options.valid())return false;try{return chain(config,!!options.requireEnabled).every((h,i)=>h.id===hops[i]?.id&&h.updated_at===hops[i]?.updated_at);}catch{return false;}};
   try{let sock;
-   for(let i=0;i<hops.length;i++){if(!valid())throw fail(403,'SSH permission was removed');const next=hops[i+1]||config;const handle=await direct({...hops[i],...(sock?{sock}: {})},{...options,probe:false,valid,command:undefined,forward:{host:next.host,port:next.port}});handles.push(handle);sock=handle.sock;}
+   for(let i=0;i<hops.length;i++){if(!valid())throw fail(403,'SSH permission was removed');const next=hops[i+1]||config;const handle=await direct({...hops[i],...(sock?{sock}: {})},{...options,probe:false,valid,command:undefined,imagePath:undefined,forward:{host:next.host,port:next.port}});handles.push(handle);sock=handle.sock;}
    if(!valid())throw fail(403,'SSH permission was removed');const result=await direct({...config,...(sock?{sock}: {})},{...options,valid});
    // Consume a private service tunnel before closing any jump hosts.
    if(options.forward&&options.consumeForward){try{return await options.consumeForward(result.sock,valid);}finally{result.close();}}
