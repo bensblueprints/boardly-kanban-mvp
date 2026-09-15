@@ -1,0 +1,15 @@
+[Unit]
+Description=Boardly durable local GPU generation queue
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 %h/.local/share/boardly-gpu/gpu-queue.py run
+Restart=always
+RestartSec=10
+TimeoutStopSec=45
+UMask=0077
+
+[Install]
+WantedBy=default.target

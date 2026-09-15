@@ -9,7 +9,7 @@ const {fixture}=require('./member-fixture'),{workspacePath}=require('../server/c
   await f.api(base,{method:'PUT',body:{token}});const catalog=await f.api(base+'/rentals');assert.equal(catalog.rentals[0].kind,'pilot');assert.equal(catalog.rentals[0].desktop_id,desktopId);assert.ok(!JSON.stringify(catalog).includes('secret host'));
   await f.api(assignment,{method:'PUT',body:{rental_ids:['desktop:'+desktopId],allow_agent:true,allow_control:true}});
   db=new Database(path.join(workspacePath(f.root,'user_owner'),'app.db'));let human=false,unknown=false,onRequest=()=>{},calls=[];
-  const service=createComputerUseConnections({db,key:fs.readFileSync(path.join(f.root,'project-secrets.key')),namespace:'user_owner',origin:'https://api.computeruse.example',request:async()=>data,desktopRequest:async(origin,key,command,args)=>{
+  const service=createComputerUseConnections({db,key:fs.readFileSync(path.join(f.root,'project-secrets.key')),namespace:'user_owner',origin:'https://api.computeruse.example',request:async(origin,key)=>{if(key!==token)throw Object.assign(Error('Provider unavailable'),{status:503});return data;},desktopRequest:async(origin,key,command,args)=>{
    assert.equal(key,token);calls.push(command);onRequest(command);
    if(human&&command!=='status')throw Object.assign(Error('Human control active'),{status:409});
    if(command==='lease')return {lease:'lease-private',expires:Math.floor(Date.now()/1000)+60};
@@ -17,6 +17,7 @@ const {fixture}=require('./member-fixture'),{workspacePath}=require('../server/c
    if(command==='screenshot')return {image_url:'data:image/jpeg;base64,/9j/2Q=='};
    return {mode:human?'human':'agent',state:'completed'};
   }});
+  await assert.rejects(()=>service.connect('invalid_replacement_token_fixture'),/Provider unavailable/);assert.equal(service.accountState().saved,true);assert.deepEqual(service.assignment('project',p.project.id).rental_ids,['desktop:'+desktopId]);
   const run=(job,command,extra={},valid=()=>{})=>service.controlForAgent(p.project.id,'user_owner',job,command,{desktop_id:desktopId,operation_id,action:{type:'key',key:'Escape'},...extra},valid);
   await assert.rejects(()=>run('one','status',{desktop_id:otherId}),/not available/);assert.deepEqual(calls,[]);
   human=true;await assert.rejects(()=>run('one','action'),/Human control/);assert.ok(!calls.includes('action'));human=false;

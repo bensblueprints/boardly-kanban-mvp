@@ -52,7 +52,7 @@ const {connectorFixture}=require('./chatgpt-fixture.cjs'),{fixture}=require('./m
   await f.api('/api/onboarding',{user:a,method:'PUT',body:{step:4,status:'completed'}});assert.equal((await f.api('/api/onboarding',opts(a))).status,'completed');
   const payload=text=>({model:'gpt-6-astra',input:[{role:'user',content:text}],tools:[]});
   assert.equal((await c.request(a,'respond',payload('unavailable-tool'))).status,502);
-  const limited=await c.request(a,'respond',payload('simulate-rate-limit'));assert.equal(limited.status,502);assert.match((await limited.json()).error,/usage limit/);
+  const limited=await c.request(a,'respond',payload('simulate-rate-limit'));assert.equal(limited.status,429);assert.match((await limited.json()).error,/usage limit/);
   // Disconnect one account while a generation is running. Neither its result
   // nor refreshed credentials may survive, and the other account stays usable.
   const slow=c.request(a,'respond',payload('slow-response'));await new Promise(r=>setTimeout(r,100));

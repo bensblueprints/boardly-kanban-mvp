@@ -32,7 +32,7 @@ function createPersonalAI({config,key,request=fetch,tailnet,providerConnectorReq
   throw fail(402,'Connect your own ChatGPT/Codex account or an AI provider API key in Settings → AI & models.');
  }
  function reserve(a,jobId,maximum){return db.transaction(()=>{
-  if(db.prepare("SELECT id FROM ai_requests WHERE user_id=? AND status='pending'").get(a.user_id))throw fail(409,'Another AI request is running on your account');
+  if(db.prepare("SELECT COUNT(*) n FROM ai_requests WHERE user_id=? AND status='pending'").get(a.user_id).n>=require('./runtime-policy').capacity())throw fail(429,'AI capacity is busy. This request will retry shortly.');
   if(a.mode==='card'){
    const used=db.prepare('SELECT COALESCE(SUM(billable_nano),0) n FROM ai_usage WHERE user_id=? AND created_at>=?').get(a.user_id,month()).n;
    const held=db.prepare("SELECT COALESCE(SUM(hold_nano),0) n FROM ai_requests WHERE user_id=? AND status IN ('pending','review')").get(a.user_id).n;
@@ -51,7 +51,7 @@ function createPersonalAI({config,key,request=fetch,tailnet,providerConnectorReq
   const id=reserve(a,jobId,maximum);let knownFailure=false;
   try{
    const response=await request('https://api.openai.com/v1/responses',{method:'POST',headers:{Authorization:`Bearer ${a.key}`,'Content-Type':'application/json','X-Client-Request-Id':id},body:JSON.stringify(payload),signal:AbortSignal.timeout(110000)});
-   if(!response.ok){knownFailure=response.status>=400&&response.status<500;throw fail(response.status===401?401:502,response.status===401?'Your OpenAI API key was rejected. Replace it in Account & AI.':'OpenAI could not complete the request. Check your API account and try again.');}
+   if(!response.ok){knownFailure=response.status>=400&&response.status<500;const detail=await response.json().catch(()=>({}));const quota=['insufficient_quota','usage_limit_reached','billing_hard_limit_reached'].includes(detail.error?.code);throw Object.assign(fail(response.status===401?401:response.status===429?429:502,quota?'OpenAI allowance exhausted.':response.status===401?'Your OpenAI API key was rejected. Replace it in Account & AI.':'OpenAI temporarily could not complete the request.'),{code:quota?'allowance_exhausted':undefined,retryable:knownFailure});}
    const result=await response.json();
    db.prepare('UPDATE ai_requests SET response_id=?,usage_json=? WHERE id=?').run(typeof result.id==='string'?result.id:null,JSON.stringify({model:result.model,service_tier:result.service_tier,usage:result.usage}),id);
    const priced=cost(result);

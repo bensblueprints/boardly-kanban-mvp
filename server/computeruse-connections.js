@@ -52,8 +52,13 @@ function createComputerUseConnections({db,key,namespace,origin='',request=reques
  function reset(){db.transaction(()=>{db.prepare('INSERT INTO cu_account_connection(id,revision,updated_at) VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,encrypted=NULL,account_id=NULL,updated_at=excluded.updated_at').run(crypto.randomUUID(),Date.now());db.prepare('DELETE FROM cu_assignments').run();})();return accountState();}
  async function connect(token,valid=()=>{}){
   valid();if(!origin)throw fail(503,'ComputerUse is not configured.');if(typeof token!=='string'||token.length<16||token.length>256||/\s/.test(token))throw fail(400,'Enter a valid ComputerUse API key.');
-  reset();const revision=connection().revision;const a=account(await request(origin,token));valid();unchanged(revision);
-  db.prepare('UPDATE cu_account_connection SET encrypted=?,account_id=?,updated_at=? WHERE id=1 AND revision=?').run(encrypt(token),a.id,Date.now(),revision);return accountState();
+  // Validate first. A typo or provider outage must not erase a working key and
+  // every project assignment. Compare revisions after the asynchronous check.
+  const previous=connection(),a=account(await request(origin,token));valid();unchanged(previous?.revision);
+  db.transaction(()=>{
+   if(previous?.account_id&&previous.account_id!==a.id)db.prepare('DELETE FROM cu_assignments').run();
+   db.prepare('INSERT INTO cu_account_connection(id,revision,encrypted,account_id,updated_at) VALUES(1,?,?,?,?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,encrypted=excluded.encrypted,account_id=excluded.account_id,updated_at=excluded.updated_at').run(crypto.randomUUID(),encrypt(token),a.id,Date.now());
+  })();return accountState();
  }
  async function rentals(valid=()=>{}){valid();const r=connection();if(!origin||!r?.encrypted)throw fail(404,'Connect ComputerUse in account settings first.');const a=account(await request(origin,decrypt(r)));valid();unchanged(r.revision);if(a.id!==r.account_id)throw fail(403,'ComputerUse account identity changed. Reconnect the intended account.');return a.rentals;}
  function resource(kind,id){
@@ -101,7 +106,14 @@ function createComputerUseConnections({db,key,namespace,origin='',request=reques
     if(!held)return {released:false};try{return await send('release',{lease:held.lease});}finally{leases.delete(desktopId);}
    }
    if(['action','login'].includes(command)&&uncertain.has(desktopId))throw fail(409,'Previous input outcome is uncertain. Take a fresh screenshot before choosing another action.');
-   const lease=await send('lease',held?{lease:held.lease}:{});
+   let lease;
+   try{lease=await send('lease',held?{lease:held.lease}:{});}catch(e){
+    // A lost renewal response leaves a rotated token in the provider. Forget
+    // the stale local token and let its short remote lease expire. Never steal
+    // control, replay an input, or confuse this conflict with an invalid API key.
+    if(held&&[409,502,503,504].includes(e.status))leases.delete(desktopId);
+    throw e;
+   }
    if(typeof lease.lease!=='string'||!Number.isSafeInteger(lease.expires))throw fail(503,'Invalid desktop lease');
    leases.set(desktopId,{runId,projectId:id,actor,revision,lease:lease.lease,expires:lease.expires});
    if(['screenshot','inspect'].includes(command)){

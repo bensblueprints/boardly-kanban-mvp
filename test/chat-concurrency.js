@@ -41,7 +41,7 @@ const { fixture } = require('./member-fixture');
     await f.api(`/api/chat/jobs/${work.job.id}/cancel`, { method: 'POST', body: {} });
     assert.equal((await read(waiting)).job.queue.reason, 'stopping');
     assert.equal(await claim(), null, 'cancelled writer must settle before the next starts');
-    await finish(work.job, 'cancelled');
+    await finish(work.job, 'blocked'); // A late blocker still acknowledges that the cancelled child has exited.
     assert.equal((await read(waiting)).job.queue.reason, 'ready');
     assert.equal((await claim()).id, waiting.job.id);
     const history = await f.api(`/api/boards/${a.project.id}/chat/threads`);

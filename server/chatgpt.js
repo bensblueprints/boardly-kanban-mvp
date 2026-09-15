@@ -4,8 +4,8 @@ function createChatGPT({url,token}={},personal){
  const configured=!!(url&&token),account=user=>crypto.createHash('sha256').update(user).digest('hex');
  async function call(user,action,body){
   if(!configured)throw fail(503,'ChatGPT connections are temporarily unavailable. Please try again shortly.');
-  let r;try{r=await fetch(`${url}/accounts/${account(user)}/${action}`,{method:action==='status'?'GET':'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(action==='respond'||action==='test'?200000:35000)});}catch{throw fail(503,'The ChatGPT connector is temporarily unavailable. Your saved work is safe; try again shortly.');}
-  const data=await r.json();if(!r.ok)throw fail(r.status,data.error||'ChatGPT could not complete this request');return data;
+  let r;try{r=await fetch(`${url}/accounts/${account(user)}/${action}`,{method:action==='status'?'GET':'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(action==='respond'||action==='test'?1850000:35000)});}catch{throw fail(503,'The ChatGPT connector is temporarily unavailable. Your saved work is safe; try again shortly.');}
+  const data=await r.json();if(!r.ok)throw Object.assign(fail(r.status,data.error||'ChatGPT could not complete this request'),{code:data.code});return data;
  }
  async function authorize(user){if(!(await call(user,'status')).connected)throw fail(401,'Connect your ChatGPT account in Account & AI, then resume this assignment');return{...personal.account(user),mode:'chatgpt'};}
  const router=express.Router();router.use('/api/ai/chatgpt',express.json({limit:'2kb'}));

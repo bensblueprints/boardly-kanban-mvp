@@ -24,6 +24,7 @@ async function req(method, url, body) {
     if(res&&(![502,503,504].includes(res.status)||method!=='GET'||attempt===3))break;
     await new Promise(resolve=>setTimeout(resolve,500*(attempt+1)));
   }
+  if(res.status===401&&tokenProvider){const token=await tokenProvider({skipCache:true});if(token){opts.headers.authorization=`Bearer ${token}`;res=await fetch(url,opts);}}
   const json = await res.json().catch(() => ({}));
   if (!res.ok) throw Object.assign(new Error(json.error || `Request failed (${res.status})`), { status: res.status });
   return json;

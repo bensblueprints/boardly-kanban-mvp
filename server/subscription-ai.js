@@ -38,7 +38,7 @@ function createSubscriptionAI({db,ownerId,canEdit,connections,canGenerate=()=>fa
     db.prepare('INSERT INTO subscription_workers VALUES (?,?) ON CONFLICT(id) DO UPDATE SET last_seen=excluded.last_seen').run(req.boardlyConnection.id,Date.now());
     const result=db.transaction(()=>{
       const total=db.prepare("SELECT (SELECT COUNT(*) FROM subscription_requests WHERE status='running')+(SELECT COUNT(*) FROM chat_jobs WHERE runtime='codex' AND status='running')+(SELECT COUNT(*) FROM discussion_jobs WHERE runtime='codex' AND status='running') n").get().n;
-      if(total>=4)return{busy:true};
+      if(total>=require('./runtime-policy').capacity())return{busy:true};
       for(const row of db.prepare("SELECT * FROM subscription_requests WHERE status='queued' ORDER BY created_at").all()){
         if(!live(row)){db.prepare("UPDATE subscription_requests SET status='cancelled',payload=NULL WHERE id=?").run(row.id);continue;}
         db.prepare("UPDATE subscription_requests SET status='running',worker_id=?,updated_at=? WHERE id=?").run(req.boardlyConnection.id,Date.now(),row.id);

@@ -134,6 +134,7 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
     // customers need their own revocation/entitlement integration before enablement.
     if (!connection || connection.user_id !== config.ownerId) return res.status(401).json({ error: 'Connection key expired or revoked' });
     req.boardlyConnection = connection;
+    req.boardlyManagement = managementRequests.has(req);
     next();
   });
   app.get('/healthz', (req, res) => res.json({ ok: true }));
@@ -166,13 +167,21 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
       tenant.chat=createProjectChat({db:local.db,connections,userId:ownerId,uploadsDir:tenant.uploadsDir,environment:tenant.environment,payments:tenant.payments,email:tenant.email,ssh:tenant.ssh,github:tenant.github,computeruse:tenant.computeruse,media:tenant.media,canWriteFiles:(actor,id)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).project(id)==='editor',canUseMedia:(actor,id)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).project(id)==='editor',canUseComputers:(actor,id)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).capabilities('project',id).includes('computers'),canUseGithub:(actor,id)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).capabilities('project',id).includes('github'),canUseSsh:(actor,id)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).capabilities('project',id).includes('ssh')});
       const canEdit=(actor,id)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).project(id)==='editor';
       tenant.subscription=require('./subscription-ai').createSubscriptionAI({db:local.db,ownerId,canEdit,connections,canGenerate:(actor,id)=>tenant.companyOnboarding?.live(actor,id)});
-      const funded={...personal,authorize:async(actor)=>{
+      const funded={...personal,authorize:async(actor,jobId)=>{
+        if(jobId&&personal.providers.fallbackForRun(ownerId,jobId))return personal.providers.fallbackAuthorize(ownerId);
         if(ownerId===config.ownerId&&personal.account(ownerId).mode==='none')return{user_id:ownerId,actor_id:actor,mode:'subscription',model:personal.account(ownerId).model};
         if(personal.account(ownerId).mode==='chatgpt')return chatgpt.authorize(ownerId);
         return personal.authorize(ownerId);
-      },respond:(a,id,payload)=>a.mode==='subscription'?tenant.subscription.respond(a.actor_id,id,payload):a.mode==='chatgpt'?chatgpt.respond(a,id,payload):personal.respond(a,id,payload)};
+      },respond:async(a,id,payload)=>{
+        const local=()=>personal.providers.fallbackAuthorize(ownerId);
+        const fallback=async()=>{const f=local();if(!f)throw Object.assign(Error('Local AI fallback is disabled or disconnected.'),{status:409});return {...await personal.providers.respond(f,id,payload),boardly_runtime:'local',boardly_model:f.model};};
+        if(personal.providers.fallbackForRun(ownerId,id))return fallback();
+        try{return await(a.mode==='subscription'?tenant.subscription.respond(a.actor_id,id,payload):a.mode==='chatgpt'?chatgpt.respond(a,id,payload):personal.respond(a,id,payload));}
+        catch(e){if(require('./runtime-policy').failureKind(e)==='allowance'&&personal.providers.startFallback(ownerId,id,'Paid AI allowance exhausted'))return fallback();throw e;}
+      }};
       tenant.companyOnboarding=require('./company-onboarding').createCompanyOnboarding({db:local.db,ownerId,generate:async(actor,id,payload)=>{const a=await funded.authorize(actor);return funded.respond(a,id,{...payload,model:a.model||personal.account(ownerId).model});},retain:()=>tenant.active++,release:()=>tenant.active--});
-      tenant.chat.hosted=require('./hosted-ai').createHostedAI({db:local.db,uploadsDir:tenant.uploadsDir,personal:funded,canEdit:(actor,id)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).project(id)==='editor',canUse:(actor,id,scope)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).capabilities('project',id).includes(scope),retain:()=>tenant.active++,release:()=>tenant.active--,storageLimit:()=>tenant.plan.storage_bytes,organization:tenant.chat.organization,ssh:tenant.ssh,github:tenant.github,computeruse:tenant.computeruse,media:tenant.media});
+      tenant.chat.hosted=require('./hosted-ai').createHostedAI({db:local.db,uploadsDir:tenant.uploadsDir,personal:funded,canEdit:(actor,id)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).project(id)==='editor',canUse:(actor,id,scope)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).capabilities('project',id).includes(scope),retain:()=>tenant.active++,release:()=>tenant.active--,storageLimit:()=>tenant.plan.storage_bytes,organization:tenant.chat.organization,employees:tenant.chat.employees,ssh:tenant.ssh,github:tenant.github,computeruse:tenant.computeruse,media:tenant.media});
+      tenant.chat.localFallback=(jobId)=>personal.providers.startFallback(ownerId,jobId,'Native ChatGPT allowance exhausted');
       tenant.chat.organization.router.enqueueApi=()=>tenant.chat.hosted.enqueue();
       tenant.assets=createProjectAssets({db:local.db,uploadsDir:tenant.uploadsDir,limitBytes:plan.storage_bytes});
       tenants.set(ownerId,tenant);
@@ -280,7 +289,7 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
   app.all('/mcp', (req, res) => res.status(405).json({ error: 'Use Streamable HTTP POST' }));
   app.use((req, res, next) => {
     if (!req.tenant) return next();
-    if (/^\/api\/(chat|worker|agents|swarms|discussions)(\/|$)/i.test(req.path) || /^\/api\/boards\/\d+\/(chat\/|agent$)/i.test(req.path)) return req.tenant.subscription.router(req,res,err=>err?next(err):req.tenant.chat(req, res, next));
+    if (/^\/api\/(chat|worker|agents|swarms|discussions)(\/|$)/i.test(req.path) || /^\/api\/boards\/\d+\/(chat\/|agent$|employees(?:\/|$))/i.test(req.path)) return req.tenant.subscription.router(req,res,err=>err?next(err):req.tenant.chat(req, res, next));
     if(/^\/api\/account\/github(?:\/|$)/.test(req.path))return req.tenant.github.router(req,res,next);
     if(/^\/api\/account\/ssh(?:\/|$)/.test(req.path))return req.tenant.ssh.router(req,res,next);
     if (/^\/api\/(sync|account)(\/|$)/i.test(req.path)) return req.tenant.hub(req, res, () => res.status(404).json({ error: 'Sync endpoint not found' }));
@@ -300,11 +309,11 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
   });
   let cloudClosed=false,recoveringCloud=false;
   const recoverCloud=async()=>{if(cloudClosed||recoveringCloud)return;recoveringCloud=true;try{for(const ownerId of connections.workspaceOwners()){
-    if(cloudClosed)break;if(tenants.has(ownerId)){tenants.get(ownerId).chat.hosted.enqueue();continue;}
+    if(cloudClosed)break;if(tenants.has(ownerId)){tenants.get(ownerId).chat.employees.tick();continue;}
     const file=path.join(workspacePath(config.dataDir,ownerId),'app.db');if(!fs.existsSync(file))continue;
-    const db=new(require('better-sqlite3'))(file,{readonly:true});let pending=false;try{pending=!!db.prepare("SELECT 1 FROM chat_jobs WHERE runtime='api' AND (status='queued' OR (mode='work' AND status='running')) LIMIT 1").get();}catch{}finally{db.close();}if(!pending)continue;
+    const db=new(require('better-sqlite3'))(file,{readonly:true});let pending=false;try{pending=!!db.prepare("SELECT 1 FROM chat_jobs WHERE runtime='api' AND (status='queued' OR (mode='work' AND status='running')) LIMIT 1").get();}catch{}finally{db.close();}if(!pending){const check=new(require('better-sqlite3'))(file,{readonly:true});try{pending=!!check.prepare('SELECT 1 FROM employee_teams WHERE enabled=1 LIMIT 1').get();}catch{}finally{check.close();}}if(!pending)continue;
     let plan;if(personal.billing.ready()){const billed=await personal.billing.state(ownerId);plan={...billed.plan,extra_users:billed.extra_users,users:billed.plan.users===null?null:billed.plan.users+billed.extra_users};}else plan=await planService.sponsored(ownerId);
-    if(!cloudClosed&&plan)tenantFor(ownerId,plan).chat.hosted.enqueue();
+    if(!cloudClosed&&plan)tenantFor(ownerId,plan).chat.employees.tick();
   }}catch{/* Retry recovery after transient provider/storage failures. */}finally{recoveringCloud=false;}};
   const recoveryTimer=setInterval(recoverCloud,15000);recoveryTimer.unref();queueMicrotask(recoverCloud);
   app.closeWorkspaces = () => {cloudClosed=true;clearInterval(recoveryTimer);

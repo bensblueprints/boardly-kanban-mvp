@@ -21,7 +21,7 @@ if (parsed.origin !== origin || (parsed.protocol !== 'https:' && !(parsed.protoc
 fs.mkdirSync(workspaceRoot, { recursive: true, mode: 0o700 });
 let stopping = false;
 const children = new Set();
-const maxAgents = Math.max(1,Math.min(4,Number(settings.maxAgents)||4));
+const maxAgents = require('../server/runtime-policy').capacity(process.env.BOARDLY_MAX_AGENTS || settings.maxAgents);
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function request(route, data, method = 'POST') {
   const form = data instanceof FormData,binary=Buffer.isBuffer(data);
@@ -79,7 +79,7 @@ async function run(job) {
     finally { updating = false; }
   };
   const timer = setInterval(heartbeat, 2000), started = Date.now();
-  let status = 'failed', failure, wallet, email, ssh, github, computeruse, media, outputBroker, outputUploader, githubStatus=null, checkpoint=null, round=Number(job.continuation_count)||0;
+  let status = 'failed', failure, failureCode, wallet, email, ssh, github, computeruse, media, outputBroker, outputUploader, githubStatus=null, checkpoint=null, round=Number(job.continuation_count)||0;
   try {
     fs.mkdirSync(outputDir,{recursive:true,mode:0o700});
     const outputs=require('./output-upload.cjs');
@@ -191,12 +191,13 @@ async function run(job) {
       round++;const args=[...baseArgs];if(sessionId)args.push('resume',sessionId,'-');else args.push('-');
       fs.rmSync(output,{force:true});
       step('worker:codex',sessionId?'Continuing assigned work':'Starting Codex','running');
-      let startupError = '', turnStarted = false;
+      let startupError = '', turnStarted = false, providerError='';
       child=spawn(command,args,{cwd,env,detached:true,stdio:['pipe','pipe','pipe']});children.add(child);
       const result=new Promise(resolve=>{child.once('error',()=>resolve({code:1}));child.once('close',code=>resolve({code}));});
       child.stdin.on('error',()=>{});
       readline.createInterface({input:child.stdout}).on('line',line=>{try{
         const event=JSON.parse(line);
+        if(event.type==='error'||event.type==='turn.failed')providerError=JSON.stringify(event).slice(-6000);
         if (event.type === 'turn.started' || event.type.startsWith('item.')) turnStarted = true;
         if(event.type==='thread.started'){sessionId=event.thread_id;step('worker:codex','Codex conversation opened');heartbeat();}
         if(event.type==='item.completed'&&event.item?.type==='agent_message'){
@@ -218,7 +219,16 @@ async function run(job) {
         await managedMcp.waitUntilReady({ boardId: job.board.id, stopped: () => cancelled || stopping, onStatus: async ready => { step('worker:mcp', ready ? 'Boardly connection ready' : 'Reconnecting Boardly · retrying automatically', ready ? 'completed' : 'running'); await heartbeat(); } });
         continue;
       }
-      if(exited.code!==0||!raw){status='failed';break;}
+      if(exited.code!==0||!raw){
+        const detail=providerError+' '+startupError;
+        if(/usage.limit|insufficient_quota|quota.exceeded/i.test(detail)){failureCode='allowance_exhausted';failure='Your ChatGPT allowance is exhausted. Continuing with an enabled Local AI fallback, or waiting for allowance renewal.';}
+        else if(/refresh.token|401|authentication|unauthorized/i.test(detail))failure='ChatGPT authentication expired or could not refresh. Reconnect the cloud ChatGPT account; saved work and GPU jobs are retained.';
+        else if(/connection reset|connection closed|stream disconnected|timed out|temporarily unavailable|502|503|504/i.test(detail)&&persistent){
+          step('worker:recovery','Reconnecting AI · saved conversation retained','running');await heartbeat();await delay(5000);
+          nextPrompt=persistentInstruction+'\nResume the same objective after a transient interruption. Inspect saved files and external outcomes before repeating any action. '+(text||'');continue;
+        }
+        status='failed';break;
+      }
       if(!persistent){text=clean(raw).slice(0,200000);status='completed';break;}
       try{checkpoint=parseOutcome(raw);}catch(e){status='blocked';checkpoint={state:'blocked',summary:text||'The assignment needs review.',blocker:e.message,next_action:'Review the saved work and resume the assignment.'};break;}
       text=clean(checkpoint.summary).slice(0,200000);
@@ -239,7 +249,7 @@ async function run(job) {
       }
       step('worker:save', 'Project outputs saved');
     }
-    if (status === 'failed') failure = 'Codex could not complete this run. Check the agent runtime and AI sign-in, then send another message.';
+    if (status === 'failed'&&!failure) failure = 'Codex could not complete this run. Check the agent runtime and AI sign-in, then send another message.';
   } catch {
     status = cancelled || stopping ? 'cancelled' : checkpoint?.state==='blocked' ? 'blocked' : 'failed';
     if(status==='blocked'){text=checkpoint.summary;failure=checkpoint.blocker;}
@@ -260,7 +270,7 @@ async function run(job) {
   // An interrupted tool must not remain displayed as running in saved history.
   for (const entry of activities.values()) if (entry.status === 'running') entry.status = 'failed';
   if(stopping&&persistent&&status==='cancelled')status='recovering';
-  const payload = { status, text: clean(text), sessionId, progress: status==='completed'?'Completed':status==='blocked'?'Blocked · action needed':'Run stopped', error: failure, activity: activity(),continuation_count:round,blocker:checkpoint?.blocker?clean(checkpoint.blocker):undefined,next_action:checkpoint?.next_action?clean(checkpoint.next_action):undefined };
+  const payload = { status, text: clean(text), sessionId, progress: status==='completed'?'Completed':status==='blocked'?'Blocked · action needed':'Run stopped', error: failure, failure_code:failureCode, activity: activity(),continuation_count:round,blocker:checkpoint?.blocker?clean(checkpoint.blocker):undefined,next_action:checkpoint?.next_action?clean(checkpoint.next_action):undefined };
   await save(job.id,`/api/worker/jobs/${job.id}`,payload);
   console.log(JSON.stringify({ job: job.id, status, seconds: Math.round((Date.now() - started) / 1000) }));
   await flush();

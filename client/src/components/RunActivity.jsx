@@ -27,7 +27,7 @@ export default function RunActivity({ run, online }) {
     project_work: 'Another Work conversation is changing this project. This request will start when it finishes. Ask and Plan chats can run alongside it when an agent is available.',
     conversation: 'An earlier request in this conversation is still active. Open a new chat to discuss something else.',
     stopping: 'A previous run is still stopping. This request will start after the worker confirms it has stopped.',
-    capacity: 'All four agents are busy. This request will start when an agent becomes available.',
+    capacity: 'All available agents are busy. This request will start when an agent becomes available.',
     ready: 'Ready to start. Waiting for the next available agent.'
   }[run.queue?.reason] || 'Waiting for an available agent to start this request.';
   const title = run.status === 'queued' ? run.queue?.reason === 'project_work' ? 'Waiting for this project’s Work chat' : run.queue?.reason === 'stopping' ? 'Waiting for previous run to stop' : 'Queued' : run.status === 'running' ? run.progress || 'Codex is working' : run.status === 'completed' ? 'Work completed' : run.status==='blocked'?'Blocked · action needed':run.status==='recovering'?'Recovering cloud assignment':run.status === 'cancelled' ? 'Run stopped' : 'Run did not finish';

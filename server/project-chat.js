@@ -51,6 +51,13 @@ function createProjectChat({ db, connections, userId, uploadsDir, environment, p
   const computerContext=(actor,id)=>canUseComputers(actor,id)?computeruse?.assignment('project',id)||{configured:false,saved:false,rental_ids:[],allow_agent:false,allow_control:false}:{status:'restricted',saved:null,rental_ids:[]};
   const organization = require('./organization-agents').createOrganizationAgents({db,clean,userId,hosted:()=>router.hosted,githubContext,sshContext,computerContext});
   router.organization=organization; router.use(organization.router);
+  router.employees=require('./project-employees').createProjectEmployees({db,ownerId:userId,clean,enqueue:()=>router.hosted?.enqueue()});
+  const employeeBase='/api/boards/:boardId/employees';
+  router.use(employeeBase,(req,res,next)=>{const id=Number(req.params.boardId);if((req.boardlyConnection&&!req.boardlyManagement)||!canWriteFiles(req.cloudUserId||userId,id))return res.status(403).json({error:'Project edit access is required'});next();});
+  router.get(employeeBase,(req,res)=>res.json(router.employees.context(Number(req.params.boardId))));
+  router.put(employeeBase,body,(req,res)=>{if(req.cloudUserId&&req.cloudUserId!==userId)return res.status(403).json({error:'The project owner manages continuous employee teams'});const result=router.employees.configure(Number(req.params.boardId),req.body.enabled,req.body.instruction||'',req.cloudUserId||userId,'api');router.employees.tick();res.json(result);});
+  router.post(employeeBase+'/messages',body,(req,res)=>res.json(router.employees.note(Number(req.params.boardId),null,req.body.recipient_id||null,req.body.body)));
+  router.post(employeeBase+'/assign',body,(req,res)=>{if(typeof req.body.instruction!=='string'||req.body.instruction.length>10000)return res.status(400).json({error:'Assignment instructions must be at most 10,000 characters'});const id=Number(req.params.boardId);router.employees.ensure(id);const result=router.employees.assign(id,req.body.employee_id,req.body.card_id,req.body.instruction,req.cloudUserId||userId,'api');router.hosted.enqueue();res.json(result);});
   router.audioWork=require('./audio-work').createAudioWork({db,userId,clean,enqueue:()=>router.hosted.enqueue()});
   function expireJobs() {
     db.prepare("UPDATE chat_jobs SET status='interrupted',error='Codex worker disconnected. Review the result before sending another message.',updated_at=? WHERE status='running' AND updated_at<?")
@@ -84,7 +91,7 @@ function createProjectChat({ db, connections, userId, uploadsDir, environment, p
     if(req.aiRuntime==='api')return res.json({online:!!req.personalAiAllowed,message:req.aiFunding==='owner_subscription'?'AI uses the company owner’s connected subscription. Your permission scopes still apply.':'AI usage is funded by the company owner. Activity and results are saved in this project.',personal_ai:true,funding:req.aiFunding||'owner_api'});
     const workers = connections.list(userId).filter(c => c.scope === 'worker' && !c.revoked_at && c.expires_at > Date.now());
     res.json({ online: workers.some(c => c.last_used_at > Date.now() - 45000),
-      cloud:workers.some(c=>c.name.startsWith('Cloud agent')&&c.last_used_at>Date.now()-45000),max_agents:MAX_AGENTS,message:'Up to four agents work through assigned objectives. Progress and blockers are saved with this project.' });
+      cloud:workers.some(c=>c.name.startsWith('Cloud agent')&&c.last_used_at>Date.now()-45000),max_agents:MAX_AGENTS,message:`Up to ${MAX_AGENTS} agents work through assigned objectives. Progress and blockers are saved with this project.` });
   });
   router.get('/api/boards/:boardId/chat/threads', (req, res) => {
     if (!db.prepare('SELECT id FROM boards WHERE id=?').get(req.params.boardId)) return res.status(404).json({ error: 'Project not found' });
@@ -273,8 +280,11 @@ function createProjectChat({ db, connections, userId, uploadsDir, environment, p
   router.post('/api/worker/jobs/:id', body, (req, res) => {
     const j = job(req.params.id);
     if (!j || j.worker_id !== req.boardlyConnection.id) return res.status(404).json({ error: 'Run not found' });
-    if (j.status !== 'running') { if(['completed','failed','cancelled'].includes(req.body?.status))db.prepare('UPDATE chat_jobs SET settled_at=? WHERE id=?').run(Date.now(),j.id); return res.json({ status: j.status }); }
+    if (j.status !== 'running') { if(['completed','failed','cancelled','blocked','recovering'].includes(req.body?.status))db.prepare('UPDATE chat_jobs SET settled_at=? WHERE id=?').run(Date.now(),j.id); return res.json({ status: j.status }); }
     const data = req.body || {};
+    if(data.failure_code==='allowance_exhausted'&&j.mode==='work'&&j.worker_host==='cloud'&&router.localFallback?.(j.id)){
+      db.prepare("UPDATE chat_jobs SET runtime='api',status='queued',worker_id=NULL,settled_at=?,recovery_required=1,draft=?,progress='Continuing with Local AI after allowance exhaustion',updated_at=? WHERE id=?").run(Date.now(),clean(thread(j.thread_id).board_id,String(data.text||j.draft).slice(0,200000)),Date.now(),j.id);router.hosted.enqueue();return res.json({status:'queued'});
+    }
     if (j.mode==='work' && data.sessionId && /^[a-zA-Z0-9-]{10,80}$/.test(data.sessionId)) db.prepare('UPDATE chat_threads SET codex_session_id=? WHERE id=?').run(data.sessionId, j.thread_id);
     let status = ['completed', 'failed', 'cancelled', 'blocked', 'recovering'].includes(data.status) ? data.status : 'running';
     if(status==='failed'&&j.worker_host==='cloud'){status='blocked';data.blocker=data.blocker||data.error||'The cloud agent runtime could not finish this assignment.';data.next_action=data.next_action||'Review the saved activity and restore the cloud agent connection or AI sign-in, then resume this assignment.';}

@@ -6,7 +6,7 @@ const fail=(status,message)=>Object.assign(Error(message),{status});
 const schema={type:'object',additionalProperties:false,required:['text','calls'],properties:{text:{type:'string'},calls:{type:'array',items:{type:'object',additionalProperties:false,required:['name','arguments'],properties:{name:{type:'string'},arguments:{type:'string'}}}}}};
 const disabled=['shell_tool','unified_exec','apply_patch_freeform','apps','plugins','hooks','plugin_hooks','multi_agent','multi_agent_mode','multi_agent_v2','browser_use','browser_use_external','in_app_browser','js_repl','code_mode','image_generation','imagegenext','memory_tool','memories','tool_suggest','skill_search'];
 function safeConfig(){return ['-c','cli_auth_credentials_store="file"','-c','approval_policy="never"','-c','project_doc_max_bytes=0','-c','web_search="disabled"','-c','mcp_servers={}','-c','apps._default.enabled=false','-c','features.skip_host_skill_discovery=true',...disabled.flatMap(f=>['-c',`features.${f}=false`])];}
-function createChatGPTService({root,token,command='codex',spawnProcess=spawn,loginTTL=15*60e3,runTimeout=180e3}={}){
+function createChatGPTService({root,token,command='codex',spawnProcess=spawn,loginTTL=15*60e3,runTimeout=30*60e3}={}){
  if(!root||!token||token.length<32)throw Error('Private ChatGPT connector configuration is required');
  fs.mkdirSync(root,{recursive:true,mode:0o700});fs.chmodSync(root,0o700);
  const profiles=new Map();let closed=false,totalRuns=0;
@@ -21,13 +21,13 @@ function createChatGPTService({root,token,command='codex',spawnProcess=spawn,log
  }
  const environment=p=>({PATH:process.env.PATH||'/usr/local/bin:/usr/bin:/bin',HOME:p.home,CODEX_HOME:p.codexHome,LANG:'C.UTF-8'});
  function kill(child){if(!child.pid)return;try{process.kill(-child.pid,'SIGTERM');}catch{}const timer=setTimeout(()=>{try{process.kill(-child.pid,'SIGKILL');}catch{}},2000);timer.unref();}
- function invalidate(p){p.generation++;for(const child of p.runs)kill(child);p.pending=null;p.verified=null;fs.rmSync(path.join(p.dir,'verified.json'),{force:true});}
+ function invalidate(p){p.generation++;for(const child of p.runs){child.cancel?.();kill(child);}p.pending=null;p.verified=null;fs.rmSync(path.join(p.dir,'verified.json'),{force:true});}
  function serialize(p,fn){const result=p.lock.then(fn);p.lock=result.catch(()=>{});return result;}
  async function rpc(p){
   p.used=Date.now();if(p.rpc)return p.rpc.ready;
   if([...profiles.values()].filter(x=>x.rpc).length>=64)throw fail(429,'ChatGPT sign-in is busy. Please try again shortly.');
   const child=spawnProcess(command,['app-server','--listen','stdio://',...safeConfig()],{cwd:p.home,env:environment(p),detached:true,stdio:['pipe','pipe','pipe']});
-  const pending=new Map();let serial=0;const state={child,ready:null,stop(){kill(child);}};p.rpc=state;
+  const pending=new Map(),turns=new Map();let serial=0;const state={child,ready:null,stop(){kill(child);}};p.rpc=state;
   const send=(method,params)=>new Promise((resolve,reject)=>{
    const id=++serial,timer=setTimeout(()=>{pending.delete(id);reject(fail(504,'ChatGPT sign-in timed out. Please try again.'));},25000);
    pending.set(id,{resolve,reject,timer});child.stdin.write(JSON.stringify({id,method,params})+'\n',error=>{if(error){clearTimeout(timer);pending.delete(id);reject(fail(503,'ChatGPT connection is unavailable'));}});
@@ -36,12 +36,13 @@ function createChatGPTService({root,token,command='codex',spawnProcess=spawn,log
   readline.createInterface({input:child.stdout}).on('line',line=>{
    let msg;try{msg=JSON.parse(line);}catch{return;}
    if(msg.id!==undefined&&pending.has(msg.id)){const r=pending.get(msg.id);pending.delete(msg.id);clearTimeout(r.timer);if(msg.error){const network=/error sending request|certificate|timed out|connection refused/i.test(msg.error.message||'');r.reject(fail(network?503:400,network?'boredly could not reach OpenAI sign-in. Please retry shortly.':'OpenAI could not complete sign-in. Enable device-code login in ChatGPT Settings → Security, then try again.'));}else r.resolve(msg.result);}
+   else if(msg.params?.threadId&&turns.has(msg.params.threadId)){turns.get(msg.params.threadId)(msg);}
    else if(msg.method==='account/login/completed'&&p.pending?.login_id===msg.params?.loginId){p.pending=null;p.error=msg.params.success?null:'ChatGPT sign-in was not completed. Start a new code and approve it in OpenAI.';}
    // No tool/approval request is ever forwarded or approved.
   });
-  const ended=()=>{if(p.rpc===state){p.rpc=null;if(p.pending){p.pending=null;p.error='ChatGPT sign-in was interrupted. Please start a new code.';}}for(const r of pending.values()){clearTimeout(r.timer);r.reject(fail(503,'ChatGPT connection was interrupted'));}pending.clear();};
+  const ended=()=>{if(p.rpc===state){p.rpc=null;if(p.pending){p.pending=null;p.error='ChatGPT sign-in was interrupted. Please start a new code.';}}for(const r of pending.values()){clearTimeout(r.timer);r.reject(fail(503,'ChatGPT connection was interrupted'));}pending.clear();for(const notify of turns.values())notify({method:'connector/closed'});turns.clear();};
   child.once('error',ended);child.once('close',ended);
-  state.ready=(async()=>{await send('initialize',{clientInfo:{name:'boredly',title:'boredly',version:'1.0.0'},capabilities:{experimentalApi:false}});child.stdin.write(JSON.stringify({method:'initialized',params:{}})+'\n');return{send,stop:state.stop};})();
+  state.ready=(async()=>{await send('initialize',{clientInfo:{name:'boredly',title:'boredly',version:'1.0.0'},capabilities:{experimentalApi:false}});child.stdin.write(JSON.stringify({method:'initialized',params:{}})+'\n');return{send,turns,stop:state.stop};})();
   try{return await state.ready;}catch(e){state.stop();throw e;}
  }
  async function status(p){
@@ -74,35 +75,58 @@ function createChatGPTService({root,token,command='codex',spawnProcess=spawn,log
  });}
  async function respond(p,payload){
   if(!payload||!Array.isArray(payload.input)||!Array.isArray(payload.tools)||!['gpt-6-astra','gpt-5.6-sol','gpt-5.6-terra'].includes(payload.model)||Buffer.byteLength(JSON.stringify(payload))>4000000)throw fail(400,'This conversation is too large or its model is unsupported');
-  const reservation={pid:null};let generation,temp,out,child,timer,usage={},reserved=false;
+  // All threads use the same account's app-server authentication manager. Do
+  // not fork exec processes sharing a rotating refresh token/auth.json.
+  const reservation={pid:null};let generation,r,threadId,timer,temp,reserved=false;
   try{
    await serialize(p,async()=>{
     if(closed)throw fail(503,'ChatGPT connector is restarting');
     if(!(await status(p)).connected)throw fail(401,'Connect your ChatGPT account in Account & AI, then resume this assignment');
-    if(p.runs.size>=4||totalRuns>=16)throw fail(429,'ChatGPT is busy. Please try again shortly.');
-    generation=p.generation;p.runs.add(reservation);totalRuns++;reserved=true;
-    temp=fs.mkdtempSync(path.join(os.tmpdir(),'boredly-gpt-'));out=path.join(temp,'answer.json');
+    if(p.runs.size>=require('../server/runtime-policy').capacity()||totalRuns>=64)throw fail(429,'ChatGPT capacity is busy. This request will retry shortly.');
+    generation=p.generation;p.runs.add(reservation);totalRuns++;reserved=true;r=await rpc(p);
    });
    if(closed||generation!==p.generation)throw fail(401,'ChatGPT was disconnected. Reconnect before resuming.');
-   const schemaFile=path.join(temp,'schema.json');fs.writeFileSync(schemaFile,JSON.stringify(schema),{mode:0o600});
+   const started=await r.send('thread/start',{model:payload.model,cwd:p.home,approvalPolicy:'never',sandbox:'read-only',ephemeral:true});
+   threadId=started?.thread?.id;if(typeof threadId!=='string')throw fail(502,'ChatGPT returned an invalid conversation');
+   let answer='',usage={},turnId;
+   const completion=new Promise((resolve,reject)=>{
+    reservation.cancel=()=>reject(fail(401,'ChatGPT was disconnected. Reconnect before resuming.'));
+    r.turns.set(threadId,msg=>{
+     const v=msg.params||{};
+     if(msg.method==='connector/closed')return reject(fail(503,'ChatGPT connection was interrupted. Retrying the saved request.'));
+     if(msg.method==='turn/started')turnId=v.turn?.id;
+     if(msg.method==='item/completed'&&v.item?.type==='agentMessage')answer=v.item.text||answer;
+     if(msg.method==='thread/tokenUsage/updated')usage=v.tokenUsage?.last||{};
+     if(msg.method==='turn/completed'){
+      if(v.turn?.status==='completed')return resolve();
+      const detail=v.turn?.error||{},message=JSON.stringify(detail);
+      if(/usage.limit|quota|insufficient.*credit/i.test(message))return reject(Object.assign(fail(429,'Your ChatGPT usage limit was reached. Switching to your enabled local fallback when available.'),{code:'allowance_exhausted'}));
+      if(/rate.limit|429/i.test(message))return reject(fail(429,'ChatGPT is temporarily rate limited. Retrying shortly.'));
+      if(/401|unauthorized|refresh.token|sign.in|authentication/i.test(message))return reject(fail(401,'Your ChatGPT connection needs sign-in again. Reconnect in Account & AI.'));
+      reject(fail(503,'ChatGPT response was interrupted. Retrying the saved request.'));
+     }
+    });
+    timer=setTimeout(()=>{if(turnId)r.send('turn/interrupt',{threadId,turnId}).catch(()=>{});reject(fail(504,'ChatGPT response stalled. Retrying the saved request.'));},runTimeout);
+   });
+   // Avoid an unhandled rejection if a disconnect arrives while turn/start is pending.
+   completion.catch(()=>{});
+   temp=fs.mkdtempSync(path.join(os.tmpdir(),'boredly-gpt-'));
    const images=require('./response-images.cjs').responseImages(payload,temp);
-   const args=['exec','--ignore-user-config','--ignore-rules','--ephemeral','--json','--skip-git-repo-check','--sandbox','read-only',...safeConfig(),'--model',payload.model,'--output-schema',schemaFile,'-o',out,...images.args,'-'];
-   child=spawnProcess(command,args,{cwd:temp,env:environment(p),detached:true,stdio:['pipe','pipe','pipe']});p.runs.delete(reservation);p.runs.add(child);
-   let reason=null;timer=setTimeout(()=>{reason='ChatGPT took too long to reply. Try a shorter request or resume your saved assignment.';kill(child);},runTimeout);
-   const completion=new Promise(resolve=>{child.once('error',()=>resolve(1));child.once('close',resolve);});
-   child.stdin.on('error',()=>{});child.stderr.resume();
-   readline.createInterface({input:child.stdout}).on('line',line=>{try{const event=JSON.parse(line);if(event.type==='turn.completed')usage=event.usage||{};if(event.type==='error'||event.type==='turn.failed'){const message=JSON.stringify(event);if(/usage.limit|rate.limit|quota|429|limit reached/i.test(message))reason='Your ChatGPT usage limit was reached. Check your ChatGPT plan and try again when it resets.';else if(/401|unauthorized|refresh.token|sign.in|authentication/i.test(message))reason='Your ChatGPT connection needs sign-in again. Disconnect and reconnect in Account & AI.';}}catch{}});
-   child.stdin.end('Generate the next response for this boredly conversation. You have no execution tools. Return only the requested JSON. Follow the developer instructions within the supplied tool catalog. To request an action, put its catalog name and JSON-encoded arguments in calls. boredly validates and executes these separately. Never claim an action occurred before its function_call_output confirms it. Use no calls for a final answer.\n'+JSON.stringify(images.payload));
-   const code=await completion;
+   const text='Generate the next response for this Boardly conversation. You have no execution tools. Return only the requested JSON. Follow the developer instructions within the supplied tool catalog. To request an action, put its catalog name and JSON-encoded arguments in calls. Boardly validates and executes these separately. Never claim an action occurred before its function_call_output confirms it. Use no calls for a final answer.\n'+JSON.stringify(images.payload);
+   const input=[{type:'text',text},...images.args.filter((_,i)=>i%2===1).map(path=>({type:'localImage',path}))];
+   await r.send('turn/start',{threadId,input,model:payload.model,outputSchema:schema});
+   await completion;
    if(generation!==p.generation)throw fail(401,'ChatGPT was disconnected. Reconnect before resuming.');
-   if(code!==0)throw fail(502,reason||'ChatGPT could not reply. Test the connection in Account & AI and check access to the selected model.');
-   const value=JSON.parse(fs.readFileSync(out,'utf8'));
+   let value;try{value=JSON.parse(answer);}catch{throw fail(502,'ChatGPT returned an invalid structured response');}
    if(typeof value.text!=='string'||!Array.isArray(value.calls)||value.calls.length>20)throw fail(502,'ChatGPT returned an invalid response');
    const output=value.text?[{type:'message',role:'assistant',content:[{type:'output_text',text:value.text}]}]:[];
    for(const c of value.calls){if(!payload.tools.some(t=>t.name===c.name)||typeof c.arguments!=='string')throw fail(502,'ChatGPT requested an unavailable action');JSON.parse(c.arguments);output.push({type:'function_call',call_id:'call_'+crypto.randomUUID(),name:c.name,arguments:c.arguments});}
    if(!output.length)throw fail(502,'ChatGPT returned an empty reply');
    return{output,usage,model:payload.model};
-  }finally{clearTimeout(timer);p.runs.delete(reservation);if(child)p.runs.delete(child);if(reserved)totalRuns--;if(temp)fs.rmSync(temp,{recursive:true,force:true});p.used=Date.now();}
+  }finally{
+   clearTimeout(timer);if(threadId){r?.turns.delete(threadId);await r?.send('thread/unsubscribe',{threadId}).catch(()=>{});}
+   p.runs.delete(reservation);if(reserved)totalRuns--;if(temp)fs.rmSync(temp,{recursive:true,force:true});p.used=Date.now();
+  }
  }
  async function test(p){const generation=p.generation;const result=await respond(p,{model:'gpt-6-astra',input:[{role:'user',content:'Reply with one short sentence confirming that this ChatGPT connection can answer. Do not request any actions.'}],tools:[]});return serialize(p,async()=>{if(generation!==p.generation)throw fail(401,'ChatGPT was disconnected. Reconnect before testing.');p.verified=Date.now();fs.writeFileSync(path.join(p.dir,'verified.json'),JSON.stringify({at:p.verified}),{mode:0o600});return{...await status(p),reply:result.output.filter(x=>x.type==='message').flatMap(x=>x.content).map(x=>x.text).join('\n')};});}
  const timer=setInterval(()=>{for(const [id,p] of profiles){if(p.pending&&p.pending.expires_at<Date.now())serialize(p,()=>status(p)).catch(()=>{});if(!p.pending&&!p.runs.size&&Date.now()-p.used>300000){p.rpc?.stop();profiles.delete(id);}}},30000);timer.unref();
@@ -117,9 +141,9 @@ function createChatGPTService({root,token,command='codex',spawnProcess=spawn,log
    let raw='';for await(const chunk of req){raw+=chunk;if(Buffer.byteLength(raw)>4100000)throw fail(413,'Request too large');}
    const p=profile(match[1]),action=match[2],body=raw?JSON.parse(raw):{};
    const result=await({status:()=>serialize(p,()=>status(p)),login:()=>login(p),cancel:()=>cancel(p),disconnect:()=>disconnect(p),respond:()=>respond(p,body),test:()=>test(p)})[action]();send(200,result);
-  }catch(e){send(e.status||502,{error:e.status?e.message:'The ChatGPT connector could not complete this request'});}
+  }catch(e){send(e.status||502,{error:e.status?e.message:'The ChatGPT connector could not complete this request',...(e.code==='allowance_exhausted'?{code:e.code}:{})});}
  });
- return{server,async close(){closed=true;clearInterval(timer);for(const p of profiles.values()){p.rpc?.stop();for(const child of p.runs)kill(child);}await new Promise(r=>server.close(r));}};
+ return{server,async close(){closed=true;clearInterval(timer);for(const p of profiles.values()){p.rpc?.stop();for(const child of p.runs){child.cancel?.();kill(child);}}await new Promise(r=>server.close(r));}};
 }
 if(require.main===module){process.umask(0o077);const service=createChatGPTService({root:process.env.CHATGPT_DATA_DIR||'/profiles',token:fs.readFileSync(process.env.CHATGPT_TOKEN_FILE,'utf8').trim()});service.server.listen(Number(process.env.PORT)||5320,'0.0.0.0');for(const signal of ['SIGINT','SIGTERM'])process.once(signal,()=>service.close().then(()=>process.exit(0)));}
 module.exports={createChatGPTService,safeConfig};

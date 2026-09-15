@@ -54,8 +54,8 @@ function memberGuard({db,memberships,ownerId,userId}){
    }
    if((match=route.match(/^\/api\/boards\/(\d+)(?:\/(.*))?$/))){
     projectId=Number(match[1]);const suffix=match[2]||'';
-    const read=['','cards','activity','archived','export','files','folders','links','chat/threads','chat/context'];
-    const edits=['lists','lists/reorder','labels','files','folders','file-links','links','chat/threads','agent'];
+    const read=['','cards','activity','archived','export','files','folders','links','chat/threads','chat/context','employees'];
+    const edits=['lists','lists/reorder','labels','files','folders','file-links','links','chat/threads','agent','employees/messages','employees/assign'];
     if(write&&suffix==='agent'&&!req.personalAiAllowed)throw fail(402,'Ask the company owner to connect AI funding');
     const transfer=/^uploads(?:\/[0-9a-f-]{36}(?:\/(chunks|complete))?)?$/.test(suffix);
     if(!transfer&&(method==='GET'?!read.includes(suffix):!edits.includes(suffix)))throw fail(403,'This setting is managed by the account owner');

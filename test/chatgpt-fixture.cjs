@@ -18,6 +18,25 @@ if(process.argv.includes('app-server')){
  if(m.method==='account/login/start'){assert.equal(m.params.type,'chatgptDeviceCode');pending='login-'+path.basename(path.dirname(path.dirname(dir)));result={type:'chatgptDeviceCode',loginId:pending,verificationUrl:'https://auth.openai.com/codex/device',userCode:'ABCD-1234'};}
  if(m.method==='account/login/cancel'){pending=null;result={};}
  if(m.method==='account/logout'){fs.rmSync(authFile,{force:true});pending=null;}
+ if(m.method==='thread/start'){assert.equal(m.params.ephemeral,true);assert.equal(m.params.sandbox,'read-only');result={thread:{id:'thread-'+m.id}};}
+ if(m.method==='turn/start'){
+  const input=m.params.input[0].text,payload=JSON.parse(input.slice(input.indexOf('\\n')+1)),a=auth();
+  assert.ok(a);assert.ok(!input.includes('NEVER-RETURN-THIS-CREDENTIAL'));
+  const outputs=payload.input.filter(x=>x.type==='function_call_output');let value={text:'ChatGPT reply from '+a.email,calls:[]};
+  if(payload.tools.length&&input.includes('Create the authorized task')){
+   if(!outputs.length)value={text:'Reading the project.',calls:[{name:'get_project',arguments:'{}'}]};
+   else if(outputs.length===1){const project=JSON.parse(outputs[0].output);value={text:'Creating the task.',calls:[{name:'create_task',arguments:JSON.stringify({list_id:project.lists[0].id,title:'ChatGPT customer task',description:'Authorized project work'})}]};}
+  }
+  if(input.includes('unavailable-tool'))value={text:'',calls:[{name:'shell',arguments:'{}'}]};
+  const threadId=m.params.threadId,turnId='turn-'+m.id;result={turn:{id:turnId,status:'inProgress'}};
+  emit({method:'turn/started',params:{threadId,turn:{id:turnId}}});
+  setTimeout(()=>{
+   if(input.includes('simulate-rate-limit'))return emit({method:'turn/completed',params:{threadId,turn:{id:turnId,status:'failed',error:{message:'usage_limit_reached'}}}});
+   emit({method:'item/completed',params:{threadId,item:{type:'agentMessage',text:JSON.stringify(value)}}});
+   emit({method:'thread/tokenUsage/updated',params:{threadId,tokenUsage:{last:{inputTokens:30,outputTokens:10}}}});
+   emit({method:'turn/completed',params:{threadId,turn:{id:turnId,status:'completed'}}});
+  },input.includes('slow-response')?1200:20);
+ }
  emit({id:m.id,result});
  });
 }else{

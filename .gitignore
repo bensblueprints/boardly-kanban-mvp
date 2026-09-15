@@ -13,3 +13,7 @@ cloud-data/
 .clerk/
 .boardly/
 .codex/
+
+# Python operational helpers
+__pycache__/
+*.pyc

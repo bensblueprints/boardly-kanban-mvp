@@ -1,4 +1,4 @@
-const MAX_AGENTS = 4;
+const MAX_AGENTS = require('./runtime-policy').capacity();
 // Redact text fields without treating timestamps/IDs or JSON syntax as secret text.
 function cleanValues(value, clean) {
   if (typeof value === 'string') return clean(value);
@@ -7,7 +7,7 @@ function cleanValues(value, clean) {
   return value;
 }
 // Claims and queue explanations must agree, including a cancelled writer still stopping.
-const projectBlocker = `(r.status IN ('running','recovering') OR (r.status='cancelled' AND r.worker_id IS NOT NULL AND r.settled_at IS NULL AND r.updated_at>strftime('%s','now')*1000-604800000)) AND (r.thread_id=j.thread_id OR (rt.board_id=t.board_id AND r.mode='work' AND j.mode='work'))`;
+const projectBlocker = `(r.status IN ('running','recovering') OR (r.status='cancelled' AND r.worker_id IS NOT NULL AND r.settled_at IS NULL AND r.updated_at>strftime('%s','now')*1000-604800000)) AND (r.thread_id=j.thread_id OR (rt.board_id=t.board_id AND r.mode='work' AND j.mode='work' AND NOT (r.runtime='api' AND j.runtime='api' AND rt.card_id IS NOT NULL AND t.card_id IS NOT NULL AND rt.card_id!=t.card_id)))`;
 // Keep writers to a shared project in order; other projects and discussions can run together.
 function nextProjectJob(db, runtime) {
   return db.prepare(`SELECT j.*,t.board_id,t.card_id FROM chat_jobs j JOIN chat_threads t ON t.id=j.thread_id
