@@ -9,6 +9,7 @@ async function inspectImage({ssh,connection,path,question,vision,actor,projectId
  const image=await ssh.execute(connection,{requireEnabled:true,imagePath:path,valid});
  if(!valid())throw Object.assign(Error('SSH permission was removed'),{status:403});
  if(vision?.context().mode==='local'){
+  if(image.bytes>2000000)throw Object.assign(Error('Local Qwen accepts images up to 2 MB. Create a smaller JPEG review frame on the GPU computer, preserving the source file.'),{status:400});
   const observed=await vision.inspect({actor,projectId,image_url:image.image_url,question,valid:()=>{if(!valid())throw Object.assign(Error('SSH permission was removed'),{status:403});}});
   return{...observed,sha256:image.sha256,bytes:image.bytes};
  }

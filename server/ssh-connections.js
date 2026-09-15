@@ -49,7 +49,7 @@ function connectSSH(config,{command,forward,imagePath,probe=false,valid=()=>true
   });
   try{client.connect({host:config.host,port:config.port,username:config.username,...(config.sock?{sock:config.sock}:{}),
    ...(probe?{}:config.auth_type==='key'?{privateKey:config.private_key,passphrase:config.passphrase||undefined}:{password:config.password}),
-   readyTimeout:10000,keepaliveInterval:5000,keepaliveCountMax:2,
+   readyTimeout:10000,keepaliveInterval:10000,keepaliveCountMax:12,
    hostVerifier:key=>{const fingerprint='SHA256:'+crypto.createHash('sha256').update(key).digest('base64').replace(/=+$/,'');if(probe){finish(null,{fingerprint});return false;}return fingerprint===config.fingerprint;}});}
   catch{finish(fail(400,'SSH credentials or connection settings are invalid'));}
  });

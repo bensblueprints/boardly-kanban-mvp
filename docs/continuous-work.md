@@ -115,11 +115,16 @@ GPU's unrelated work. Empty queues mean the workers are waiting, not rendering.
 ## Review GPU files without a desktop
 
 Hosted Work provides `inspect_ssh_image`: read an absolute PNG/JPEG path (up to
-5 MB) through an already enabled, pinned SSH connection. It uses SFTP, respects the selected GPT/local-Qwen vision mode, returns the exact
+5 MB in GPT mode, 2 MB with local Qwen) through an enabled, pinned SSH connection. It uses SFTP, respects the selected GPT/local-Qwen vision mode, returns the exact
 file SHA256 and either pixels or a focused local observation, and requires current SSH/member
 permissions as command execution. There is no shell interpolation or desktop lease.
 Images stay out of saved chat/checkpoint data; their hash remains in the tool result.
 Local-Qwen mode never falls back to cloud image inspection without a settings change.
+Larger sources can be preserved while creating smaller JPEG review frames on the GPU.
+SSH image reads pipeline eight bounded chunks and allow up to three minutes for transfer.
+Keepalive acknowledgments tolerate slow uploads; command and permission checks remain
+bounded independently. Tailscale tunnels expire after ten idle minutes and no longer
+terminate active streams at a fixed one-minute age.
 
 For video review, use `execute_ssh` to extract frames with ffmpeg on the GPU computer,
 then inspect the relevant frames. Review adequate frames for motion/continuity and

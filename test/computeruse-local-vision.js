@@ -51,6 +51,9 @@ const MODEL='Qwen3-VL-8B-Instruct-Q4_K_M',frame='data:image/jpeg;base64,/9j/2Q==
   await hostedCycle();assert.ok(seen.includes('action'));
   db=new(require('better-sqlite3'))(path.join(workspacePath(f.root,'user_owner'),'app.db'));
   const allowedMembers=new Set();const ssh=createSshConnections({db,key:loadKey(f.root),namespace:'user_owner'}),vision=createComputerUseVision({db,ssh,namespace:'user_owner',canUseShared:(actor,id)=>id===p.project.id&&allowedMembers.has(actor)});
+  const largeFrame='data:image/png;base64,'+Buffer.alloc(1825277).toString('base64');
+  onInspect=body=>assert.equal(body.image_url,largeFrame,'large image arrives intact through both SSH hops');
+  assert.equal((await vision.inspect({actor:'user_owner',projectId:p.project.id,image_url:largeFrame,question:'Read a large frame'})).mode,'local');onInspect=()=>{};
   const cu=createComputerUseConnections({db,key:loadKey(f.root),namespace:'user_owner',origin:'https://computer.example',request:async()=>inventory,desktopRequest,vision});
   const run=(command,actor='user_owner',valid=()=>{})=>cu.controlForAgent(p.project.id,actor,'fixture-run',command,{desktop_id,question:'Locate Start'},valid);
   const local=await run('screenshot');assert.equal(local.mode,'local');assert.ok(!JSON.stringify(local).includes(frame));assert.ok(!('unexpected' in local));

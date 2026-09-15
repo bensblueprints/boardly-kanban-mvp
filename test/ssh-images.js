@@ -24,6 +24,7 @@ const pause=ms=>new Promise(r=>setTimeout(r,ms));
   const local={context:()=>({mode:'local'}),inspect:async args=>{inspections++;assert.equal(args.image_url,result.image_url);args.valid();return{mode:'local',observation:'Local GPU reviewed the frame.'};}};
   const inspectArgs={ssh:{execute:connectSSH},connection:config,path:imagePath,question:'Describe the frame.',vision:local,actor:'owner',projectId:1,valid:()=>true};
   const observed=await inspectImage(inspectArgs);assert.equal(inspections,1);assert.equal(observed.image_url,undefined);assert.equal(observed.observation,'Local GPU reviewed the frame.');assert.equal(observed.sha256,result.sha256);
+  await assert.rejects(()=>inspectImage({...inspectArgs,ssh:{execute:async()=>({...result,bytes:2000001})}}),/up to 2 MB/);
   await assert.rejects(()=>inspectImage({...inspectArgs,vision:{...local,inspect:async()=>{throw Error('Local vision unavailable');}}}),/Local vision unavailable/,'local mode never leaks pixels to cloud on failure');
   for(const [p,error] of [['relative.png',/absolute/],['/huge.png',/5 MB/],['/invalid.jpg',/supported PNG/],['/missing.png',/not found/]])await assert.rejects(()=>connectSSH(config,{imagePath:p}),error);
   await assert.rejects(()=>connectSSH(config,{imagePath,valid:()=>false}),/permission/);

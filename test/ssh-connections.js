@@ -3,7 +3,7 @@ const {Server,utils}=require('ssh2'),{fixture}=require('./member-fixture'),{crea
 (async()=>{const f=await fixture();let server;try{
  const hostKey=crypto.generateKeyPairSync('rsa',{modulusLength:2048}).privateKey.export({type:'pkcs1',format:'pem'}),fingerprint='SHA256:'+crypto.createHash('sha256').update(utils.parseKey(hostKey).getPublicSSH()).digest('base64').replace(/=+$/,'');
  const password='synthetic-password-'+crypto.randomUUID();let commands=0;
- server=new Server({hostKeys:[hostKey]},client=>{client.on('error',()=>{});client.on('authentication',ctx=>ctx.method==='password'&&ctx.username==='qa'&&ctx.password===password?ctx.accept():ctx.reject());client.on('ready',()=>client.on('session',accept=>{const session=accept();session.on('exec',(accept,reject,info)=>{commands++;const stream=accept();stream.write('SSH fixture OK '+password);stream.exit(0);stream.end();});}));});
+ server=new Server({hostKeys:[hostKey]},client=>{client.on('error',()=>{});client.on('authentication',ctx=>ctx.method==='password'&&ctx.username==='qa'&&ctx.password===password?ctx.accept():ctx.reject());client.on('ready',()=>client.on('session',accept=>{const session=accept();session.on('exec',(accept,reject,info)=>{commands++;const stream=accept();const finish=()=>{stream.write('SSH fixture OK '+password);stream.exit(0);stream.end();};if(info.command==='slow keepalive fixture'){const original=client._protocol.requestFailure.bind(client._protocol);client._protocol.requestFailure=()=>{setTimeout(()=>{if(!client._sock.destroyed)original();},18000).unref();};setTimeout(finish,20500);}else finish();});}));});
  await new Promise(r=>server.listen(0,'127.0.0.1',r));const port=server.address().port;
  const a=await f.project('SSH Company','Allowed'),b=await f.project('Other Company','Private');
  const config={label:'QA SSH',host:'127.0.0.1',port,username:'qa',auth_type:'password',password,fingerprint,allow_agent:false};
@@ -15,6 +15,7 @@ const {Server,utils}=require('ssh2'),{fixture}=require('./member-fixture'),{crea
  assert.equal((await f.request(`/api/projects/${b.project.id}/ssh/${c.id}/test`,{method:'POST',body:{}})).status,404,'Another company cannot test this connection');
  assert.equal((await f.api(`/api/companies/${a.company.id}/ssh/${c.id}/test`,{method:'POST',body:{}})).connected,true);assert.equal(commands,0,'connection test does not execute a command');
  const result=await connectSSH(config,{command:'fixture command'});assert.equal(result.code,0);assert.ok(result.stdout.includes('SSH fixture OK'));assert.ok(!result.stdout.includes(password));
+ const sustained=await connectSSH(config,{command:'slow keepalive fixture'});assert.equal(sustained.code,0,'delayed keepalive acknowledgments do not terminate legitimate work');
  await assert.rejects(()=>connectSSH({...config,fingerprint:'SHA256:'+'a'.repeat(43)}),/fingerprint/);
  const store=require('../server/connections').createConnections(f.root),wk=store.issue('user_owner','SSH QA worker','worker');store.close();
  const workerApi=async(route,body={})=>{const r=await fetch(f.base+route,{method:'POST',headers:{authorization:'Bearer '+wk.token,'content-type':'application/json'},body:JSON.stringify(body)});return{status:r.status,body:await r.json()};};

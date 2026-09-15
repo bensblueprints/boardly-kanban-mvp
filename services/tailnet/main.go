@@ -6,7 +6,6 @@ import (
  "encoding/json"
  "errors"
  "fmt"
- "io"
  "log"
  "net"
  "net/http"
@@ -38,6 +37,6 @@ func (s *service) handle(w http.ResponseWriter,r *http.Request){
  destination:="";for _,p:=range status.Peer{if string(p.ID)==device&&len(p.TailscaleIPs)>0{destination=net.JoinHostPort(p.TailscaleIPs[0].String(),port);break}};if destination==""{respond(w,403,map[string]string{"error":"Device does not belong to this account network"});return}
  remote,err:=n.server.Dial(ctx,"tcp",destination);if err!=nil{respond(w,502,map[string]string{"error":"The device could not be reached"});return}
  n.mu.Lock();if n.closing{n.mu.Unlock();remote.Close();respond(w,409,map[string]string{"error":"Network disconnected"});return};n.sockets[remote]=true;n.mu.Unlock();defer func(){remote.Close();n.mu.Lock();delete(n.sockets,remote);n.mu.Unlock()}()
- client,rw,err:=w.(http.Hijacker).Hijack();if err!=nil{return};defer client.Close();client.SetDeadline(time.Now().Add(60*time.Second));remote.SetDeadline(time.Now().Add(60*time.Second));rw.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n");rw.Flush();done:=make(chan struct{});go func(){io.Copy(remote,rw);remote.Close();close(done)}();io.Copy(client,remote);client.Close();<-done
+ client,rw,err:=w.(http.Hijacker).Hijack();if err!=nil{return};defer client.Close();client.SetDeadline(time.Time{});remote.SetDeadline(time.Time{});rw.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n");if err:=rw.Flush();err!=nil{return};proxyTunnel(client,remote,rw,10*time.Minute)
 }
 func main(){root:=os.Getenv("TAILNET_STATE_DIR");if root==""{root="/state"};tokenBytes,err:=os.ReadFile(os.Getenv("TAILNET_TOKEN_FILE"));if err!=nil||len(strings.TrimSpace(string(tokenBytes)))<32{log.Fatal("Private connector token is required")};s:=&service{root:root,token:strings.TrimSpace(string(tokenBytes)),nodes:map[string]*network{}};os.MkdirAll(root,0700);entries,_:=os.ReadDir(root);for _,e:=range entries{if e.IsDir()&&accountPattern.MatchString(e.Name()){if _,err:=os.Stat(filepath.Join(root,e.Name(),"boardly-enabled"));err==nil{if _,err:=s.node(e.Name(),true);err!=nil{log.Print("A saved connector could not start")}}}};server:=&http.Server{Addr:":5317",Handler:http.HandlerFunc(s.handle),ReadHeaderTimeout:10*time.Second};log.Fatal(server.ListenAndServe())}

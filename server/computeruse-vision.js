@@ -16,8 +16,10 @@ function requestOverSocket(sock,route,body,valid){
   });
   request.on('error',()=>finish(fail(503,'Private GPU is unavailable. Check its connection and service. No screenshot was sent to GPT.')));
   const check=setInterval(()=>{if(!valid())finish(fail(403,'GPU or task permission changed.'));},250);
-  const timer=setTimeout(()=>finish(fail(504,'Private GPU inspection timed out. No screenshot was sent to GPT.')),85000);
-  request.end(payload);
+  const timer=setTimeout(()=>finish(fail(504,'Private GPU inspection timed out. No screenshot was sent to GPT.')),180000);
+  // Respect SSH channel backpressure while sending multi-megabyte frames. One
+  // giant HTTP write can outlive the channel window on slow multi-hop links.
+  (async()=>{if(payload){const bytes=Buffer.from(payload);for(let offset=0;offset<bytes.length;offset+=32768){if(done)return;await new Promise((resolve,reject)=>request.write(bytes.subarray(offset,offset+32768),error=>error?reject(error):resolve()));}}if(!done)request.end();})().catch(()=>finish(fail(503,'Private GPU image transfer was interrupted. No GPT fallback was used.')));
  });
 }
 
