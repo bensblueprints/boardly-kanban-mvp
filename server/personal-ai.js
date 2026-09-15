@@ -36,7 +36,7 @@ function createPersonalAI({config,key,request=fetch,tailnet,providerConnectorReq
   if(a.mode==='card'){
    const used=db.prepare('SELECT COALESCE(SUM(billable_nano),0) n FROM ai_usage WHERE user_id=? AND created_at>=?').get(a.user_id,month()).n;
    const held=db.prepare("SELECT COALESCE(SUM(hold_nano),0) n FROM ai_requests WHERE user_id=? AND status IN ('pending','review')").get(a.user_id).n;
-   if(used+held+maximum>a.monthly_cap_nano)throw fail(402,'Your monthly AI spending cap has insufficient room for this response. Adjust it in Account & AI.');
+   if(used+held+maximum>a.monthly_cap_nano)throw Object.assign(fail(402,'Your monthly AI spending cap has insufficient room for this response. Continue with enabled Local AI or adjust the cap in Account & AI.'),{code:'allowance_exhausted'});
   }
   const id=crypto.randomUUID();db.prepare("INSERT INTO ai_requests(id,user_id,job_id,mode,status,hold_nano,created_at) VALUES (?,?,?,?,'pending',?,?)").run(id,a.user_id,jobId,a.mode,maximum,Date.now());return id;
  }).immediate();}

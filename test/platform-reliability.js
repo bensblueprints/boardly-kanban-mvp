@@ -29,6 +29,7 @@ async function until(fn){for(let i=0;i<400;i++){const value=await fn();if(value)
   await f.api(`/api/boards/${p.project.id}/employees`,{method:'PUT',body:{enabled:true,instruction:'Read the assigned task and report the result.'}});
   const team=await until(async()=>{const d=await f.api(`/api/boards/${p.project.id}/employees`);return d.assignments.some(a=>a.status==='completed')&&d;});
   assert.equal(team.employees.length,4);assert.equal(team.assignments.length,1);assert.equal(team.assignments[0].card_id,card.id);
+  const completedCard=await f.api(`/api/cards/${card.id}`),projectState=await f.api(`/api/boards/${p.project.id}`);assert.equal(projectState.lists.find(l=>l.id===completedCard.list_id).name,'Done Awaiting Revisions','employee completion updates the assigned task lifecycle');
   await f.api(`/api/boards/${p.project.id}/employees`,{method:'PUT',body:{enabled:true,instruction:'Read the assigned task and report the result.'}});
   const final=await f.api(`/api/boards/${p.project.id}/employees`);assert.equal(final.assignments.length,1);assert.ok(final.messages.some(m=>m.body.includes('completed')));
   const q=await f.project('Private','Other project');const foreign=(await f.api(`/api/boards/${q.project.id}/employees`,{method:'PUT',body:{enabled:false,instruction:''}})).employees[0];
