@@ -236,6 +236,15 @@ function createProjectChat({ db, connections, userId, uploadsDir, environment, p
     if(!ssh)return res.status(503).json({error:'SSH unavailable'});
     try{const actor=req.projectJob.requested_by||userId;if(!canUseSsh(actor,req.projectThread.board_id))throw Object.assign(Error('SSH permission was removed'),{status:403});res.setHeader('cache-control','no-store');res.json(ssh.forJob(req.projectThread.board_id,req.projectJob.company_id,req.params.connectionId,actor));}catch(e){res.status(e.status||500).json({error:e.status?e.message:'SSH unavailable'});}
   });
+  router.post('/api/worker/jobs/:id/ssh/:connectionId/inspect-image',activeJob,body,async(req,res,next)=>{try{
+    if(!ssh)throw Object.assign(Error('SSH unavailable'),{status:503});
+    const actor=req.projectJob.requested_by||userId,boardId=req.projectThread.board_id;
+    if(!canUseSsh(actor,boardId))throw Object.assign(Error('SSH permission was removed'),{status:403});
+    const config=ssh.forJob(boardId,req.projectJob.company_id,req.params.connectionId,actor);
+    const valid=()=>{try{const current=job(req.params.id);return canUseSsh(actor,boardId)&&current?.status==='running'&&current.worker_id===req.boardlyConnection.id&&ssh.forJob(boardId,req.projectJob.company_id,config.id,actor).updated_at===config.updated_at;}catch{return false;}};
+    res.setHeader('cache-control','no-store');
+    res.json(await require('./ssh-image').inspectImage({ssh,connection:config,path:req.body?.path,question:req.body?.question,vision:computeruse?.vision,actor,projectId:boardId,valid}));
+  }catch(e){next(e);}});
   router.post('/api/worker/jobs/:id/ssh/:connectionId/exec',activeJob,body,async(req,res,next)=>{try{
     if(!ssh||typeof req.body?.command!=='string'||!req.body.command.trim()||req.body.command.length>30000)return res.status(400).json({error:'Enter an SSH command'});
     const actor=req.projectJob.requested_by||userId,config=ssh.forJob(req.projectThread.board_id,req.projectJob.company_id,req.params.connectionId,actor);

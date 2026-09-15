@@ -3,22 +3,26 @@ const {Server,utils}=require('ssh2'),{fixture}=require('./member-fixture'),{work
 const {createSshConnections}=require('../server/ssh-connections'),{createComputerUseVision}=require('../server/computeruse-vision'),{createComputerUseConnections}=require('../server/computeruse-connections');
 const MODEL='Qwen3-VL-8B-Instruct-Q4_K_M',frame='data:image/jpeg;base64,/9j/2Q==',desktop_id=crypto.randomUUID(),token='cu_fixture_private_vision_12345';
 (async()=>{
- let sshServer,gpu,db,broker,step=0,offline=false,onInspect=()=>{},sawLocal=false,human=false,expectLocal=true;const sockets=new Set(),seen=[];
+ let sshServer,gpu,db,broker,step=0,offline=false,onInspect=()=>{},sawLocal=false,human=false,expectLocal=true,reviewSsh=false,sshConnectionId;const sockets=new Set(),seen=[];
  const inventory={id:'account-one',rentals:[],desktops:[{id:desktop_id,kind:'pilot',state:'active',available:true,memory_mib:8192,label:'Test desktop'}]};
  let currentLease=null;
  const desktopRequest=async(o,k,c,d)=>{assert.equal(k,token);seen.push(c);if(human&&c==='lease')throw Object.assign(Error('Human takeover'),{status:409});if(c==='lease'){if(d.lease)assert.equal(d.lease,currentLease,'renew the current token');currentLease=crypto.randomUUID();return{lease:currentLease,expires:Math.floor(Date.now()/1000)+60};}if(c==='action'||c==='release')assert.equal(d.lease,currentLease,'input/release must use the renewed token');if(c==='screenshot')return{image_url:frame};return{mode:'agent',state:'completed'};};
  const f=await fixture({publicAccess:true,computeruseOrigin:'https://computer.example',computeruseRequest:async()=>inventory,computeruseDesktopRequest:desktopRequest,providerRequest:async(url,opts)=>{
   if(url.includes('/models/'))return Response.json({id:'gpt-6-astra'});
   const b=JSON.parse(opts.body);assert.ok(!opts.body.includes(frame));assert.ok(!opts.body.includes('input_image'));assert.ok(!opts.body.includes(token));
-  if(step===2){sawLocal=opts.body.includes('Local fixture observation');assert.equal(sawLocal,expectLocal);}
-  const names=['inspect_project_computer','computer_inspect','computer_action','computer_release'],name=names[step++];
-  return Response.json({id:'resp_'+crypto.randomUUID(),model:'gpt-6-astra',status:'completed',usage:{input_tokens:100,output_tokens:20},output:[name?{type:'function_call',call_id:crypto.randomUUID(),name,arguments:JSON.stringify(name==='inspect_project_computer'?{}:{desktop_id,question:'Locate Start',action_json:'{"type":"key","key":"Escape"}'})}:{type:'message',role:'assistant',content:[{type:'output_text',text:'Local desktop verified.'}]}]});
+  if((reviewSsh&&step===1)||(!reviewSsh&&step===2)){sawLocal=opts.body.includes('Local fixture observation');assert.equal(sawLocal,expectLocal);}
+  const names=reviewSsh?['inspect_ssh_image']:['inspect_project_computer','computer_inspect','computer_action','computer_release'],name=names[step++];
+  return Response.json({id:'resp_'+crypto.randomUUID(),model:'gpt-6-astra',status:'completed',usage:{input_tokens:100,output_tokens:20},output:[name?{type:'function_call',call_id:crypto.randomUUID(),name,arguments:JSON.stringify(reviewSsh?{connection_id:sshConnectionId,path:'/output/frame.png',question:'Describe the generated frame.'}:name==='inspect_project_computer'?{}:{desktop_id,question:'Locate Start',action_json:'{"type":"key","key":"Escape"}'})}:{type:'message',role:'assistant',content:[{type:'output_text',text:'Local desktop verified.'}]}]});
  }});
  try{
   gpu=http.createServer(async(req,res)=>{let raw='';for await(const b of req)raw+=b;const body=JSON.parse(raw);assert.equal(req.url,'/inspect');assert.ok(body.image_url.startsWith('data:image/'));await onInspect(body);if(offline){res.writeHead(503);return res.end('{}');}res.setHeader('content-type','application/json');res.end(JSON.stringify({protocol:1,mode:'local',model:MODEL,observation:body.question.includes('large heading')?'BOARDLY 42':'Local fixture observation: Start at (780,730).',image_url:frame,unexpected:'must be dropped',elapsed_ms:25}));});
   await new Promise((resolve,reject)=>{gpu.once('error',reject);gpu.listen(18765,'127.0.0.1',resolve);});
   const key=crypto.generateKeyPairSync('rsa',{modulusLength:2048}).privateKey.export({type:'pkcs1',format:'pem'}),password='fixture-'+crypto.randomUUID(),fingerprint='SHA256:'+crypto.createHash('sha256').update(utils.parseKey(key).getPublicSSH()).digest('base64').replace(/=+$/,'');
   sshServer=new Server({hostKeys:[key]},client=>{sockets.add(client);client.on('close',()=>sockets.delete(client));client.on('error',()=>{});client.on('authentication',c=>c.method==='password'&&c.password===password?c.accept():c.reject());client.on('ready',()=>client.on('tcpip',(accept,reject,info)=>{assert.equal(info.destIP,'127.0.0.1');assert.ok([18765,sshServer.address().port].includes(info.destPort));const remote=net.connect(info.destPort,info.destIP,()=>{const stream=accept();stream.on('error',()=>remote.destroy());remote.on('error',()=>stream.destroy());remote.pipe(stream).pipe(remote);});remote.on('error',()=>reject());}));});
+  sshServer.on('connection',client=>client.on('ready',()=>client.on('session',accept=>accept().on('sftp',accept=>{
+   const sftp=accept(),pixels=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aM1sAAAAASUVORK5CYII=','base64'),attrs={mode:0o100644,size:pixels.length,uid:0,gid:0,atime:0,mtime:0};
+   sftp.on('STAT',id=>sftp.attrs(id,attrs));sftp.on('FSTAT',id=>sftp.attrs(id,attrs));sftp.on('OPEN',id=>sftp.handle(id,Buffer.from('frame')));sftp.on('READ',(id,h,offset,length)=>offset>=pixels.length?sftp.status(id,utils.sftp.STATUS_CODE.EOF):sftp.data(id,pixels.subarray(offset,offset+length)));sftp.on('CLOSE',id=>sftp.status(id,utils.sftp.STATUS_CODE.OK));
+  }))));
   await new Promise(r=>sshServer.listen(0,'127.0.0.1',r));
   const p=await f.project('GPU account','Computer'),base='/api/account/computeruse/vision';
   const config={host:'127.0.0.1',port:sshServer.address().port,username:'qa',auth_type:'password',password,fingerprint,allow_agent:true};
@@ -49,6 +53,19 @@ const MODEL='Qwen3-VL-8B-Instruct-Q4_K_M',frame='data:image/jpeg;base64,/9j/2Q==
    let h;for(let i=0;i<400;i++){h=await f.api(`/api/chat/threads/${thread.id}`,opts);if(h.job.status==='completed')break;await new Promise(r=>setTimeout(r,20));}assert.equal(h.job.status,'completed',JSON.stringify(h.job));assert.equal(sawLocal,expected);
   }
   await hostedCycle();assert.ok(seen.includes('action'));
+  // Hosted company members use their own operation scope for shared GPU review.
+  const files=await f.api(`/api/companies/${p.company.id}/ssh`,{method:'POST',body:{...config,label:'Generated frames'}});sshConnectionId=files.id;
+  const sshMember=(await f.api(`/api/companies/${p.company.id}/members`,{method:'POST',body:{email:'ssh-only@example.com',role:'editor'}})).member.user_id;
+  const sshGrant=(await f.api(`/api/companies/${p.company.id}/members`)).members.find(m=>m.email==='ssh-only@example.com').grant_id;
+  await f.api(`/api/memberships/${sshGrant}`,{method:'PATCH',body:{scopes:['ssh']}});
+  await f.api(`/api/projects/${p.project.id}/computeruse`,{method:'PUT',body:{rental_ids:['desktop:'+desktop_id],allow_agent:false,allow_control:false}});
+  reviewSsh=true;await hostedCycle(sshMember,false);
+  await f.api(base,{method:'PUT',body:{mode:'local',connection_id:cid,share_with_company:true}});
+  await hostedCycle(sshMember,true);
+  onInspect=()=>f.api(`/api/memberships/${sshGrant}`,{method:'PATCH',body:{scopes:[]}});
+  await hostedCycle(sshMember,false);onInspect=()=>{};reviewSsh=false;
+  await f.api(base,{method:'PUT',body:{mode:'local',connection_id:cid,share_with_company:false}});
+  await f.api(`/api/projects/${p.project.id}/computeruse`,{method:'PUT',body:{rental_ids:['desktop:'+desktop_id],allow_agent:true,allow_control:true}});
   db=new(require('better-sqlite3'))(path.join(workspacePath(f.root,'user_owner'),'app.db'));
   const allowedMembers=new Set();const ssh=createSshConnections({db,key:loadKey(f.root),namespace:'user_owner'}),vision=createComputerUseVision({db,ssh,namespace:'user_owner',canUseShared:(actor,id)=>id===p.project.id&&allowedMembers.has(actor)});
   const cu=createComputerUseConnections({db,key:loadKey(f.root),namespace:'user_owner',origin:'https://computer.example',request:async()=>inventory,desktopRequest,vision});

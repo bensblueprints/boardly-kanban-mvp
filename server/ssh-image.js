@@ -9,9 +9,9 @@ async function inspectImage({ssh,connection,path,question,vision,actor,projectId
  const image=await ssh.execute(connection,{requireEnabled:true,imagePath:path,valid});
  if(!valid())throw Object.assign(Error('SSH permission was removed'),{status:403});
  if(vision?.context().mode==='local'){
-  const observed=await vision.inspect({actor,projectId,image_url:image.image_url,question,valid:()=>{if(!valid())throw Object.assign(Error('SSH permission was removed'),{status:403});}});
+  const observed=await vision.inspect({actor,projectId,scope:'ssh',image_url:image.image_url,question,valid:()=>{if(!valid())throw Object.assign(Error('SSH permission was removed'),{status:403});}});
   return{...observed,sha256:image.sha256,bytes:image.bytes};
  }
- return image;
+ return{mode:'gpt',...image};
 }
 module.exports={imageResult,inspectImage};

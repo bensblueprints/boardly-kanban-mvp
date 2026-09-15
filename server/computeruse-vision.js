@@ -60,10 +60,11 @@ function createComputerUseVision({db,ssh,namespace,transport=requestOverSocket,c
   db.prepare('INSERT INTO cu_vision_tests VALUES(?,?,?,?) ON CONFLICT(connection_id) DO UPDATE SET connection_revision=excluded.connection_revision,tested_at=excluded.tested_at,elapsed_ms=excluded.elapsed_ms').run(cid,c.updated_at,Date.now(),elapsed_ms);
   return{...state(),ready:true,test_model:MODEL,elapsed_ms};
  }
- async function inspect({actor,projectId,image_url,question,valid=()=>{}}){
+ async function inspect({actor,projectId,image_url,question,scope='computers',valid=()=>{}}){
+  if(!['computers','ssh'].includes(scope))throw fail(403,'Invalid GPU review permission.');
   const before=row();if(before.mode!=='local')throw fail(409,'Local vision is not selected.');
   if(question!==undefined&&(typeof question!=='string'||!question.trim()||question.length>1200))throw fail(400,'Ask a screen question of up to 1200 characters.');
-  const check=()=>{valid();if(row().revision!==before.revision)throw fail(409,'Vision mode changed. Inspect the screen again.');if(actor!==namespace&&(!before.share_with_company||!canUseShared(actor,projectId)))throw fail(403,'The owner must share GPU vision with your company and enable your Computer use permission.');};
+  const check=()=>{valid();if(row().revision!==before.revision)throw fail(409,'Vision mode changed. Inspect the image again.');if(actor!==namespace&&(!before.share_with_company||!canUseShared(actor,projectId,scope)))throw fail(403,'The owner must share GPU vision with your company and enable your '+(scope==='ssh'?'SSH':'Computer use')+' permission.');};
   check();
   // Company sharing delegates this fixed vision request only. It never changes
   // SSH visibility, grants shell access, or exposes the owner's connection key.
