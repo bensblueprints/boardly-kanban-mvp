@@ -158,7 +158,7 @@ function createGpuWorkflows({db, ssh, ownerId, generate, actions=()=>null, retai
           for(const source of media)for(const [i,file] of source.outputs.entries()){
             if(!['queued','running'].includes(run(r.id).status))break;
             const saved=await actions().saveOutput({worker:worker(source.template.worker_id),port:source.template.port,file,project_id:step.project_id,step_id:source.id,index:i});
-            if(!step.files.some(f=>f.id===saved.id))step.files.push({id:saved.id,name:saved.name,mime:saved.mime,size:saved.size,url:'/api/project-files/'+saved.id+'/download'});
+            if(!step.files.some(f=>f.id===saved.id))step.files.push({id:saved.id,name:saved.name,mime:saved.mime,size:saved.size,url:'/api/project-files/'+saved.id+'/download',source:{ssh_connection_id:worker(source.template.worker_id).ssh_id,comfyui_port:source.template.port,filename:file.filename,subfolder:file.subfolder||'',type:file.type||'output'}});
           }
           if(['queued','running'].includes(run(r.id).status)){
             const action=actions().start({id:step.id,project_id:step.project_id,runtime:step.runtime,instruction,context:{workflow:r.name,starting_prompt:r.prompt,previous_text:previousText,files:step.files}});
