@@ -180,11 +180,12 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
         catch(e){if(require('./runtime-policy').failureKind(e)==='allowance'&&personal.providers.startFallback(ownerId,id,'Paid AI allowance exhausted'))return fallback();throw e;}
       }};
       tenant.companyOnboarding=require('./company-onboarding').createCompanyOnboarding({db:local.db,ownerId,generate:async(actor,id,payload)=>{const a=await funded.authorize(actor);return funded.respond(a,id,{...payload,model:a.model||personal.account(ownerId).model});},retain:()=>tenant.active++,release:()=>tenant.active--});
-      tenant.gpu=require('./gpu-workflows').createGpuWorkflows({db:local.db,ssh:tenant.ssh,ownerId,generate:async(actor,id,payload)=>{const a=await funded.authorize(actor,id);return funded.respond(a,id,{...payload,model:a.model||personal.account(ownerId).model});},retain:()=>tenant.active++,release:()=>tenant.active--});
+      tenant.gpu=require('./gpu-workflows').createGpuWorkflows({db:local.db,ssh:tenant.ssh,ownerId,actions:()=>tenant.gpuActions,generate:async(actor,id,payload)=>{const a=await funded.authorize(actor,id);return funded.respond(a,id,{...payload,model:a.model||personal.account(ownerId).model});},retain:()=>tenant.active++,release:()=>tenant.active--});
       tenant.chat.hosted=require('./hosted-ai').createHostedAI({db:local.db,uploadsDir:tenant.uploadsDir,personal:funded,canEdit:(actor,id)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).project(id)==='editor',canUse:(actor,id,scope)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).capabilities('project',id).includes(scope),retain:()=>tenant.active++,release:()=>tenant.active--,storageLimit:()=>tenant.plan.storage_bytes,organization:tenant.chat.organization,employees:tenant.chat.employees,ssh:tenant.ssh,github:tenant.github,computeruse:tenant.computeruse,media:tenant.media});
       tenant.chat.localFallback=(jobId)=>personal.providers.startFallback(ownerId,jobId,'Native ChatGPT allowance exhausted');
       tenant.chat.organization.router.enqueueApi=()=>tenant.chat.hosted.enqueue();
       tenant.assets=createProjectAssets({db:local.db,uploadsDir:tenant.uploadsDir,limitBytes:plan.storage_bytes});
+      tenant.gpuActions=require('./gpu-output-actions').createGpuOutputActions({db:local.db,uploadsDir:tenant.uploadsDir,ssh:tenant.ssh,ownerId,storageLimit:()=>tenant.plan.storage_bytes,chat:tenant.chat});
       tenants.set(ownerId,tenant);
     }
     tenant.plan=plan;memberships.prune(ownerId,tenant.app.db);return tenant;

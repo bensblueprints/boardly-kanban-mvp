@@ -54,7 +54,11 @@ class Worker:
                 self.update(id,'blocked',error='ComfyUI lost this submitted job after restart. Check output files, then explicitly retry the same saved workflow if no output exists.');return
             if items:
                 self.update(id,'queued',error='Waiting for the GPU: another ComfyUI job is active.');return
-            self.update(id,'submitting',attempts=job['attempts']+1,error=None)
+            # Prompt edits and cancellation take a SQLite write transaction.
+            # Recheck the exact graph/status before closing that edit window.
+            with self.db:
+                changed=self.db.execute("UPDATE jobs SET status='submitting',attempts=attempts+1,error=NULL,updated_at=? WHERE id=? AND status=? AND fingerprint=?",(time.time(),id,job['status'],job['fingerprint']))
+                if not changed.rowcount:return
             value=self.call('/prompt',{'prompt_id':id,'prompt':json.loads(job['workflow']),'client_id':'boardly-gpu-queue','extra_data':{'boardly_job_id':id}})
             if value.get('prompt_id')!=id:raise ValueError('ComfyUI did not retain the stable job ID; inspect its queue')
             self.update(id,'running',error=None)
@@ -89,6 +93,7 @@ def main():
         if not result.rowcount:raise SystemExit('Choose a queued/blocked job. Use ComfyUI to cancel a running render.')
         return
     lock=open(a.db+'.worker.lock','w');fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+    pathlib.Path(a.db+'.prompt-edit-v1').write_text('1\n')
     worker=Worker(db,a.origin);stopped=False
     def stop(*_):
         nonlocal stopped

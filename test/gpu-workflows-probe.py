@@ -1,4 +1,4 @@
-import importlib.util, pathlib, tempfile, unittest, uuid
+import importlib.util, json, pathlib, tempfile, unittest, uuid
 from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('probe', pathlib.Path(__file__).resolve().parents[1] / 'scripts/gpu-workflows-probe.py')
@@ -44,5 +44,39 @@ class ReceiptTests(unittest.TestCase):
                 self.assertEqual(result['status'],expected)
                 self.assertEqual(result['outputs'][0]['filename'],'output.png')
 
+
+class PromptEditTests(unittest.TestCase):
+    def test_producer_edit_claim_and_restart(self):
+        spec=importlib.util.spec_from_file_location('claim',pathlib.Path(__file__).resolve().parents[1]/'scripts/gpu-producer-claim.py');bridge=importlib.util.module_from_spec(spec);spec.loader.exec_module(bridge)
+        with tempfile.TemporaryDirectory() as folder:
+            root=pathlib.Path(folder);batch=root/'batch-000001';batch.mkdir();edits=root/'.boardly-prompts';edits.mkdir();(edits/'enabled').write_text('1')
+            identity=str(uuid.uuid4());job={'job_id':identity,'status':'queued','dialogue':'Original script','visual':'Original scene','location':'Tower'}
+            manifest=batch/'manifest.json';manifest.write_text(json.dumps([job]));config={'manifest_dir':folder,'ports':[8188]}
+            detail=probe.job_detail(config,{'action':'job_detail','id':identity});self.assertTrue(detail['editable'])
+            changed=probe.job_detail(config,{'action':'edit_job','id':identity,'revision':detail['revision'],'changes':{'visual':'Photographic skydiving scene'}})
+            with self.assertRaises(ValueError): probe.job_detail(config,{'action':'edit_job','id':identity,'revision':detail['revision'],'changes':{'visual':'Stale edit'}})
+            self.assertEqual(json.loads(manifest.read_text())[0]['visual'],'Original scene','Running producer owns its manifest; edits use a durable sidecar')
+            self.assertEqual(bridge.claim(root,dict(job))['visual'],'Photographic skydiving scene')
+            self.assertEqual(bridge.claim(root,dict(job))['visual'],'Photographic skydiving scene','Restart sees the same claimed edit')
+            self.assertFalse(probe.job_detail(config,{'action':'job_detail','id':identity})['editable'])
+            with self.assertRaises(ValueError):probe.job_detail(config,{'action':'edit_job','id':identity,'revision':changed['revision'],'changes':{'visual':'Too late'}})
+
+    def test_durable_edit_racing_submission(self):
+        spec=importlib.util.spec_from_file_location('queue',pathlib.Path(__file__).resolve().parents[1]/'scripts/gpu-queue.py');queue=importlib.util.module_from_spec(spec);spec.loader.exec_module(queue)
+        with tempfile.TemporaryDirectory() as folder,patch.object(pathlib.Path,'home',return_value=pathlib.Path(folder)):
+            file=pathlib.Path(folder)/'.local/share/boardly-gpu/queue.db';db=queue.connect(str(file));pathlib.Path(str(file)+'.prompt-edit-v1').write_text('1')
+            identity=str(uuid.uuid4());queue.submit(db,identity,{'1':{'class_type':'CLIPTextEncode','inputs':{'text':'Old'}}})
+            posted=[];edited=[False];worker=queue.Worker(db,'http://fixture')
+            def call(route,body=None):
+                if route.startswith('/history/'):return {}
+                if route=='/queue':
+                    if not edited[0]:
+                        detail=probe.job_detail({'ports':[8188]},{'action':'job_detail','id':identity})
+                        probe.job_detail({'ports':[8188]},{'action':'edit_job','id':identity,'revision':detail['revision'],'changes':{'1:text':'New'}});edited[0]=True
+                    return {'queue_running':[],'queue_pending':[]}
+                posted.append(body);return {'prompt_id':identity}
+            worker.call=call;worker.tick();self.assertEqual(posted,[],'CAS rejects the stale graph read before the edit')
+            worker.tick();self.assertEqual(posted[0]['prompt']['1']['inputs']['text'],'New')
+            self.assertFalse(probe.job_detail({'ports':[8188]},{'action':'job_detail','id':identity})['editable']);db.close()
 
 if __name__ == '__main__': unittest.main()

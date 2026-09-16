@@ -4,7 +4,96 @@
 Read existing queues; submit explicitly requested ComfyUI graphs with a durable
 receipt before sending. A lost acknowledgement is reconciled, never resubmitted.
 """
-import base64, concurrent.futures, contextlib, fcntl, json, os, pathlib, sqlite3, subprocess, sys, time, urllib.error, urllib.request, uuid
+import base64, concurrent.futures, contextlib, fcntl, hashlib, json, os, pathlib, sqlite3, subprocess, sys, time, urllib.error, urllib.request, uuid
+
+
+def prompt_fields(graph):
+    found = []
+    for identity, node in graph.items():
+        for key in ('prompt', 'text'):
+            value = node.get('inputs', {}).get(key)
+            if isinstance(value, str):
+                found.append({'key': str(identity) + ':' + key, 'label': node.get('_meta', {}).get('title', node.get('class_type', 'Prompt')) + ' · ' + key, 'value': value})
+    return found[:30]
+
+
+def revision(fields):
+    return hashlib.sha256(json.dumps(fields, sort_keys=True).encode()).hexdigest()
+
+
+def changed_fields(fields, data):
+    if data.get('revision') != revision(fields):
+        raise ValueError('The prompt changed. Reload it before saving your edit.')
+    changes = data.get('changes', {})
+    if not changes or any(k not in {f['key'] for f in fields} for k in changes):
+        raise ValueError('Choose an existing prompt field')
+    if any(not isinstance(v, str) or not v.strip() or len(v) > 14000 for v in changes.values()):
+        raise ValueError('Each prompt must contain 1–14,000 characters')
+    return changes
+
+
+def job_detail(config, data):
+    identity = str(uuid.UUID(data['id']))
+    editing = data['action'] == 'edit_job'
+    directory = config.get('manifest_dir')
+    if directory:
+        root = pathlib.Path(directory)
+        edits = root / '.boardly-prompts'
+        for manifest in sorted(root.glob('*/manifest.json'), reverse=True)[:3]:
+            rows = json.loads(manifest.read_text())
+            job = next((j for j in rows if j.get('job_id') == identity), None)
+            if not job: continue
+            # Producer and editor share this lock. A durable claim closes the
+            # edit window before the producer snapshots or submits the graph.
+            supported = (edits / 'enabled').exists()
+            if supported: lock = open(edits / '.lock', 'a')
+            else: lock = contextlib.nullcontext()
+            with lock as handle:
+                if supported: fcntl.flock(handle, fcntl.LOCK_EX)
+                row = next(j for j in json.loads(manifest.read_text()) if j.get('job_id') == identity)
+                override = edits / (identity + '.json')
+                if override.exists(): row.update(json.loads(override.read_text()).get('changes', {}))
+                fields = [{'key':k,'label':label,'value':row.get(k,'')} for k,label in [('dialogue','Spoken script'),('visual','Scene and action'),('location','Adventure / location')]]
+                editable = supported and row.get('status') == 'queued' and not (edits / (identity + '.claimed')).exists()
+                if editing:
+                    if not editable: raise ValueError('This producer job has already started, or its producer does not support prompt editing.')
+                    changes = changed_fields(fields, data)
+                    if 'dialogue' in changes and len(changes['dialogue'].split()) > 40: raise ValueError('Keep the 15-second spoken script to 40 words or fewer.')
+                    previous = json.loads(override.read_text()).get('changes', {}) if override.exists() else {}
+                    temp = edits / (identity + '.tmp')
+                    with open(temp, 'w') as f:
+                        json.dump({'changes':{**previous,**changes},'updated_at':time.time()},f);f.flush();os.fsync(f.fileno())
+                    os.replace(temp,override)
+                    for f in fields: f['value'] = changes.get(f['key'], f['value'])
+                return {'id':identity,'source':'Granny producer','editable':editable,'fields':fields,'revision':revision(fields),'reason':None if editable else 'This job is already claimed for rendering.'}
+    file = pathlib.Path.home() / '.local/share/boardly-gpu/queue.db'
+    if file.exists():
+        with sqlite3.connect(file.as_uri() + ('?mode=rw' if editing else '?mode=ro'), uri=True, timeout=3) as db:
+            db.row_factory = sqlite3.Row
+            if editing: db.execute('BEGIN IMMEDIATE')
+            row = db.execute('SELECT * FROM jobs WHERE id=?',(identity,)).fetchone()
+            if row:
+                graph=json.loads(row['workflow']);fields=prompt_fields(graph)
+                editable=row['status'] in ('queued','waiting') and row['attempts']==0 and pathlib.Path(str(file)+'.prompt-edit-v1').exists()
+                if editing:
+                    if not editable: raise ValueError('This job has already been submitted to ComfyUI. Its prompt is locked.')
+                    for key,value in changed_fields(fields,data).items():
+                        node,name=key.split(':',1);graph[node]['inputs'][name]=value
+                    raw=json.dumps(graph,sort_keys=True)
+                    db.execute('UPDATE jobs SET workflow=?,fingerprint=?,updated_at=? WHERE id=?',(raw,hashlib.sha256(raw.encode()).hexdigest(),time.time(),identity))
+                    fields=prompt_fields(graph)
+                return {'id':identity,'source':'GPU queue','editable':editable,'fields':fields,'revision':revision(fields),'reason':None if editable else 'Already submitted; the render keeps its original prompt.'}
+    if editing: raise ValueError('ComfyUI already owns this render; its prompt is locked after submission.')
+    for port in config['ports']:
+        try:
+            queue=call(port,'/queue')
+            item=next((j for j in queue.get('queue_running',[])+queue.get('queue_pending',[]) if j[1]==identity),None)
+            if not item: item=call(port,'/history/'+identity).get(identity,{}).get('prompt')
+            if item:
+                fields=prompt_fields(item[2])
+                return {'id':identity,'source':'ComfyUI','editable':False,'fields':fields,'revision':revision(fields),'reason':'ComfyUI already owns this render. Edit jobs before submission to keep an active render unchanged.'}
+        except Exception: continue
+    raise ValueError('This job is no longer in the recent queue or history.')
 
 
 def call(port, route, body=None, timeout=4):
@@ -67,11 +156,19 @@ def local_jobs(config):
                 if file.stat().st_size > 2_000_000:
                     continue
                 for position, row in enumerate(json.loads(file.read_text())[:100]):
+                    override=root/'.boardly-prompts'/(row.get('job_id','')+'.json')
+                    if override.exists(): row.update(json.loads(override.read_text()).get('changes',{}))
+                    saved_outputs=[]
+                    receipt=(file.parent/row['id']/'boardly-file.json').resolve()
+                    if receipt.is_relative_to(file.parent.resolve()) and receipt.is_file():
+                        saved=json.loads(receipt.read_text())
+                        if isinstance(saved.get('id'),int) and isinstance(saved.get('name'),str):
+                            saved_outputs=[{'name':saved['name'],'id':saved['id'],'url':'/api/project-files/'+str(saved['id'])+'/download'}]
                     jobs.append({'id': row.get('job_id', file.parent.name + row['id']),
                         'title': row.get('location', row['id']) + ' · ' + row.get('flavor', ''),
                         'status': 'published' if row.get('published') else {'rendering': 'running', 'rendered': 'completed', 'held': 'blocked'}.get(row.get('status'), row.get('status', 'queued')),
                         'source': 'Granny producer', 'position': position + 1, 'batch': file.parent.name,
-                        'started_at': row.get('started_at'), 'outputs': [], 'prompt': row.get('dialogue', ''),
+                        'started_at': row.get('started_at'), 'outputs': saved_outputs, 'prompt': row.get('dialogue', ''),
                         'error': str(row.get('error', ''))[:500]})
         except Exception:
             errors.append('The producer manifest folder could not be read.')
@@ -96,7 +193,7 @@ def snapshot(config):
     local, errors = local_jobs(config)
     for job in local:
         prior = jobs.get(job['id'], {})
-        jobs[job['id']] = {**prior, **job, 'port': prior.get('port', job.get('port')), 'outputs': prior.get('outputs') or job.get('outputs', [])}
+        jobs[job['id']] = {**prior, **job, 'port': prior.get('port', job.get('port')), 'outputs': job.get('outputs') or prior.get('outputs', [])}
     result = {'observed_at': int(time.time() * 1000), 'gpus': gpus, 'engines': [{k: v for k, v in e.items() if k != 'jobs'} for e in engines], 'jobs': list(jobs.values())[:180], 'warnings': errors}
     while len(json.dumps(result).encode()) > 65000 and result['jobs']:
         result['jobs'].pop()
@@ -162,6 +259,7 @@ def main(data):
     config = data['config']
     if data['action'] == 'snapshot': return snapshot(config)
     if data['action'] == 'render': return render(config, data)
+    if data['action'] in ('job_detail', 'edit_job'): return job_detail(config,data)
     raise ValueError('Unknown GPU action')
 
 
