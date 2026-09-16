@@ -81,7 +81,7 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
       const t = req.tenant;
       return [app, personal.router, chatgpt.router, tailnet.router, t.app, t.hub,
         t.subscription.router, t.chat, t.assets, t.email.router, t.payments.router,
-        t.environment.router, t.github.router, t.ssh.router];
+        t.environment.router, t.github.router, t.ssh.router, t.gpu.router];
     },
   });
   const connections = createConnections(config.dataDir);
@@ -144,7 +144,7 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
     connections.rememberWorkspace(ownerId);
     let tenant=tenants.get(ownerId);
     if(!tenant){
-      if(tenants.size>=32){const idle=[...tenants.entries()].filter(([,t])=>!t.active).sort((a,b)=>a[1].used-b[1].used)[0];if(!idle)throw Object.assign(Error('Please retry shortly'),{status:503});idle[1].companyOnboarding.close();idle[1].chat.hosted.close();idle[1].subscription.close();idle[1].app.stopSync();idle[1].app.db.close();tenants.delete(idle[0]);}
+      if(tenants.size>=32){const idle=[...tenants.entries()].filter(([,t])=>!t.active).sort((a,b)=>a[1].used-b[1].used)[0];if(!idle)throw Object.assign(Error('Please retry shortly'),{status:503});idle[1].gpu.close();idle[1].companyOnboarding.close();idle[1].chat.hosted.close();idle[1].subscription.close();idle[1].app.stopSync();idle[1].app.db.close();tenants.delete(idle[0]);}
       const dataDir=workspacePath(config.dataDir,ownerId);
       const local=createApp({dataDir,externalAuth:r=>identities.get(r)===ownerId,maxUploadMb:25,storageQuotaBytes:plan.storage_bytes});local.stopSync();
       tenant={active:0,used:Date.now(),app:local,uploadsDir:path.join(dataDir,'uploads')};
@@ -166,7 +166,7 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
       tenant.teamChat=require('./company-chat').createCompanyChat(local.db);
       tenant.chat=createProjectChat({db:local.db,connections,userId:ownerId,uploadsDir:tenant.uploadsDir,environment:tenant.environment,payments:tenant.payments,email:tenant.email,ssh:tenant.ssh,github:tenant.github,computeruse:tenant.computeruse,media:tenant.media,canWriteFiles:(actor,id)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).project(id)==='editor',canUseMedia:(actor,id)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).project(id)==='editor',canUseComputers:(actor,id)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).capabilities('project',id).includes('computers'),canUseGithub:(actor,id)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).capabilities('project',id).includes('github'),canUseSsh:(actor,id)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).capabilities('project',id).includes('ssh')});
       const canEdit=(actor,id)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).project(id)==='editor';
-      tenant.subscription=require('./subscription-ai').createSubscriptionAI({db:local.db,ownerId,canEdit,connections,canGenerate:(actor,id)=>tenant.companyOnboarding?.live(actor,id)});
+      tenant.subscription=require('./subscription-ai').createSubscriptionAI({db:local.db,ownerId,canEdit,connections,canGenerate:(actor,id)=>tenant.companyOnboarding?.live(actor,id)||tenant.gpu?.live(actor,id)});
       const funded={...personal,authorize:async(actor,jobId)=>{
         if(jobId&&personal.providers.fallbackForRun(ownerId,jobId))return personal.providers.fallbackAuthorize(ownerId);
         if(ownerId===config.ownerId&&personal.account(ownerId).mode==='none')return{user_id:ownerId,actor_id:actor,mode:'subscription',model:personal.account(ownerId).model};
@@ -180,6 +180,7 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
         catch(e){if(require('./runtime-policy').failureKind(e)==='allowance'&&personal.providers.startFallback(ownerId,id,'Paid AI allowance exhausted'))return fallback();throw e;}
       }};
       tenant.companyOnboarding=require('./company-onboarding').createCompanyOnboarding({db:local.db,ownerId,generate:async(actor,id,payload)=>{const a=await funded.authorize(actor);return funded.respond(a,id,{...payload,model:a.model||personal.account(ownerId).model});},retain:()=>tenant.active++,release:()=>tenant.active--});
+      tenant.gpu=require('./gpu-workflows').createGpuWorkflows({db:local.db,ssh:tenant.ssh,ownerId,generate:async(actor,id,payload)=>{const a=await funded.authorize(actor,id);return funded.respond(a,id,{...payload,model:a.model||personal.account(ownerId).model});},retain:()=>tenant.active++,release:()=>tenant.active--});
       tenant.chat.hosted=require('./hosted-ai').createHostedAI({db:local.db,uploadsDir:tenant.uploadsDir,personal:funded,canEdit:(actor,id)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).project(id)==='editor',canUse:(actor,id,scope)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).capabilities('project',id).includes(scope),retain:()=>tenant.active++,release:()=>tenant.active--,storageLimit:()=>tenant.plan.storage_bytes,organization:tenant.chat.organization,employees:tenant.chat.employees,ssh:tenant.ssh,github:tenant.github,computeruse:tenant.computeruse,media:tenant.media});
       tenant.chat.localFallback=(jobId)=>personal.providers.startFallback(ownerId,jobId,'Native ChatGPT allowance exhausted');
       tenant.chat.organization.router.enqueueApi=()=>tenant.chat.hosted.enqueue();
@@ -258,6 +259,7 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
   app.use(require('./computeruse-connections').createComputerUseRoutes({memberships}));
   app.use(require('./onepassword').createOnePasswordRoutes());
   app.use(require('./media-connectors').createMediaRoutes());
+  app.use((req,res,next)=>/^\/api\/gpu(?:\/|$)/.test(req.path)?req.tenant.gpu.router(req,res,next):next());
   app.use(personal.providers.router);
   app.use(require('./project-computers').createComputerRoutes({memberships}));
   app.use((req,res,next)=>{
@@ -311,14 +313,14 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
   const recoverCloud=async()=>{if(cloudClosed||recoveringCloud)return;recoveringCloud=true;try{for(const ownerId of connections.workspaceOwners()){
     if(cloudClosed)break;if(tenants.has(ownerId)){tenants.get(ownerId).chat.employees.tick();continue;}
     const file=path.join(workspacePath(config.dataDir,ownerId),'app.db');if(!fs.existsSync(file))continue;
-    const db=new(require('better-sqlite3'))(file,{readonly:true});let pending=false;try{pending=!!db.prepare("SELECT 1 FROM chat_jobs WHERE runtime='api' AND (status='queued' OR (mode='work' AND status='running')) LIMIT 1").get();}catch{}finally{db.close();}if(!pending){const check=new(require('better-sqlite3'))(file,{readonly:true});try{pending=!!check.prepare('SELECT 1 FROM employee_teams WHERE enabled=1 LIMIT 1').get();}catch{}finally{check.close();}}if(!pending)continue;
+    const db=new(require('better-sqlite3'))(file,{readonly:true});let pending=false;try{pending=!!db.prepare("SELECT 1 FROM chat_jobs WHERE runtime='api' AND (status='queued' OR (mode='work' AND status='running')) LIMIT 1").get();}catch{}finally{db.close();}if(!pending){const check=new(require('better-sqlite3'))(file,{readonly:true});try{pending=!!check.prepare('SELECT 1 FROM employee_teams WHERE enabled=1 LIMIT 1').get();}catch{}try{pending=pending||!!check.prepare("SELECT 1 FROM gpu_workflow_runs WHERE status IN ('queued','running') LIMIT 1").get();}catch{}finally{check.close();}}if(!pending)continue;
     let plan;if(personal.billing.ready()){const billed=await personal.billing.state(ownerId);plan={...billed.plan,extra_users:billed.extra_users,users:billed.plan.users===null?null:billed.plan.users+billed.extra_users};}else plan=await planService.sponsored(ownerId);
     if(!cloudClosed&&plan)tenantFor(ownerId,plan).chat.employees.tick();
   }}catch{/* Retry recovery after transient provider/storage failures. */}finally{recoveringCloud=false;}};
   const recoveryTimer=setInterval(recoverCloud,15000);recoveryTimer.unref();queueMicrotask(recoverCloud);
   app.closeWorkspaces = () => {cloudClosed=true;clearInterval(recoveryTimer);
 
-    for (const tenant of tenants.values()) { tenant.companyOnboarding.close();tenant.chat.hosted.close();tenant.subscription.close();tenant.app.stopSync(); tenant.app.db.close(); }
+    for (const tenant of tenants.values()) { tenant.gpu.close();tenant.companyOnboarding.close();tenant.chat.hosted.close();tenant.subscription.close();tenant.app.stopSync(); tenant.app.db.close(); }
     tenants.clear(); connections.close(); memberships.close(); personal.close();
   };
   return app;

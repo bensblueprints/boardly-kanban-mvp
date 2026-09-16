@@ -1,6 +1,7 @@
 import ConnectorHelp from './ConnectorHelp.jsx';
 import React,{useEffect,useRef,useState} from 'react';
-import {UserRound,BrainCircuit,CreditCard,Plug,Download,Database,HelpCircle} from 'lucide-react';
+import {UserRound,BrainCircuit,CreditCard,Plug,Download,Database,HelpCircle,Cpu} from 'lucide-react';
+import {GpuWorkersSettings} from './GpuWorkflows.jsx';
 import {api} from '../api.js';
 import {useAccess} from '../access.jsx';
 import SettingsShell,{settingsButton,settingsInput} from './SettingsShell.jsx';
@@ -40,6 +41,7 @@ export default function AccountSettings({onClose,initialSection='profile',profil
   {id:'ai',label:'AI & models',icon:BrainCircuit,description:'Choose the AI connection, model and spending settings for your own workspaces.',keywords:'ChatGPT Codex OpenAI API funding'},
   {id:'billing',label:'Billing & usage',icon:CreditCard,description:'Workspace plans, storage, user seats, invoices and subscription management.'},
   ...(owner?[{id:'connectors',label:'Connectors',icon:Plug,description:'Discover what Boardly can connect to and choose the right scope.',keywords:'integrations apps email SMTP IMAP cards secrets'}]:[]),
+  ...(owner?[{id:'gpu',label:'GPU workers',icon:Cpu,description:'Connect your graphics cards to unlock Boardly GPU Workflows, monitor queues and generate images or videos.',keywords:'3090 5060 ComfyUI workflows queue graphics'}]:[]),
   ...connectorDefinitions.filter(c=>owner&&['github','computeruse','ssh','tailscale','onepassword','claude','kimi','local','fal','higgsfield'].includes(c.id)).map(c=>({...c,description:c.guide})),
   {id:'apps',label:'Apps & devices',icon:Download,description:'Download Boardly and manage supported desktop or external AI connections.',keywords:'MCP API sync download Windows Mac Linux'},
   ...(platformOwner?[{id:'mcp',label:'Developer & MCP',icon:Plug,description:'Create and revoke keys for external AI clients accessing this workspace.'}]:[]),
@@ -56,6 +58,7 @@ export default function AccountSettings({onClose,initialSection='profile',profil
   {owner&&section==='github'&&<AccountGithub/>}
   {owner&&section==='computeruse'&&<><AccountComputerUse/><a href="#/" className={settingsButton}>View computers & choose a company</a></>}
   {owner&&section==='ssh'&&<SshConnections kind="owner" id={0}/>}
+  {owner&&section==='gpu'&&<GpuWorkersSettings/>}
   {owner&&section==='tailscale'&&<><TailscaleConnection/><button onClick={()=>select('ssh')} className={settingsButton}>Next: add an SSH computer</button></>}
   {(section==='apps'||section==='mcp'&&platformOwner)&&<CloudConnections key={section} embedded initialTab={section==='mcp'?'mcp':'downloads'} developerAccess={platformOwner}/>}
   {owner&&section==='data'&&<ImportData/>}

@@ -7,6 +7,10 @@ const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
 const excluded = /^\/api\/(?:worker|sync|mcp|coach|login|logout|auth-config|management|webhooks?)(?:\/|$)|\/webhook(?:\/|$)|\/computeruse\/view\/|^\/api\/computeruse\/activity$/i;
 
 const fieldHints = [
+  [/^\/api\/gpu\/workers$/, ['name','ssh_id','ports','manifest_dir','gpu_uuid']],
+  [/^\/api\/gpu\/templates$/, ['name','worker_id','kind','port','graph']],
+  [/^\/api\/gpu\/workflows(?:\/:id)?$/, ['name','steps']],
+  [/^\/api\/gpu\/workflows\/:id\/run$/, ['request_id','prompt']],
   [/^\/api\/(?:companies|company-boards)(?:\/:id)?$/, ['name', 'description', 'company_id']],
   [/^\/api\/projects(?:\/:id)?$/, ['name', 'description', 'parent_board_id']],
   [/^\/api\/boards(?:\/:id)?$/, ['name', 'description', 'color', 'emoji', 'starred']],

@@ -1,6 +1,7 @@
 import React, { lazy, Suspense, useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Lock, Building2, Plug } from 'lucide-react';
+import { Lock, Building2, Plug, Cpu } from 'lucide-react';
+import GpuWorkflows from './components/GpuWorkflows.jsx';
 import ProfileMenu from './components/ProfileMenu.jsx';
 import {accountSettings} from './components/SettingsShell.jsx';
 import { api } from './api.js';
@@ -84,6 +85,8 @@ export function Workspace({ onLogout, cloud = false, access={workspaceOwner:true
   const tutorialOpen=React.useRef(null),content=React.useRef(null);
   const registerTutorial=React.useCallback(fn=>{tutorialOpen.current=fn;},[]);
   const [hash,setHash]=useState(location.hash);
+  const [gpuEnabled,setGpuEnabled]=useState(false);
+  useEffect(()=>{let live=true;setGpuEnabled(false);const refresh=()=>{if(cloud&&access.workspaceOwner)api.get('/api/gpu/status').then(r=>{if(live)setGpuEnabled(r.enabled);}).catch(()=>{if(live)setGpuEnabled(false);});};refresh();window.addEventListener('boardly-gpu-change',refresh);return()=>{live=false;window.removeEventListener('boardly-gpu-change',refresh);};},[cloud,access.workspaceOwner,access.workspaceId]);
   const returnRoute=React.useRef('#/');
   useEffect(()=>{const changed=()=>{setHash(location.hash);content.current?.scrollTo({top:0});if(!/^#\/(settings|account)(\/|$)/.test(location.hash))returnRoute.current=location.hash||'#/';};const open=e=>{if(!/^#\/(settings|account)(\/|$)/.test(location.hash))returnRoute.current=location.hash||'#/';location.hash='#/settings/'+(e.detail?.section||'profile');};changed();window.addEventListener('hashchange',changed);window.addEventListener('boardly-account',open);return()=>{window.removeEventListener('hashchange',changed);window.removeEventListener('boardly-account',open);};},[]);
   const settingsRoute=hash.match(/^#\/(?:settings|account)(?:\/([^/?]+))?/);
@@ -109,13 +112,13 @@ export function Workspace({ onLogout, cloud = false, access={workspaceOwner:true
   const workspace=<div className="h-full flex flex-col">
     {cloud&&<header className="shrink-0 flex flex-wrap items-center gap-3 border-b border-zinc-800 bg-zinc-950 px-4 sm:px-6 py-3 z-40">
       <a href="#/" aria-label="Boardly workspace home" className="mr-auto shrink-0"><BrandLogo size={30}/></a>
-      <nav aria-label="Workspace navigation" className="flex items-center gap-1 sm:gap-3"><a href="#/" aria-label="Companies" className="flex items-center gap-2 rounded-lg px-2 sm:px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-800"><Building2 size={17}/><span className="hidden sm:inline">Companies</span></a>{access.workspaceOwner&&<button onClick={()=>accountSettings('connectors')} className="flex items-center gap-2 rounded-lg px-2 sm:px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-800" aria-label="Account connectors"><Plug size={17}/><span className="hidden sm:inline">Connectors</span></button>}</nav>
+      <nav aria-label="Workspace navigation" className="flex items-center gap-1 sm:gap-3"><a href="#/" aria-label="Companies" className="flex items-center gap-2 rounded-lg px-2 sm:px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-800"><Building2 size={17}/><span className="hidden sm:inline">Companies</span></a>{gpuEnabled&&<a href="#/gpu-workflows" aria-label="GPU Workflows" className="flex items-center gap-2 rounded-lg px-2 sm:px-3 py-2 text-sm text-indigo-200 hover:bg-zinc-800"><Cpu size={17}/><span className="hidden sm:inline">GPU Workflows</span></a>}{access.workspaceOwner&&<button onClick={()=>accountSettings('connectors')} className="flex items-center gap-2 rounded-lg px-2 sm:px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-800" aria-label="Account connectors"><Plug size={17}/><span className="hidden sm:inline">Connectors</span></button>}</nav>
       {access.workspaces?.length>1&&<select aria-label="Workspace account" className="bg-zinc-900 border border-zinc-700 text-xs rounded-lg px-2 py-2 order-last w-full sm:order-none sm:w-auto sm:max-w-44" value={access.workspaceId} onChange={e=>onSwitch(e.target.value)}>{access.workspaces.map(w=><option key={w.owner_id} value={w.owner_id}>{w.name}</option>)}</select>}
       <ComputerWindowButton/>
       <ProfileMenu profile={profile} access={access} onLogout={onLogout} onHelp={()=>tutorialOpen.current?.()}/>
     </header>}
     {cloud&&<GettingStarted access={access} registerOpen={registerTutorial}/>}
-    <div ref={content} className="flex-1 min-h-0 overflow-auto">{settingsRoute&&cloud?<AccountSettings initialSection={accountSection} profile={profile} onManageProfile={onManageProfile} onHelp={()=>tutorialOpen.current?.()} onClose={()=>location.hash=returnRoute.current}/>:boardId?<BoardView key={boardId} boardId={boardId} onBack={()=>openBoard(null)} cloud={cloud}/>:<BoardsHome onOpen={openBoard} onLogout={onLogout} cloud={cloud}/>}</div>
+    <div ref={content} className="flex-1 min-h-0 overflow-auto">{settingsRoute&&cloud?<AccountSettings key={access.workspaceId||'current'} initialSection={accountSection} profile={profile} onManageProfile={onManageProfile} onHelp={()=>tutorialOpen.current?.()} onClose={()=>location.hash=returnRoute.current}/>:hash==='#/gpu-workflows'&&cloud?<GpuWorkflows key={access.workspaceId||'current'}/>:boardId?<BoardView key={boardId} boardId={boardId} onBack={()=>openBoard(null)} cloud={cloud}/>:<BoardsHome onOpen={openBoard} onLogout={onLogout} cloud={cloud}/>}</div>
   </div>;
   return <AccessContext.Provider value={{...access,onSwitch}}>{cloud?<LiveComputerWindow key={access.workspaceId||'current'} workspaceId={access.workspaceId||'current'}>{workspace}</LiveComputerWindow>:workspace}</AccessContext.Provider>;
 
