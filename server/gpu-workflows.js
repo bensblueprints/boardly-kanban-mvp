@@ -280,7 +280,7 @@ function createGpuWorkflows({db, ssh, ownerId, generate, actions=()=>null, retai
         const request=http.get({host:'127.0.0.1',port,path:'/view?'+new URLSearchParams({filename,subfolder,type}),agent},response=>{
           if(response.statusCode!==200){response.resume();finish(fail(404,'This output is no longer on the GPU.'));return;}
           res.setHeader('content-type',response.headers['content-type']||'application/octet-stream');res.setHeader('x-content-type-options','nosniff');res.setHeader('content-disposition',`attachment; filename="${filename.replace(/["\r\n]/g,'')}"`);
-          let size=0;response.on('data',chunk=>{size+=chunk.length;if(size>500*1024*1024)response.destroy(fail(413,'Output exceeds 500 MB.'));});
+          let size=0;response.on('data',chunk=>{timeout?.refresh();size+=chunk.length;if(size>500*1024*1024)response.destroy(fail(413,'Output exceeds 500 MB.'));});
           response.on('error',finish);response.on('end',()=>finish());response.pipe(res);res.once('close',()=>{response.destroy();finish();});
         });request.on('error',finish);
         // ssh2 channels are streams, not net.Sockets: ClientRequest.setTimeout

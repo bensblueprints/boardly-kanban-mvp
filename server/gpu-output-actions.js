@@ -27,6 +27,7 @@ function createGpuOutputActions({db,uploadsDir,ssh,ownerId,storageLimit,chat}) {
      let offset=saved.offset,skip=offset,buffer=Buffer.alloc(0);
      if(saved.state==='complete'){response.resume();return uploads.finish(ctx,id);}
      for await(let chunk of response){
+      timeout?.refresh();
       ctx.valid();if(skip){const n=Math.min(skip,chunk.length);skip-=n;chunk=chunk.subarray(n);}
       buffer=Buffer.concat([buffer,chunk]);
       while(buffer.length>=4*1024*1024){const block=buffer.subarray(0,4*1024*1024);uploads.append(ctx,id,offset,block);offset+=block.length;buffer=buffer.subarray(block.length);}

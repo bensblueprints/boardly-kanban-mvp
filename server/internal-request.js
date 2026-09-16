@@ -47,6 +47,10 @@ function internalRequest(app, { method, url, headers, body, prepare, timeout = 3
       finish(null, { status: res.statusCode, data: result });
     });
     res.assignSocket(socket);
+    // A real HTTP server relays socket drain to ServerResponse. This in-process
+    // socket has no HTTP server, so streamed downloads otherwise stall after a
+    // write crosses the socket high-water mark.
+    socket.on('drain', () => { if (!res.writableFinished) res.emit('drain'); });
     prepare?.(req);
     if (payload) req.push(payload);
     req.complete = true;
