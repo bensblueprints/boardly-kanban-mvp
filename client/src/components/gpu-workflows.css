@@ -2,3 +2,20 @@
 .gpu-quick-job{margin-bottom:24px}.gpu-output-files{display:flex;flex-direction:column;gap:10px}.gpu-output-file{display:flex;align-items:center;gap:10px;padding:10px;border:1px solid #3f3f46;border-radius:10px;background:#18181b}.gpu-ui .gpu-output-open{flex:1;justify-content:flex-start;min-width:0;border:0;text-align:left;background:transparent}.gpu-output-open span{overflow-wrap:anywhere}.gpu-output-open small{display:block;font-size:11px;color:#a1a1aa;margin-top:3px}.gpu-viewer{width:min(1080px,calc(100vw - 32px));max-height:calc(100dvh - 32px);margin:auto;border:1px solid #52525b;border-radius:16px;background:#18181b;padding:0;color:#f4f4f5;overflow:auto}.gpu-viewer::backdrop{background:#000c;backdrop-filter:blur(4px)}.gpu-viewer-content{padding:20px;display:flex;flex-direction:column;gap:18px}.gpu-viewer :is(img,video){max-height:70dvh;width:100%;object-fit:contain;background:#09090b;border-radius:8px}.gpu-viewer .gpu-row h2{font-size:15px;overflow-wrap:anywhere}.gpu-viewer .gpu-button{align-self:flex-start}@media(max-width:640px){.gpu-output-file{align-items:flex-start;flex-direction:column}.gpu-output-file>button{width:100%}.gpu-viewer-content{padding:14px}}
 
 .gpu-output-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(310px,100%),1fr));gap:16px}.gpu-output-card{min-width:0}.gpu-output-card h3{margin-top:14px;overflow-wrap:anywhere}.gpu-output-card>.gpu-output-files{margin-top:16px}.gpu-output-card .gpu-output-file{flex-wrap:wrap}.gpu-output-card .gpu-output-open{min-width:0;flex:1 1 160px;justify-content:flex-start;text-align:left}.gpu-output-card .gpu-output-open span{overflow-wrap:anywhere;min-width:0}.gpu-latest-outputs{margin:8px 0 28px}.gpu-tabs{flex-wrap:wrap}.gpu-output-card .gpu-output-file>button{min-height:44px}.gpu-output-card .gpu-row{flex-wrap:wrap}@media(max-width:600px){.gpu-latest-outputs>.gpu-row{align-items:flex-start;flex-direction:column}.gpu-output-grid{grid-template-columns:minmax(0,1fr)}}
+.gpu-chat-layout{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+.gpu-chat-conversation{display:flex;flex-direction:column;min-width:0;padding:0;overflow:hidden}
+.gpu-chat-messages{max-height:560px;min-height:270px;overflow:auto;padding:22px;scroll-padding:20px}
+.gpu-chat-intro{padding:18px 0}.gpu-chat-intro>svg{color:#a5b4fc;margin-bottom:12px}
+.gpu-chat-message{padding:14px 16px;border-radius:12px;margin:12px 0;overflow-wrap:anywhere}
+.gpu-chat-message p{white-space:pre-wrap;color:#e4e4e7;margin-top:6px}.gpu-chat-message strong{font-size:12px;color:#c7d2fe}
+.gpu-chat-user{background:#27272a;margin-left:24px}.gpu-chat-assistant{background:#202035;border:1px solid #4f46e550;margin-right:12px}
+.gpu-chat-thinking{padding:12px;color:#c7d2fe!important}.gpu-chat-suggestions{padding:0 22px 16px}
+.gpu-chat-suggestions button{font-size:12px;text-align:left;white-space:normal}
+.gpu-chat-composer{padding:20px;border-top:1px solid #3f3f46;display:flex;flex-direction:column;gap:10px}
+.gpu-chat-composer label{font-size:13px;font-weight:600}.gpu-chat-composer textarea{width:100%;min-height:100px;resize:vertical;background:#09090b;border:1px solid #52525b;border-radius:8px;padding:12px;color:#f4f4f5}
+.gpu-chat-draft{min-width:0}.gpu-chat-step-list{list-style:none;margin:0;padding:0;display:grid;gap:16px}
+.gpu-chat-step-list li{padding-top:14px;border-top:1px solid #3f3f46;min-width:0}.gpu-chat-step-list .gpu-pre{font-size:13px;overflow-wrap:anywhere;margin-top:8px}
+.gpu-chat-step-list li>svg{color:#818cf8;margin-top:10px}.gpu-workflow-chat .gpu-error{flex-wrap:wrap;overflow-wrap:anywhere}
+.gpu-workflow-chat button{min-height:44px}.gpu-workflow-chat .gpu-success{display:flex;align-items:center;gap:8px}
+@media(max-width:850px){.gpu-chat-layout{grid-template-columns:minmax(0,1fr)}.gpu-chat-messages{max-height:440px}.gpu-chat-heading{align-items:flex-start;flex-wrap:wrap}}
+@media(max-width:480px){.gpu-chat-messages{padding:14px}.gpu-chat-composer{padding:14px}.gpu-chat-user{margin-left:10px}.gpu-chat-assistant{margin-right:0}.gpu-chat-composer .gpu-row{align-items:flex-start;flex-wrap:wrap}}

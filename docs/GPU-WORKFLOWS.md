@@ -28,6 +28,28 @@ finished captioned Granny video is shown instead of its raw engine render.
 
 ## Workflows
 
+Open **GPU Workflows → Chat with Boardly** to describe a new workflow, or use
+**Chat to edit** on a saved workflow. Boardly uses the account's configured AI
+connection and the actual registered templates, workers and projects. The
+conversation and proposed steps survive reloads; continue chatting to refine
+the draft, or choose **Edit draft** for direct changes.
+
+Choose **Save new workflow** or **Save changes** to apply the visible draft.
+Saving does not start renders, send messages or publish posts. Use **Run with
+a prompt** from Workflows when ready. Existing runs keep their original steps.
+If another tab changed the workflow, reload its current definition in a new
+conversation or use **Save as new workflow** to retain both versions.
+
+Chat builds the sequence and step prompts from saved generation templates.
+Models, sampler settings, dimensions and arbitrary ComfyUI nodes are configured
+in the template itself. AI text steps work from text and file metadata, not
+generated image pixels. Image-to-video templates require a preceding image on
+the same worker and ComfyUI port.
+
+Saved conversations are private to the GPU account owner. A failed AI reply or
+server restart preserves the draft and offers **Retry reply**; repeated network
+requests do not create duplicate messages or saved workflows.
+
 Add image/video templates in GPU worker settings, using ComfyUI's **API format**.
 Templates must use models and nodes installed on that engine. Configure every
 ComfyUI port sharing the physical GPU, so a new render waits for existing work
@@ -133,3 +155,9 @@ tests cover prompt-edit races, action handoff/restart/blockers/cancellation;
 Python tests cover producer claims and edits racing durable queue submission.
 Browser tests also exercise preview/download through a real SSH forward,
 queued editing, per-GPU submission and email/social builder steps.
+
+`node test/gpu-workflow-chat.js` covers conversational creation/editing, resource
+validation, access isolation, idempotency, conflicting edits, retry/restart
+recovery and no execution during chat/save. Browser tests cover the existing
+funded AI adapter, saved conversations, draft editing, save-as-new conflicts,
+keyboard sending, and phone/landscape/desktop layouts.

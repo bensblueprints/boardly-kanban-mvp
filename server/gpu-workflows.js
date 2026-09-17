@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');
 const express = require('express');
+const {createGpuWorkflowChat, revision} = require('./gpu-workflow-chat');
 
 const fail = (status, message) => Object.assign(Error(message), {status});
 const uuid = value => typeof value === 'string' && /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(value);
@@ -38,17 +39,17 @@ function createGpuWorkflows({db, ssh, ownerId, generate, actions=()=>null, retai
     CREATE TABLE IF NOT EXISTS gpu_workflow_runs (
     id TEXT PRIMARY KEY,workflow_id TEXT NOT NULL,name TEXT NOT NULL,prompt TEXT NOT NULL,steps TEXT NOT NULL,
     status TEXT NOT NULL,step_index INTEGER NOT NULL DEFAULT 0,error TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL);`);
-  let closed = false, ticking = false;
+  let closed = false, ticking = false, chat;
   const scans = new Map();
   const activeSteps = new Map();
   const actionKinds = ['email','social','action'];
   const workers = () => db.prepare('SELECT * FROM gpu_workers ORDER BY created_at').all().map(w => ({...w, config: JSON.parse(w.config), snapshot: w.snapshot ? JSON.parse(w.snapshot) : null}));
   const worker = id => {const w = workers().find(w => w.id === id); if (!w) throw fail(404, 'GPU worker not found.'); return w;};
   const templates = () => db.prepare('SELECT * FROM gpu_templates ORDER BY created_at').all().map(t => ({...t, graph: JSON.parse(t.graph)}));
-  const workflows = () => db.prepare('SELECT * FROM gpu_workflows ORDER BY created_at DESC').all().map(w => ({...w, steps: JSON.parse(w.steps)}));
+  const workflows = () => db.prepare('SELECT * FROM gpu_workflows ORDER BY created_at DESC').all().map(w => {const value={...w, steps:JSON.parse(w.steps)};return {...value,revision:revision(value)};});
   const run = id => {const r = db.prepare('SELECT * FROM gpu_workflow_runs WHERE id=?').get(id); if (!r) throw fail(404, 'Workflow run not found.'); return {...r, steps: JSON.parse(r.steps)};};
   function update(r) {db.prepare('UPDATE gpu_workflow_runs SET status=?,step_index=?,steps=?,error=?,updated_at=? WHERE id=?').run(r.status,r.step_index,JSON.stringify(r.steps),r.error || null,Date.now(),r.id);}
-  const live = (actor, id) => !closed && actor === ownerId && !!db.prepare("SELECT 1 FROM gpu_workflow_runs WHERE id=? AND status='running'").get(id);
+  const live = (actor, id) => !closed && actor === ownerId && (!!db.prepare("SELECT 1 FROM gpu_workflow_runs WHERE id=? AND status='running'").get(id) || !!chat?.live(actor,id));
   async function execute(w, payload) {
     const config = ssh.forService(w.ssh_id, ownerId);
     if (remote) return remote(w, payload);
@@ -102,11 +103,14 @@ function createGpuWorkflows({db, ssh, ownerId, generate, actions=()=>null, retai
     db.prepare('INSERT INTO gpu_templates VALUES(?,?,?,?,?,?,?)').run(id,w.id,name,input.kind,input.port,JSON.stringify(graph),Date.now());
     return templates().find(t => t.id === id);
   }
-  function saveWorkflow(input,id) {
+  function validateWorkflow(input) {
+    if(!input || typeof input!=='object' || Array.isArray(input))throw fail(400,'Describe a workflow with a name and steps.');
     const name = text(input.name,120,'a workflow name');
     if (!Array.isArray(input.steps) || !input.steps.length || input.steps.length > 12) throw fail(400,'Add between one and twelve steps.');
     const ts = templates();
+    let priorTemplate;
     const steps = input.steps.map(s => {
+      if(!s || typeof s!=='object')throw fail(400,'Choose a supported workflow step.');
       if (!['prompt','image','video',...actionKinds].includes(s.kind)) throw fail(400,'Choose a supported workflow step.');
       const prompt = text(s.prompt,6000,'a step prompt');
       if (s.kind === 'prompt') return {kind:s.kind,prompt};
@@ -116,9 +120,17 @@ function createGpuWorkflows({db, ssh, ownerId, generate, actions=()=>null, retai
       }
       const t = ts.find(t => t.id === s.template_id && t.kind === s.kind);
       if (!t) throw fail(400,'Choose a saved template for each image/video step.');
+      if(JSON.stringify(t.graph).includes('{{previous_file}}')&&(!priorTemplate||priorTemplate.kind!=='image'||priorTemplate.worker_id!==t.worker_id||priorTemplate.port!==t.port))throw fail(400,'This template needs a preceding image on the same worker and ComfyUI port.');
+      priorTemplate=t;
       return {kind:s.kind,prompt,template_id:t.id};
     });
-    if (id && !workflows().some(w => w.id === id)) throw fail(404,'Workflow not found.');
+    return {name,steps};
+  }
+  function saveWorkflow(input,id) {
+    const {name,steps}=validateWorkflow(input);
+    const current=id?workflows().find(w => w.id===id):null;
+    if(id&&!current)throw fail(404,'Workflow not found.');
+    if(id&&input.previous_revision!==undefined&&input.previous_revision!==current.revision)throw fail(409,'This workflow changed in another tab. Reload it before saving your changes.');
     id ||= crypto.randomUUID(); const now = Date.now();
     db.prepare('INSERT INTO gpu_workflows VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,steps=excluded.steps,updated_at=excluded.updated_at').run(id,name,JSON.stringify(steps),now,now);
     return workflows().find(w => w.id === id);
@@ -222,6 +234,8 @@ function createGpuWorkflows({db, ssh, ownerId, generate, actions=()=>null, retai
     } finally {ticking=false;release();}
   }
   const timer=setInterval(tick,interval); timer.unref(); queueMicrotask(tick);
+  chat=createGpuWorkflowChat({db,ownerId,generate,retain,release,workflows,validateWorkflow,saveWorkflow,
+    context:()=>({workers:workers().map(w=>({id:w.id,name:w.name,available:!w.error})),templates:templates().map(({graph,...t})=>({...t,requires_previous_image:JSON.stringify(graph).includes('{{previous_file}}')})),projects:actions()?.projects()||[]})});
   const router=express.Router();
   router.use((req,res,next)=>{if (!req.workspaceIsOwner) return res.status(403).json({error:'GPU workers and workflows are managed by the account owner.'});res.setHeader('cache-control','no-store');next();});
   router.use(express.json({limit:'200kb'}));
@@ -237,6 +251,7 @@ function createGpuWorkflows({db, ssh, ownerId, generate, actions=()=>null, retai
   });
   router.post('/api/gpu/templates',(req,res)=>res.status(201).json(addTemplate(req.body)));
   router.use((req,res,next)=>{if(!workers().length)return res.status(409).json({error:'Add a GPU worker in Settings to unlock GPU Workflows.'});next();});
+  router.use(chat.router);
   router.get('/api/gpu/dashboard',(req,res)=>{
     for (const w of workers()) if (!w.observed_at || Date.now()-w.observed_at>15000) void scan(w);
     const runs=db.prepare('SELECT id FROM gpu_workflow_runs ORDER BY created_at DESC LIMIT 100').all().map(x=>{const r=run(x.id);return {...r,steps:r.steps.map(({graph,template,...s})=>({...s,...(template?{worker_id:template.worker_id,port:template.port,template_name:template.name}: {})}))};});
@@ -291,6 +306,6 @@ function createGpuWorkflows({db, ssh, ownerId, generate, actions=()=>null, retai
     }catch(e){if(res.headersSent)res.destroy();else next(e);}
   });
   router.use((e,req,res,next)=>e.status?res.status(e.status).json({error:e.message}):next(e));
-  return {router,workers,templates,workflows,addWorker,addTemplate,saveWorkflow,start,run,scan,tick,live,close(){closed=true;clearInterval(timer);}};
+  return {router,workers,templates,workflows,addWorker,addTemplate,saveWorkflow,start,run,scan,tick,live,close(){closed=true;clearInterval(timer);chat.close();}};
 }
 module.exports={createGpuWorkflows,interpolate,command};

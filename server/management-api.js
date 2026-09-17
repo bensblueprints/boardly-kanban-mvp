@@ -9,7 +9,11 @@ const excluded = /^\/api\/(?:worker|sync|mcp|coach|login|logout|auth-config|mana
 const fieldHints = [
   [/^\/api\/gpu\/workers$/, ['name','ssh_id','ports','manifest_dir','gpu_uuid']],
   [/^\/api\/gpu\/templates$/, ['name','worker_id','kind','port','graph']],
-  [/^\/api\/gpu\/workflows(?:\/:id)?$/, ['name','steps']],
+  [/^\/api\/gpu\/workflows(?:\/:id)?$/, ['name','steps','previous_revision']],
+  [/^\/api\/gpu\/workflow-chats$/, ['request_id','workflow_id']],
+  [/^\/api\/gpu\/workflow-chats\/:id\/messages$/, ['client_id','version','content']],
+  [/^\/api\/gpu\/workflow-chats\/:id\/retry$/, ['turn_id','version']],
+  [/^\/api\/gpu\/workflow-chats\/:id\/apply$/, ['request_id','version','definition','as_new']],
   [/^\/api\/gpu\/workflows\/:id\/run$/, ['request_id','prompt']],
   [/^\/api\/gpu\/workers\/:id\/jobs$/, ['request_id','template_id','prompt']],
   [/^\/api\/gpu\/workers\/:id\/jobs\/:jobId$/, ['revision','changes']],
