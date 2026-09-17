@@ -118,7 +118,7 @@ export function Workspace({ onLogout, cloud = false, access={workspaceOwner:true
       <ProfileMenu profile={profile} access={access} onLogout={onLogout} onHelp={()=>tutorialOpen.current?.()}/>
     </header>}
     {cloud&&<GettingStarted access={access} registerOpen={registerTutorial}/>}
-    <div ref={content} className="flex-1 min-h-0 overflow-auto">{settingsRoute&&cloud?<AccountSettings key={access.workspaceId||'current'} initialSection={accountSection} profile={profile} onManageProfile={onManageProfile} onHelp={()=>tutorialOpen.current?.()} onClose={()=>location.hash=returnRoute.current}/>:hash==='#/gpu-workflows'&&cloud?<GpuWorkflows key={access.workspaceId||'current'}/>:boardId?<BoardView key={boardId} boardId={boardId} onBack={()=>openBoard(null)} cloud={cloud}/>:<BoardsHome onOpen={openBoard} onLogout={onLogout} cloud={cloud}/>}</div>
+    <div ref={content} className="flex-1 min-h-0 overflow-auto">{settingsRoute&&cloud?<AccountSettings key={access.workspaceId||'current'} initialSection={accountSection} profile={profile} onManageProfile={onManageProfile} onHelp={()=>tutorialOpen.current?.()} onClose={()=>location.hash=returnRoute.current}/>:/^#\/gpu-workflows(?:\?|$)/.test(hash)&&cloud?<GpuWorkflows key={access.workspaceId||'current'}/>:boardId?<BoardView key={boardId} boardId={boardId} onBack={()=>openBoard(null)} cloud={cloud}/>:<BoardsHome onOpen={openBoard} onLogout={onLogout} cloud={cloud}/>}</div>
   </div>;
   return <AccessContext.Provider value={{...access,onSwitch}}>{cloud?<LiveComputerWindow key={access.workspaceId||'current'} workspaceId={access.workspaceId||'current'}>{workspace}</LiveComputerWindow>:workspace}</AccessContext.Provider>;
 

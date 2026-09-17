@@ -125,8 +125,10 @@ def engine(port):
         with contextlib.suppress(Exception):
             for identity, item in call(port, '/history?max_items=20').items():
                 state = item.get('status', {})
+                event_times = [event[1].get('timestamp') for event in state.get('messages', []) if len(event) > 1 and isinstance(event[1], dict) and isinstance(event[1].get('timestamp'), (int, float))]
                 jobs.append({'id': identity, 'title': 'ComfyUI render',
                     'status': 'completed' if state.get('status_str') == 'success' else 'failed',
+                    'finished_at': max(event_times) if event_times else None,
                     'source': 'ComfyUI', 'port': port, 'outputs': outputs(item)})
         return {'port': port, 'online': True, 'jobs': jobs}
     except Exception:
@@ -163,12 +165,12 @@ def local_jobs(config):
                     if receipt.is_relative_to(file.parent.resolve()) and receipt.is_file():
                         saved=json.loads(receipt.read_text())
                         if isinstance(saved.get('id'),int) and isinstance(saved.get('name'),str):
-                            saved_outputs=[{'name':saved['name'],'id':saved['id'],'url':'/api/project-files/'+str(saved['id'])+'/download'}]
+                            saved_outputs=[{'name':saved['name'],'id':saved['id'],'url':'/api/project-files/'+str(saved['id'])+'/download','size':saved.get('size'),'mime':saved.get('mime')}]
                     jobs.append({'id': row.get('job_id', file.parent.name + row['id']),
                         'title': row.get('location', row['id']) + ' · ' + row.get('flavor', ''),
                         'status': 'published' if row.get('published') else {'rendering': 'running', 'rendered': 'completed', 'held': 'blocked'}.get(row.get('status'), row.get('status', 'queued')),
                         'source': 'Granny producer', 'position': position + 1, 'batch': file.parent.name,
-                        'started_at': row.get('started_at'), 'outputs': saved_outputs, 'prompt': row.get('dialogue', ''),
+                        'started_at': row.get('started_at'), 'finished_at': row.get('finished_at'), 'outputs': saved_outputs, 'prompt': row.get('dialogue', ''),
                         'error': str(row.get('error', ''))[:500]})
         except Exception:
             errors.append('The producer manifest folder could not be read.')

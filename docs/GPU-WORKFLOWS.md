@@ -18,6 +18,14 @@ batches and bounded recent engine/queue history are shown. Errors retain the
 last reading and mark it stale. Refresh runs every 15 seconds while the page is
 visible; **Pause updates** only pauses the display.
 
+**Latest outputs** remains visible above the active queue, even when **Show
+jobs** is set to **Active & queued**. The **Outputs** tab lists finished media
+with previews/downloads, a filename/title search and a GPU filter. Newest files
+appear first using the producer's completion time or the engine's event time.
+Open `/app#/gpu-workflows?view=outputs` to go directly to the output library.
+Completed producer exports use their saved project-file reference, so the
+finished captioned Granny video is shown instead of its raw engine render.
+
 ## Workflows
 
 Add image/video templates in GPU worker settings, using ComfyUI's **API format**.

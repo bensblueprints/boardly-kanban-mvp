@@ -45,6 +45,20 @@ class ReceiptTests(unittest.TestCase):
                 self.assertEqual(result['outputs'][0]['filename'],'output.png')
 
 
+class ProducerOutputTests(unittest.TestCase):
+    def test_finished_output_keeps_its_time_and_project_video(self):
+        with tempfile.TemporaryDirectory() as folder,patch.object(pathlib.Path,'home',return_value=pathlib.Path(folder)):
+            root=pathlib.Path(folder)/'Continuous';batch=root/'batch-000001';job=batch/'G002';job.mkdir(parents=True)
+            identity=str(uuid.uuid4());finished=1789600433.79
+            (batch/'manifest.json').write_text(json.dumps([{'id':'G002','job_id':identity,'status':'rendered','location':'Tower climbing','flavor':'Garlic','finished_at':finished}]))
+            (job/'boardly-file.json').write_text(json.dumps({'id':858,'name':'garlic-finished.mp4','size':18976211,'mime':'video/mp4'}))
+            with patch.object(probe,'engine',return_value={'port':8199,'online':True,'jobs':[{'id':identity,'status':'completed','outputs':[{'filename':'raw.mp4'}]}]}),patch.object(probe.subprocess,'check_output',return_value=''):
+                result=probe.snapshot({'manifest_dir':str(root),'ports':[8199]})
+            saved=result['jobs'][0];self.assertEqual(saved['status'],'completed');self.assertEqual(saved['finished_at'],finished)
+            self.assertEqual(saved['outputs'][0]['url'],'/api/project-files/858/download');self.assertEqual(saved['outputs'][0]['size'],18976211)
+            self.assertEqual(saved['outputs'][0]['name'],'garlic-finished.mp4','The verified final export takes precedence over the raw engine render')
+
+
 class PromptEditTests(unittest.TestCase):
     def test_producer_edit_claim_and_restart(self):
         spec=importlib.util.spec_from_file_location('claim',pathlib.Path(__file__).resolve().parents[1]/'scripts/gpu-producer-claim.py');bridge=importlib.util.module_from_spec(spec);spec.loader.exec_module(bridge)
