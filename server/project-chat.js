@@ -34,6 +34,7 @@ function createProjectChat({ db, connections, userId, uploadsDir, environment, p
   for (const [name,type] of [['runtime',"TEXT NOT NULL DEFAULT 'codex'"],['requested_by','TEXT'],['billing_owner_id','TEXT']]) if (!db.prepare('PRAGMA table_info(chat_jobs)').all().some(c=>c.name===name)) db.exec(`ALTER TABLE chat_jobs ADD COLUMN ${name} ${type}`);
   for (const [name,type] of [['mode',"TEXT NOT NULL DEFAULT 'work'"],['swarm_id','TEXT'],['settled_at','INTEGER']]) if (!db.prepare('PRAGMA table_info(chat_jobs)').all().some(c=>c.name===name)) db.exec(`ALTER TABLE chat_jobs ADD COLUMN ${name} ${type}`);
   for(const [name,type] of [['worker_host',"TEXT NOT NULL DEFAULT 'desktop'"],['continuation_count','INTEGER NOT NULL DEFAULT 0'],['recovery_required','INTEGER NOT NULL DEFAULT 0'],['blocker_card_id','INTEGER REFERENCES cards(id) ON DELETE SET NULL'],['blocker','TEXT'],['next_action','TEXT'],['resume_note','TEXT']])if(!db.prepare('PRAGMA table_info(chat_jobs)').all().some(c=>c.name===name))db.exec(`ALTER TABLE chat_jobs ADD COLUMN ${name} ${type}`);
+  const guidance=require('./agent-guidance').createAgentGuidance(db);
   const blockers=require('./agent-blockers').createAgentBlockers(db);
   const hierarchy = require('./hierarchy').createHierarchy(db);
   const task = (boardId, cardId) => cardId == null ? null : db.prepare('SELECT c.id,c.title,c.description FROM cards c JOIN lists l ON l.id=c.list_id WHERE c.id=? AND l.board_id=?').get(cardId, boardId);
@@ -147,6 +148,31 @@ function createProjectChat({ db, connections, userId, uploadsDir, environment, p
     if(req.aiRuntime==='api')router.hosted.enqueue();
     res.status(202).json({ id, status: 'queued' });
   });
+  const guidanceJob=(req)=>{
+    const j=job(req.params.id),actor=req.cloudUserId||userId;
+    if(!j||j.mode!=='work'||(actor!==userId&&j.requested_by!==actor))throw Object.assign(Error('Your Work run was not found'),{status:404});
+    return j;
+  };
+  router.get('/api/chat/jobs/:id/guidance',(req,res,next)=>{try{
+    const j=guidanceJob(req);res.set('Cache-Control','no-store').json({job:{id:j.id,status:j.status,progress:j.progress,blocker:j.blocker,next_action:j.next_action},instructions:guidance.list(j.id).slice(-20)});
+  }catch(e){next(e);}});
+  router.post('/api/chat/jobs/:id/guidance',body,(req,res,next)=>{try{
+    const j=guidanceJob(req),{content,operation_id,resume=false}=req.body||{};
+    if(typeof content!=='string'||!content.trim()||content.length>10000||typeof operation_id!=='string'||!/^[a-f0-9-]{36}$/.test(operation_id)||typeof resume!=='boolean')return res.status(400).json({error:'Enter an instruction up to 10,000 characters'});
+    const existing=guidance.list(j.id).some(x=>x.id===operation_id);
+    const paused=['blocked','failed','interrupted'].includes(j.status);
+    if(!existing&&!['queued','running','recovering'].includes(j.status)&&!(paused&&resume))return res.status(409).json({error:paused?'Choose Resume with instruction to continue this task.':'This task has ended. Start new work in the project chat.'});
+    if(!existing&&paused&&resume&&busy(j.thread_id))return res.status(409).json({error:'This conversation already has active work'});
+    db.transaction(()=>{
+      const added=guidance.add(j,operation_id,clean(thread(j.thread_id).board_id,content.trim()),req.cloudUserId||userId);
+      if(added&&paused&&resume){
+        blockers.resumed(j);
+        db.prepare("UPDATE chat_jobs SET status='queued',worker_id=NULL,error=NULL,settled_at=NULL,recovery_required=1,progress='Resuming with your instruction',updated_at=? WHERE id=?").run(Date.now(),j.id);
+      }
+    })();
+    if(j.runtime==='api')router.hosted.enqueue();
+    res.status(202).json({id:operation_id,status:job(j.id).status,instructions:guidance.list(j.id).slice(-20)});
+  }catch(e){next(e);}});
   router.post('/api/chat/jobs/:id/resume', body, (req,res)=>{
     const j=job(req.params.id);if(!j||j.mode!=='work'||!['blocked','failed','interrupted'].includes(j.status))return res.status(409).json({error:'Choose a paused Work assignment'});if(busy(j.thread_id))return res.status(409).json({error:'This conversation already has active work'});
     const content=typeof req.body?.content==='string'?req.body.content.trim().slice(0,10000):'';const t=thread(j.thread_id);
@@ -207,6 +233,7 @@ function createProjectChat({ db, connections, userId, uploadsDir, environment, p
     if (!j || j.mode !== 'work' || j.worker_id !== req.boardlyConnection.id || j.status !== 'running') return res.status(404).json({ error: 'Active run not found' });
     req.projectJob = j; req.projectThread = thread(j.thread_id); next();
   }
+  router.post('/api/worker/jobs/:id/guidance',activeJob,body,(req,res)=>{guidance.acknowledge(req.params.id,req.body?.ids);res.json({ok:true});});
   router.post('/api/worker/jobs/:id/media/:action',activeJob,express.json({limit:'12kb'}),async(req,res,next)=>{try{
     const actor=req.projectJob.requested_by||userId,boardId=req.projectThread.board_id;
     const valid=()=>{const current=job(req.params.id);if(!media||!canUseMedia(actor,boardId)||current?.status!=='running'||current.worker_id!==req.boardlyConnection.id||current.updated_at<Date.now()-120000)throw Object.assign(Error('Media permission or active run was removed'),{status:403});};
@@ -323,7 +350,12 @@ function createProjectChat({ db, connections, userId, uploadsDir, environment, p
       if(status==='completed')blockers.completed(j);
       if (status === 'completed' && draft) message(j.thread_id, 'assistant', draft);
     })();
-    res.json({ status });
+    // A final result can race a newly queued instruction. Preserve the same run
+    // and let its next claim deliver the inbox rather than silently stranding it.
+    if((data.status==='completed'||(data.status==='blocked'&&!data.error))&&guidance.pending(j.id).length){
+      db.prepare("UPDATE chat_jobs SET status='queued',worker_id=NULL,recovery_required=1,progress='Continuing with your instruction',updated_at=? WHERE id=?").run(Date.now(),j.id);status='queued';
+    }
+    res.json({ status, guidance:status==='running'?guidance.pending(j.id):[] });
   });
   return router;
 }

@@ -79,7 +79,7 @@ function registerViewerRoutes(router, verify) {
     }
     const recent=req.tenant.computeruse.viewer.latest(id,data.desktop_id);
     const job=recent?req.tenant.app.db.prepare('SELECT j.id,j.status,j.requested_by,t.id AS thread_id FROM chat_jobs j JOIN chat_threads t ON t.id=j.thread_id WHERE j.id=?').get(recent.run_id):null;
-    res.json({...result,activity:recent||null,job:job?{id:job.id,status:job.status,thread_id:job.thread_id,can_resume:['blocked','failed','interrupted'].includes(job.status)&&(req.workspaceIsOwner||job.requested_by===req.cloudUserId)}:null});
+    res.json({...result,activity:recent||null,job:job?{id:job.id,status:job.status,thread_id:job.thread_id,can_guide:(req.workspaceIsOwner||job.requested_by===req.cloudUserId),can_resume:['blocked','failed','interrupted'].includes(job.status)&&(req.workspaceIsOwner||job.requested_by===req.cloudUserId)}:null});
   }catch(e){next(e);}};
   router.get(base,handle('status'));router.get(base+'/screen',handle('screenshot'));
   for(const command of ['takeover','resume','action','direct-connect','direct-renew','direct-close'])router.post(base+'/'+command,express.json({limit:'24kb'}),handle(command));

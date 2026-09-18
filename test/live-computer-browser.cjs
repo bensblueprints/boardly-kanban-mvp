@@ -21,6 +21,16 @@ async function assertFitted(dialog){
  const frame=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=1280;c.height=800;const x=c.getContext('2d');x.fillStyle='#172554';x.fillRect(0,0,1280,800);x.fillStyle='#fff';x.font='32px sans-serif';x.fillText('Permit portal — synthetic test desktop',60,90);x.fillStyle='#dbeafe';x.fillRect(60,140,1160,590);x.fillStyle='#1e3a8a';x.font='24px sans-serif';x.fillText('Account details',100,200);return c.toDataURL('image/jpeg');});v.setFrame(frame);await page.evaluate(value=>window.__rtcFrame=value,frame);
  const {job}=await v.start();const dialog=page.getByRole('dialog',{name:'Live computer window',exact:true});await dialog.waitFor();await dialog.getByText('Agent has control',{exact:true}).waitFor();await dialog.getByLabel('Computer connection').filter({hasText:/[0-9]+ ms/}).waitFor();
  if(directTest){await dialog.getByLabel('Computer connection').filter({hasText:/Direct connection/}).waitFor();assert.equal(await page.evaluate(()=>window.__rtcConnections.at(-1).readOnly),true);}
+ const guidanceBase=`/api/chat/jobs/${job.id}/guidance`;
+ await dialog.getByLabel('Guide this task').fill('Continue from the current page');
+ await page.route('**'+guidanceBase,async route=>{if(route.request().method()!=='POST')return route.continue();await f.api(guidanceBase,{method:'POST',body:route.request().postDataJSON()});await route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'Synthetic lost acknowledgement'})});await page.unroute('**'+guidanceBase);});
+ await dialog.getByRole('button',{name:'Send',exact:true}).click();await dialog.getByRole('alert').filter({hasText:'Synthetic lost acknowledgement'}).waitFor();
+ assert.equal(await dialog.getByLabel('Guide this task').inputValue(),'Continue from the current page');
+ await dialog.getByRole('button',{name:'Send',exact:true}).click();await dialog.getByRole('status').filter({hasText:'Queued for agent'}).waitFor();
+ const inbox=await f.api(guidanceBase);assert.equal(inbox.instructions.length,1);assert.equal(v.inputs.size,0,'Guidance is not typed into the remote desktop');
+ await v.workerApi(`/api/worker/jobs/${job.id}/guidance`,{ids:inbox.instructions.map(x=>x.id)});
+ await dialog.getByRole('status').filter({hasText:'Received by agent'}).waitFor();
+
  await dialog.getByRole('button',{name:'Maximize computer window',exact:true}).click();assert.equal(await dialog.evaluate(el=>Math.round(el.getBoundingClientRect().width)),1440);
  await assertFitted(dialog);
  await dialog.getByRole('button',{name:'Restore computer window',exact:true}).click();assert.ok((await dialog.boundingBox()).width<1440);

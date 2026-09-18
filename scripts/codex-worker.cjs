@@ -43,7 +43,8 @@ const safeName = name => path.basename(name).replace(/[^a-zA-Z0-9._ -]/g, '_').s
 async function run(job) {
   if(job.kind==='subscription')return require('./subscription-runner.cjs').runSubscription({job,settings,api,children,stopping:()=>stopping,save});
   if(job.kind==='discussion'||job.mode!=='work')return require('./discussion-runner.cjs').runDiscussion({job,settings,api,children,stopping:()=>stopping,save});
-  let child=null,paused=false;
+  let child=null,paused=false,redirecting=false;
+  const pendingGuidance=new Map(),receivedGuidance=new Set();let deliveringGuidance=[],guidanceAck=Promise.resolve();
   if (!/^[a-f0-9-]{36}$/.test(job.board.uuid) || !/^[a-f0-9-]{36}$/.test(job.id)) throw Error('Invalid project or run identifier');
   const cwd = path.resolve(projects[job.board.uuid] || path.join(workspaceRoot, job.board.uuid));
   fs.mkdirSync(cwd, { recursive: true, mode: 0o700 });
@@ -74,7 +75,11 @@ async function run(job) {
       const state = await api(`/api/worker/jobs/${job.id}`, { text: clean(text), sessionId, progress, activity: activity(),continuation_count:round });
       lastContact = Date.now();
       if (state.status !== 'running') { cancelled = true; stopChild(child); }
-      else if(paused&&child){try{process.kill(-child.pid,'SIGCONT');}catch{}paused=false;}
+      else if(Array.isArray(state.guidance)){
+        for(const instruction of state.guidance)if(!receivedGuidance.has(instruction.id)&&!deliveringGuidance.some(x=>x.id===instruction.id))pendingGuidance.set(instruction.id,instruction);
+        if(pendingGuidance.size&&child&&sessionId&&!redirecting){redirecting=true;step('worker:guidance','Pausing this turn to read your instruction','running');stopChild(child);}
+      }
+      if(state.status==='running'&&paused&&child){try{process.kill(-child.pid,'SIGCONT');}catch{}paused=false;}
     } catch (error) { if (error.status === 404) { cancelled = true; stopChild(child); } else if (Date.now() - lastContact > 75000 && child && !paused) { try{process.kill(-child.pid,'SIGSTOP');paused=true;}catch{} } }
     finally { updating = false; }
   };
@@ -188,6 +193,10 @@ async function run(job) {
     while(!cancelled&&!stopping){
       while(!cancelled&&!stopping&&Date.now()-lastContact>15000){await heartbeat();if(Date.now()-lastContact>15000)await delay(2000);}
       if(cancelled||stopping){status='cancelled';break;}
+      await heartbeat();
+      if(cancelled||stopping){status='cancelled';break;}
+      deliveringGuidance=[...pendingGuidance.values()];pendingGuidance.clear();redirecting=false;
+      const turnPrompt=nextPrompt+(deliveringGuidance.length?'\n\n'+require('../server/agent-guidance').guidancePrompt(deliveringGuidance):'');
       round++;const args=[...baseArgs];if(sessionId)args.push('resume',sessionId,'-');else args.push('-');
       fs.rmSync(output,{force:true});
       step('worker:codex',sessionId?'Continuing assigned work':'Starting Codex','running');
@@ -198,7 +207,12 @@ async function run(job) {
       readline.createInterface({input:child.stdout}).on('line',line=>{try{
         const event=JSON.parse(line);
         if(event.type==='error'||event.type==='turn.failed')providerError=JSON.stringify(event).slice(-6000);
-        if (event.type === 'turn.started' || event.type.startsWith('item.')) turnStarted = true;
+        if (event.type === 'turn.started' || event.type.startsWith('item.')) {
+          turnStarted = true;
+          if(deliveringGuidance.length){step('worker:guidance','Agent received your instruction');const batch=deliveringGuidance;deliveringGuidance=[];for(const item of batch)receivedGuidance.add(item.id);
+            guidanceAck=api(`/api/worker/jobs/${job.id}/guidance`,{ids:batch.map(x=>x.id)}).catch(()=>{for(const item of batch){receivedGuidance.delete(item.id);pendingGuidance.set(item.id,item);}});
+          }
+        }
         if(event.type==='thread.started'){sessionId=event.thread_id;step('worker:codex','Codex conversation opened');heartbeat();}
         if(event.type==='item.completed'&&event.item?.type==='agent_message'){
           let publicText=event.item.text;if(persistent){try{publicText=parseOutcome(publicText).summary;}catch{}}
@@ -207,8 +221,10 @@ async function run(job) {
         const entry=eventActivity(event,privateValues);if(entry){entry.key=`r${round}:${entry.key}`;record(entry);const active=activity().filter(a=>a.status==='running');progress=active.at(-1)?.title||(entry.kind==='update'?'Agent posted an update':'Working through the assignment');}
       }catch{}});
       child.stderr.on('data', chunk => { startupError = (startupError + chunk.toString()).slice(-16000); });
-      child.stdin.end(nextPrompt);
+      child.stdin.end(turnPrompt);
       const exited=await result;children.delete(child);child=null;
+      await guidanceAck;
+      if(redirecting&&!cancelled&&!stopping){for(const entry of activities.values())if(entry.status==='running')entry.status='failed';nextPrompt=(sessionId?persistentInstruction:context)+'\nContinue the saved task with the latest user guidance. The preceding turn was interrupted; verify all external outcomes before acting.';continue;}
       const raw=fs.existsSync(output)?fs.readFileSync(output,'utf8'):text;
       if(cancelled||stopping){status='cancelled';break;}
       if (managedMcp && exited.code !== 0 && !turnStarted && /required MCP servers? failed to initialize:[^\n]*\bboardly\b/i.test(startupError)) {

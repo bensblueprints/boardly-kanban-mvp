@@ -81,7 +81,7 @@ function memberGuard({db,memberships,ownerId,userId}){
     projectId=find('SELECT board_id FROM chat_threads WHERE id=?',match[1]);
     if(write&&!req.personalAiAllowed)throw fail(403,'Ask the company owner to connect AI funding first');
    }else if((match=route.match(/^\/api\/boards\/(\d+)\/agent$/))){projectId=Number(match[1]);if(!req.personalAiAllowed)throw fail(403,'Ask the company owner to connect AI funding first');}
-   else if((match=route.match(/^\/api\/chat\/jobs\/([a-f0-9-]+)\/(?:cancel|resume)$/))){const j=db.prepare('SELECT j.requested_by,t.board_id FROM chat_jobs j JOIN chat_threads t ON t.id=j.thread_id WHERE j.id=?').get(match[1]);if(!j||j.requested_by!==userId)throw fail(404,'Your AI run was not found');projectId=j.board_id;}
+   else if((match=route.match(/^\/api\/chat\/jobs\/([a-f0-9-]+)\/(?:cancel|resume|guidance)$/))){const j=db.prepare('SELECT j.requested_by,t.board_id FROM chat_jobs j JOIN chat_threads t ON t.id=j.thread_id WHERE j.id=?').get(match[1]);if(!j||j.requested_by!==userId)throw fail(404,'Your AI run was not found');projectId=j.board_id;}
    else if(method==='GET'&&route==='/api/chat/status')return next();
    else throw fail(403,'This action is managed by the account owner');
    if(projectId==null)throw fail(404,'Project resource not found');check(projectId);

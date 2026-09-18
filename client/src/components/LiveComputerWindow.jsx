@@ -4,6 +4,7 @@ import {Monitor,Minus,Maximize2,Minimize2,X,Hand,Play,Loader2,Keyboard} from 'lu
 import {api} from '../api.js';
 import DesktopInputQueue from '../computer-input-queue.js';
 import DesktopDirect from '../computer-direct.js';
+import ComputerGuidance from './ComputerGuidance.jsx';
 
 const button='inline-flex items-center justify-center gap-2 rounded-lg border border-zinc-600 px-3 py-2 text-sm hover:bg-zinc-800 disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-indigo-400';
 const ComputerWindowContext=createContext(null);
@@ -142,6 +143,7 @@ export default function LiveComputerWindow({workspaceId,children}) {
           <div className="flex min-w-0 shrink-0 items-center gap-2 text-xs text-zinc-400"><p className="min-w-0 flex-1 truncate" title={mine?'Click the screen to use your mouse and keyboard.':state?.activity?.progress||item?.progress}>{mine?'Mouse and keyboard ready':state?.activity?.progress||item?.progress||'Watching your agent work'}</p><span className="shrink-0" aria-label="Computer connection">{connectionLabel}{frameMs!==null?' · '+frameMs+' ms':''}</span>{connectionLabel==='Server connection'&&<button className="shrink-0 text-indigo-300 underline" title="Reconnect directly" onClick={()=>refresh.current()}>Reconnect</button>}</div>
           {error&&<p role="alert" className="shrink-0 text-sm text-rose-300">{error}</p>}{notice&&<p role="status" className="shrink-0 text-sm text-indigo-200">{notice}</p>}
         </div>
+        {state?.job?.can_guide&&<ComputerGuidance key={state.job.id} job={state.job} human={human} open={open}/>}
         {mine&&<form className="shrink-0 border-t border-zinc-800 p-2" onSubmit={e=>{e.preventDefault();if(text&&hasFrame.current){input({type:'type',text});setText('');}}}><div className="flex gap-2"><input aria-label="Text to type on computer" autoComplete="off" spellCheck={false} maxLength={4096} value={text} onChange={e=>setText(e.target.value)} placeholder="Type or paste into the computer…" className="min-w-0 flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm"/><button className={button} disabled={busy||!frameAt||!text}>Type</button><button type="button" className={button} aria-label="Keyboard shortcuts" title="Keyboard shortcuts" aria-expanded={showKeys} aria-controls="computer-keyboard-shortcuts" onClick={()=>setShowKeys(!showKeys)}><Keyboard size={18}/></button></div>{showKeys&&<div id="computer-keyboard-shortcuts" className="mt-2 flex flex-wrap gap-2">{[['Return','Enter'],['Tab','Tab'],['Escape','Esc'],['ctrl+l','Address bar'],['ctrl+v','Paste in desktop']].map(([key,label])=><button key={key} type="button" className={button} disabled={busy||!frameAt} onClick={()=>input({type:'key',key})}>{label}</button>)}</div>}<p className="mt-1 text-xs text-amber-200">Agent paused until you choose Give Back to Agent.</p></form>}
       </div>
     </dialog>
