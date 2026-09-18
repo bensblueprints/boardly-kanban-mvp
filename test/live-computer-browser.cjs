@@ -44,6 +44,10 @@ async function assertFitted(dialog){
  await dialog.getByRole('button',{name:'Close computer window',exact:true}).click();assert.equal(v.getMode(),'human');await page.waitForTimeout(2400);assert.equal(await dialog.isVisible(),false,'Dismissal must stick across activity polling');
  await page.getByRole('button',{name:'Open computer',exact:true}).click();await dialog.getByText('You have control · agent paused',{exact:true}).waitFor();
  await v.workerApi(`/api/worker/jobs/${job.id}`,{status:'blocked',blocker:'Awaiting human signup',next_action:'Give back after signup',text:'Signup ready'});
+ await dialog.getByRole('button',{name:'Resume with instruction',exact:true}).waitFor();
+ await dialog.getByLabel('Guide this task').fill('Wait until I return control');await dialog.getByLabel('Guide this task').press('Control+Enter');
+ assert.equal((await f.api(guidanceBase)).job.status,'blocked','Keyboard submission must respect human-control resume guard');
+ await dialog.getByLabel('Guide this task').fill('');
  await dialog.getByRole('button',{name:'Give Back to Agent',exact:true}).click();await dialog.getByText('Control returned. Your agent is resuming the saved work.',{exact:true}).waitFor();assert.equal(v.getMode(),'agent');
  const history=await f.api('/api/chat/threads/'+(await f.api(`/api/boards/${p.project.id}/chat/threads`))[0].id);assert.equal(history.job.status,'queued');assert.equal(history.job.id,job.id);
  await dialog.getByLabel('Computer connection').filter({hasText:/[0-9]+ ms/}).waitFor();await page.screenshot({path:'/tmp/boardly-live-computer-desktop.png'});

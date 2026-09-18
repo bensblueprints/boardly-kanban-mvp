@@ -15,7 +15,7 @@ export default function ComputerGuidance({job,human,open}) {
   const ended=!['queued','running','recovering','blocked','failed','interrupted'].includes(status);
   const instructions=data?.instructions||[],latest=instructions.at(-1);
   async function send(e){
-    e.preventDefault();if(sending.current||!draft.trim())return;
+    e.preventDefault();if(sending.current||!draft.trim()||ended||(paused&&human))return;
     sending.current=true;setBusy(true);setError('');
     // Keep the same operation ID after an uncertain response, including resume retries.
     if(!request.current||request.current.content!==draft.trim())request.current={operation_id:crypto.randomUUID(),content:draft.trim(),resume:paused};
@@ -32,7 +32,7 @@ export default function ComputerGuidance({job,human,open}) {
       <label htmlFor="computer-agent-instruction" className="block text-xs font-medium text-zinc-200">Guide this task</label>
       <div className="mt-1 flex gap-2">
         <textarea id="computer-agent-instruction" rows={1} maxLength={10000} value={draft} onChange={e=>setDraft(e.target.value)}
-          onKeyDown={e=>{if((e.ctrlKey||e.metaKey)&&e.key==='Enter'&&!e.nativeEvent.isComposing)e.currentTarget.form.requestSubmit();}}
+          onKeyDown={e=>{if((e.ctrlKey||e.metaKey)&&e.key==='Enter'&&!e.nativeEvent.isComposing){e.preventDefault();e.currentTarget.form.requestSubmit();}}}
           placeholder="Tell the agent what to do next…" disabled={ended}
           className="min-h-11 min-w-0 flex-1 resize-none rounded-lg border border-zinc-600 bg-zinc-900 px-3 py-2 text-base text-zinc-100 focus-visible:outline-2 focus-visible:outline-indigo-400"/>
         <button disabled={busy||!draft.trim()||ended||(paused&&human)} className="min-h-11 shrink-0 rounded-lg bg-indigo-600 px-3 py-2 text-sm text-white hover:bg-indigo-500 disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-indigo-400">{busy?'Sending…':paused?'Resume with instruction':'Send'}</button>
