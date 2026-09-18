@@ -1,0 +1,16 @@
+[Unit]
+Description=ComfyUI persistent GPU image and video worker
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=/home/benji/ComfyUI
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/benji/ComfyUI/venv/bin/python -u /home/benji/ComfyUI/main.py --listen 127.0.0.1,100.70.82.54 --port 8188 --disable-auto-launch
+Restart=always
+RestartSec=10
+TimeoutStopSec=120
+
+[Install]
+WantedBy=default.target

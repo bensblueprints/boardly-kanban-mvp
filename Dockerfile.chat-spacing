@@ -1,0 +1,2 @@
+FROM boardly-cloud:direct-viewer-2e2981f
+COPY --chown=node:node dist /app/dist

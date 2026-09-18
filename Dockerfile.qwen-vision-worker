@@ -1,0 +1,2 @@
+FROM boardly-cloud-worker:github-sync-2e2981f
+COPY --chown=node:node scripts/codex-worker.cjs scripts/computeruse-broker.cjs scripts/project-computeruse-client.cjs /app/scripts/

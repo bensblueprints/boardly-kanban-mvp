@@ -1,0 +1,47 @@
+import React,{useEffect,useState} from 'react';
+import {Activity,AlertTriangle,ArrowUpRight,Network} from 'lucide-react';
+import {api} from '../api.js';
+import AiActions from './AiActions.jsx';
+import ActivityMotion,{useActivityMotion} from './ActivityMotion.jsx';
+const active=(a,now)=>a.status==='running'&&now-a.updated_at<15000;
+const label=(a,now)=>a.status==='running'?(active(a,now)?a.progress||'Replying':'Waiting for worker'):a.status==='queued'?'Queued':a.status==='blocked'?'Blocked · action needed':a.status==='recovering'?'Recovering':a.status==='failed'?'Needs attention':'Interrupted';
+export default function CompanyActivity({companyId,onOpen,onChat,onAudio}){
+ const [motion,setMotion]=useActivityMotion();
+ const [data,setData]=useState(null),[error,setError]=useState(''),[selected,setSelected]=useState(null),[now,setNow]=useState(Date.now());
+ useEffect(()=>{let mounted=true;const load=async()=>{if(mounted)setNow(Date.now());try{const d=await api.get(`/api/agents/company/${companyId}/dashboard`);if(mounted){setData(d);setError('');}}catch(e){if(mounted)setError(e.message);}};load();const timer=setInterval(load,2500);return()=>{mounted=false;clearInterval(timer);};},[companyId]);
+ if(!data)return <section className="rounded-2xl border border-zinc-800 p-6 text-zinc-400">{error||'Loading company activity…'}</section>;
+ const all=[...data.agents,...data.discussions],working=all.filter(a=>active(a,now)),waiting=all.filter(a=>a.status==='queued'||(a.status==='running'&&!active(a,now)));
+ let cursor=70;
+ const rows=data.boards.map(b=>{const projects=data.projects.filter(p=>p.board_id===b.id),height=Math.max(115,projects.length*58+25),y=cursor+height/2;cursor+=height;return{...b,projects,y,height,agents:data.agents.filter(a=>projects.some(p=>p.id===a.project_id)),blockers:data.blockers.filter(c=>c.board_id===b.id)};});
+ const height=Math.max(290,cursor+30),rootY=height/2;
+ const visibleAgents=data.agents.filter(a=>!selected||data.projects.some(p=>p.id===a.project_id&&p.board_id===selected));
+ const visibleBlockers=data.blockers.filter(b=>!selected||b.board_id===selected);
+ return <section aria-label="Company activity dashboard" data-activity-motion={motion?'on':'off'} className="space-y-5 rounded-2xl border border-zinc-800 bg-zinc-950/50 p-4 sm:p-6">
+  <style>{`@keyframes boardly-flow{to{stroke-dashoffset:-40}}@keyframes boardly-pulse{50%{opacity:.35}}.boardly-flow{stroke-dasharray:7 13;animation:boardly-flow 1.5s linear infinite}.boardly-pulse{animation:boardly-pulse 1.8s ease-in-out infinite}[data-activity-motion="off"] .boardly-flow,[data-activity-motion="off"] .boardly-pulse{animation:none}`}</style>
+  <header className="flex flex-wrap gap-3 justify-between"><div><h2 className="font-semibold text-lg flex gap-2 items-center"><Network className="text-indigo-400" size={20}/>Company activity</h2><p className="text-xs text-zinc-400 mt-2">Live connections between your company, boards and project agents.</p></div><div className="flex flex-wrap items-center gap-2"><ActivityMotion enabled={motion} onChange={setMotion}/><AiActions chatLabel="Ask, plan or start a swarm" onChat={onChat} onAudio={onAudio}/></div></header>
+  <div className="grid grid-cols-3 gap-3">{[[working.length,'Working','text-yellow-300'],[waiting.length,'Queued / waiting','text-amber-300'],[data.blockers.length,'Blockers','text-rose-300']].map(([n,title,color])=><div key={title} className="rounded-xl border border-zinc-800 bg-zinc-900 p-3"><strong className={`block text-2xl ${color}`}>{n}</strong><span className="text-xs text-zinc-400">{title}</span></div>)}</div>
+  {error&&<p role="alert" className="text-xs text-amber-300">Live update paused: {error}</p>}
+  <div className="rounded-xl bg-zinc-950 border border-zinc-800 overflow-x-auto"><svg viewBox={`0 0 900 ${height}`} className="w-full min-w-[650px]" role="img" aria-label="Company connected to boards and their project agents">
+   <defs><radialGradient id={`company-glow-${companyId}`}><stop offset="0%" stopColor="#6366f1" stopOpacity=".16"/><stop offset="100%" stopColor="#6366f1" stopOpacity="0"/></radialGradient></defs>
+   <circle cx="145" cy={rootY} r="135" fill={`url(#company-glow-${companyId})`}/>
+   {rows.map(b=>{const live=b.agents.some(a=>active(a,now));return <g key={b.id}>
+    <path d={`M230 ${rootY} C295 ${rootY} 280 ${b.y} 355 ${b.y}`} fill="none" stroke={b.blockers.length?'#9f3453':'#343449'} strokeWidth="2"/>
+    {live&&<path className="boardly-flow" d={`M230 ${rootY} C295 ${rootY} 280 ${b.y} 355 ${b.y}`} fill="none" stroke="#818cf8" strokeWidth="2"/>}
+    <g role="button" tabIndex="0" aria-label={`Inspect ${b.name}`} onClick={()=>setSelected(selected===b.id?null:b.id)} onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();setSelected(selected===b.id?null:b.id);}}} className="cursor-pointer">
+     <rect x="355" y={b.y-32} width="225" height="64" rx="14" fill={selected===b.id?'#292551':'#18181b'} stroke={selected===b.id?'#a5b4fc':b.blockers.length?'#9f3453':'#41414c'}/>
+     <text x="370" y={b.y-7} fill="#e4e4e7" fontSize="12">{b.name.slice(0,28)}{b.name.length>28?'…':''}</text><text x="370" y={b.y+14} fill={b.blockers.length?'#fda4af':'#a1a1aa'} fontSize="10">{b.agents.filter(a=>active(a,now)).length} working · {b.blockers.length} blockers</text>
+    </g>
+    {b.projects.map((p,i)=>{const py=b.y+(i-(b.projects.length-1)/2)*58,agents=b.agents.filter(a=>a.project_id===p.id),live=agents.some(a=>active(a,now)),blocked=b.blockers.some(c=>c.project_id===p.id),current=agents.find(a=>active(a,now))||agents[0];return <g key={p.id}>
+     <path d={`M580 ${b.y} C620 ${b.y} 625 ${py} 665 ${py}`} fill="none" stroke={live?'#525a91':'#303039'}/>{live&&<path className="boardly-flow" d={`M580 ${b.y} C620 ${b.y} 625 ${py} 665 ${py}`} fill="none" stroke="#facc15"/>}
+     <g role="button" tabIndex="0" aria-label={`Open ${p.name}`} onClick={()=>onOpen(p.id)} onKeyDown={e=>{if(e.key==='Enter')onOpen(p.id);}} className="cursor-pointer"><rect x="665" y={py-22} width="215" height="44" rx="10" fill="#18181b" stroke={live?'#facc15':blocked?'#9f3453':'#34343c'}/><circle className={live?'boardly-pulse':''} cx="679" cy={py} r="4" fill={live?'#facc15':blocked?'#fb7185':current?'#fbbf24':'#52525b'}/><text x="692" y={py-3} fontSize="11" fill="#e4e4e7">{p.name.slice(0,25)}</text><text x="692" y={py+12} fontSize="9" fill="#a1a1aa">{current?label(current,now).slice(0,30):'No agent running'}</text></g>
+    </g>;})}
+   </g>;})}
+   <g role="button" tabIndex="0" aria-label="Show whole company" onClick={()=>setSelected(null)} onKeyDown={e=>{if(e.key==='Enter')setSelected(null);}} className="cursor-pointer"><rect x="40" y={rootY-40} width="190" height="80" rx="20" fill="#25213e" stroke="#818cf8"/><text x="135" y={rootY-12} textAnchor="middle" fontSize="13" fill="#e0e7ff">{data.company.name.slice(0,23)}</text><text x="135" y={rootY+8} textAnchor="middle" fontSize="10" fill="#c7d2fe">{working.length} working across company</text><text x="135" y={rootY+26} textAnchor="middle" fontSize="9" fill="#a1a1aa">{data.discussions.length} company conversations</text></g>
+  </svg></div>
+  <p className="text-xs text-zinc-500">Moving yellow lights mean recent agent contact. Select a board to inspect it, or the company to see everything.</p>
+  {!!data.discussions.length&&<div className="space-y-2"><h3 className="text-sm font-medium">Company-wide conversations</h3>{data.discussions.map(a=><button key={a.id} className="block w-full text-left rounded-xl border border-indigo-500/25 bg-indigo-500/5 p-3" onClick={onChat}><p className="text-sm">{a.title}</p><p className="text-xs text-zinc-400 mt-1">{a.mode==='plan'?'Plan':'Ask'} · {label(a,now)}</p></button>)}</div>}
+  <div className="grid lg:grid-cols-2 gap-5"><div className="space-y-3"><h3 className="font-medium text-sm flex gap-2 items-center"><Activity size={16} className="text-yellow-300"/>Agents {selected?'on this board':'across the company'}</h3>{visibleAgents.map(a=>{const p=data.projects.find(p=>p.id===a.project_id);return <button key={a.id} onClick={()=>onOpen(a.project_id)} className="block w-full text-left p-3 rounded-xl border border-zinc-800 bg-zinc-900"><p className="text-xs text-indigo-300">{p?.board_name} / {p?.name}{a.swarm_id?' · Swarm agent':''}</p><p className="text-sm mt-1">{a.title}</p><p className="text-xs text-zinc-400 mt-2">{a.mode==='work'?'Work':a.mode==='plan'?'Plan':'Ask'} · {label(a,now)}</p>{a.error&&<p className="text-xs text-rose-300 mt-2">{a.error}</p>}</button>;})}{!visibleAgents.length&&<p className="text-sm text-zinc-500">No agents are running here.</p>}</div>
+   <div className="space-y-3"><h3 className="font-medium text-sm flex gap-2 items-center"><AlertTriangle size={16} className="text-rose-300"/>Important things · {visibleBlockers.length} blockers</h3>{visibleBlockers.map(b=><article key={b.id} className="rounded-xl border border-rose-500/25 bg-rose-500/5 p-4"><p className="text-xs text-rose-300">{b.board_name} / {b.project_name} · Task #{b.id}</p><h4 className="text-sm font-medium mt-1">{b.title}</h4><p className="text-xs text-zinc-300 mt-2 whitespace-pre-wrap">{(b.latest_update||b.description||'Open this task to review the next action.').slice(0,450)}</p><button onClick={()=>onOpen(b.project_id)} className="text-xs text-indigo-300 mt-3 flex gap-1 items-center">Open project <ArrowUpRight size={13}/></button></article>)}{!visibleBlockers.length&&<p className="text-sm text-zinc-500">No tasks are marked Blocked here.</p>}</div>
+  </div>
+ </section>;
+}

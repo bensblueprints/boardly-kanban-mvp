@@ -1,0 +1,7 @@
+**
+!Dockerfile.onboarding-worker
+!server/
+!server/**
+!scripts/
+!scripts/**
+!package.json

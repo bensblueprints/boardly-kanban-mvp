@@ -1,0 +1,49 @@
+{
+  "expo": {
+    "name": "Boardly",
+    "slug": "boardly-agent",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.boardlyagent.app",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "Record a question for your Boardly audio briefing.",
+        "NSCameraUsageDescription": "Attach a photo to your Boardly project.",
+        "NSPhotoLibraryUsageDescription": "Choose photos to attach to your Boardly project.",
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "predictiveBackGestureEnabled": false,
+      "package": "com.boardlyagent.app",
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.CAMERA"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "@clerk/expo",
+        {
+          "theme": "./clerk-theme.json"
+        }
+      ],
+      "expo-secure-store",
+      "expo-web-browser",
+      "expo-sharing",
+      "./plugins/with-release-signing.cjs"
+    ],
+    "scheme": "boardly",
+    "backgroundColor": "#0c0e12"
+  }
+}

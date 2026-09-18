@@ -1,0 +1,11 @@
+**
+!Dockerfile.onboarding
+!server/
+!server/**
+!scripts/
+!scripts/**
+!docs/
+!docs/**
+!dist/
+!dist/**
+!package.json

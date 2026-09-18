@@ -24,8 +24,9 @@ function resolveDataDir() {
   return path.join(__dirname, '..', 'data');
 }
 
-function createBoardlyServer({ db, uploadsDir }) {
-  const server = new McpServer({ name: 'boardly', version: '1.1.0' });
+function createBoardlyServer({ db, uploadsDir, management }) {
+  const server = new McpServer({ name: 'boardly', version: '1.2.0' });
+  if (management) require('../server/management-api').registerManagementTools(server, management);
 
   // ---- helpers (mirrors server/app.js) ----
 
@@ -69,6 +70,7 @@ function createBoardlyServer({ db, uploadsDir }) {
       ...card,
       labels: cardLabels(card.id),
       checklist: checklistProgress(card.id),
+      output_count: require('../server/task-files').taskFileCount(db,card.id),
       has_description: card.description.trim().length > 0
     };
   }
@@ -90,7 +92,7 @@ function createBoardlyServer({ db, uploadsDir }) {
   function tool(name, description, schema, handler) {
     server.registerTool(name, { description, inputSchema: schema }, async (args) => {
       try {
-        return ok(handler(args));
+        return ok(await handler(args));
       } catch (err) {
         return fail(err.message || String(err));
       }
@@ -103,9 +105,77 @@ function createBoardlyServer({ db, uploadsDir }) {
     return row;
   }
 
+  // Project assets are shared with the cloud UI, within this workspace only.
+  const { addFileLink, addProjectLink, storageUsage } = require('../server/project-assets');
+  const projectFolders = require('../server/project-folders');
+  tool('list_project_files', 'List uploaded and linked files for a project', { board_id: z.number().int() }, ({ board_id }) => {
+    mustGet(q.board, board_id, 'Board');
+    return projectFolders.listFiles(db, board_id).map(({id,uuid,name,url,size,mime,created_at,folder_id,folder_path})=>({id,uuid,name,url,size,mime,created_at,folder_id,folder_path}));
+  });
+  tool('list_project_folders', 'List project folders with their parent IDs and paths', { board_id: z.number().int() }, ({ board_id }) => { mustGet(q.board, board_id, 'Board'); return projectFolders.listFolders(db, board_id); });
+  tool('create_project_folder', 'Create a folder in project Files, optionally inside another folder', { board_id: z.number().int(), name: z.string(), parent_id: z.number().int().nullable().optional() }, ({ board_id, name, parent_id }) => projectFolders.createFolder(db, board_id, name, parent_id));
+  tool('rename_project_folder', 'Rename a project folder without changing its files', { folder_id: z.number().int(), name: z.string() }, ({ folder_id, name }) => projectFolders.renameFolder(db, folder_id, name));
+  tool('delete_project_folder', 'Delete an empty project folder; refuses folders containing files or subfolders', { folder_id: z.number().int() }, ({ folder_id }) => projectFolders.deleteFolder(db, folder_id));
+  tool('move_project_file', 'Move an existing file within its project; folder_id null moves it to the Files root', { file_id: z.number().int(), folder_id: z.number().int().nullable() }, ({ file_id, folder_id }) => projectFolders.moveFile(db, file_id, folder_id));
+  tool('add_project_file_link', 'Link an external file to a project', { board_id: z.number().int(), name: z.string().min(1), url: z.string(), folder_id: z.number().int().nullable().optional() }, ({ board_id, name, url, folder_id }) => addFileLink(db, board_id, name, url, folder_id));
+  tool('add_project_link', 'Save an associated URL in the project Links section', { board_id: z.number().int(), title: z.string().min(1), url: z.string(), description: z.string().optional() }, ({ board_id, title, url, description }) => addProjectLink(db, board_id, title, url, description));
+  tool('list_project_links', 'List the URLs associated with a project', { board_id: z.number().int() }, ({ board_id }) => {
+    mustGet(q.board, board_id, 'Board');
+    return db.prepare('SELECT * FROM project_links WHERE board_id=? ORDER BY id').all(board_id);
+  });
+  tool('list_task_files', 'List output file shortcuts on a task', { card_id: z.number().int() }, ({card_id}) => {
+    mustGet(q.card,card_id,'Card');return require('../server/task-files').listTaskFiles(db,card_id);
+  });
+  tool('link_task_file', 'Add a shortcut from a task to an existing file in the same project; does not copy file bytes', { card_id: z.number().int(), file_id: z.number().int() }, ({card_id,file_id}) => require('../server/task-files').linkTaskFile(db,card_id,file_id));
+  const uploadTools=require('../server/file-uploads').createFileUploads({db,uploadsDir});
+  async function transfer(method,boardId,id,suffix,body,local){
+    if(management)return(await management.invoke({operation_id:method+' /api/boards/:boardId/uploads'+(id?'/:uploadId':'')+suffix,parameters:{boardId,...(id?{uploadId:id}:{})},body})).data;
+    return local({boardId,actor:'local',limit:null});
+  }
+  tool('start_file_upload','Start or resume an upload of any file type and size within available storage. Use chunks instead of the 2 MB inline upload. Reuse upload_id on retry.',{board_id:z.number().int(),upload_id:z.string().uuid().optional(),name:z.string().min(1).max(250),size:z.number().int().nonnegative(),mime:z.string().optional(),folder_id:z.number().int().nullable().optional(),card_id:z.number().int().nullable().optional(),sha256:z.string().regex(/^[a-f0-9]{64}$/).optional()},({board_id,...body})=>transfer('POST',board_id,null,'',body,ctx=>uploadTools.begin(ctx,body)));
+  tool('file_upload_status','Read the saved byte offset before resuming a file upload.',{board_id:z.number().int(),upload_id:z.string().uuid()},({board_id,upload_id})=>transfer('GET',board_id,upload_id,'',undefined,ctx=>uploadTools.status(ctx,upload_id)));
+  tool('upload_file_chunk','Append at most 1 MB of original bytes as base64. Supply the saved offset; retrying the same chunk is safe. Use a script to transfer file bytes; never echo file contents in chat.',{board_id:z.number().int(),upload_id:z.string().uuid(),offset:z.number().int().nonnegative(),content_base64:z.string().max(1400000)},({board_id,upload_id,...body})=>transfer('POST',board_id,upload_id,'/chunks',body,ctx=>{
+    if(!body.content_base64.length||body.content_base64.length%4||!/^[A-Za-z0-9+/]*={0,2}$/.test(body.content_base64))throw Error('Invalid base64 chunk');
+    return uploadTools.append(ctx,upload_id,body.offset,Buffer.from(body.content_base64,'base64'));
+  }));
+  tool('finish_file_upload','Verify and publish a fully uploaded file. Safe to retry; returns the saved file ID.',{board_id:z.number().int(),upload_id:z.string().uuid()},({board_id,upload_id})=>transfer('POST',board_id,upload_id,'/complete',{},ctx=>uploadTools.finish(ctx,upload_id)));
+  tool('cancel_file_upload','Remove an unfinished upload and release reserved storage. A completed file is preserved.',{board_id:z.number().int(),upload_id:z.string().uuid()},({board_id,upload_id})=>transfer('DELETE',board_id,upload_id,'',undefined,ctx=>uploadTools.cancel(ctx,upload_id)));
+  tool('add_project_file', 'Save a generated text/code/document file in a project (up to 1 MB of text). Set card_id when the output belongs to a task, so it appears on that task.', { board_id: z.number().int(), name: z.string().min(1).max(250), content: z.string().max(1000000), folder_id: z.number().int().nullable().optional(),card_id:z.number().int().optional() }, ({ board_id, name, content, folder_id,card_id }) => {
+    mustGet(q.board, board_id, 'Board');
+    const destination = projectFolders.folderId(db, board_id, folder_id);
+    const uuid = require('crypto').randomUUID(), filename = 'project-' + uuid;
+    const size = Buffer.byteLength(content);
+    fs.writeFileSync(path.join(uploadsDir, filename), content, { mode: 0o600 });
+    try {
+      return db.transaction(()=>{
+        const r = db.prepare('INSERT INTO project_files (uuid,board_id,name,filename,size,mime,created_at,folder_id) VALUES (?,?,?,?,?,?,?,?)').run(uuid, board_id, name, filename, size, 'text/plain', Date.now(), destination);
+        if(card_id!==undefined)require('../server/task-files').linkTaskFile(db,card_id,Number(r.lastInsertRowid),{generated:true});
+        return { id: Number(r.lastInsertRowid), name, size, folder_id: destination,...(card_id!==undefined?{card_id}:{}) };
+      })();
+    } catch (e) { fs.rmSync(path.join(uploadsDir, filename), { force: true }); throw e; }
+  });
+  tool('read_project_file', 'Read an uploaded text project file (up to 100 KB); linked or binary files return their download reference', { file_id: z.number().int() }, ({ file_id }) => {
+    const row = db.prepare('SELECT * FROM project_files WHERE id=?').get(file_id);
+    if (!row) throw Error('File not found');
+    if (!row.filename) return { name: row.name, url: row.url };
+    if (!row.mime?.startsWith('text/') && !['application/json','application/xml'].includes(row.mime)) return { name: row.name, download: '/api/project-files/' + row.id + '/download', size: row.size };
+    if (row.size > 100000) return { name: row.name, download: '/api/project-files/' + row.id + '/download', size: row.size, message: 'Use the download for this larger file' };
+    return { name: row.name, content: fs.readFileSync(path.join(uploadsDir, row.filename), 'utf8') };
+  });
+
+  const hierarchy = require('../server/hierarchy').createHierarchy(db);
+  tool('get_hierarchy', 'Company → Board → Project hierarchy. Project IDs are legacy board/workspace IDs used by task, chat and file tools.', {}, () => hierarchy.tree());
+  tool('create_company', 'Create a company', {name:z.string().min(1),description:z.string().optional()}, a => hierarchy.createCompany(a));
+  tool('update_company', 'Rename a company or update its description', {company_id:z.number().int(),name:z.string().optional(),description:z.string().optional()}, a => hierarchy.updateCompany(a.company_id,a));
+  tool('create_company_board', 'Create a board container inside a company; use create_project for its projects', {name:z.string().min(1),description:z.string().optional(),company_id:z.number().int().nullable().optional()}, a => hierarchy.createBoard(a));
+  tool('update_company_board', 'Move a board and all its projects to a company, rename it, or edit its description', {board_id:z.number().int(),company_id:z.number().int().nullable().optional(),name:z.string().optional(),description:z.string().optional()}, a => hierarchy.updateBoard(a.board_id,a));
+  tool('create_project', 'Create a project with task lists inside a board container', {parent_board_id:z.number().int(),name:z.string().min(1),description:z.string().optional()}, a => hierarchy.createProject(a));
+  tool('update_project', 'Move a project to another board container or rename its display name', {project_id:z.number().int(),parent_board_id:z.number().int().optional(),name:z.string().optional()}, a => hierarchy.updateProject(a.project_id,a));
+
   // ---- boards ----
 
-  tool('list_boards', 'List all boards with list/card counts', {}, () => {
+  tool('list_boards', 'List project workspaces with stable legacy board IDs and counts; get_hierarchy provides their companies and parent boards', {}, () => {
+    require('../server/hierarchy').ensureProjects(db);
     return db.prepare('SELECT * FROM boards ORDER BY starred DESC, id DESC').all().map((b) => {
       const counts = db.prepare(
         `SELECT
@@ -113,7 +183,7 @@ function createBoardlyServer({ db, uploadsDir }) {
           (SELECT COUNT(*) FROM cards c JOIN lists l ON l.id = c.list_id
             WHERE l.board_id = @id AND c.archived = 0 AND l.archived = 0) AS cards`
       ).get({ id: b.id });
-      return { ...b, list_count: counts.lists, card_count: counts.cards };
+      return { ...b, hierarchy: hierarchy.scope(b.id), list_count: counts.lists, card_count: counts.cards };
     });
   });
 
@@ -129,7 +199,8 @@ function createBoardlyServer({ db, uploadsDir }) {
           .all(l.id).map(cardSummary)
       }));
     const labels = db.prepare('SELECT * FROM labels WHERE board_id = ? ORDER BY id').all(board.id);
-    return { ...board, lists, labels };
+    require('../server/hierarchy').ensureProjects(db);
+    return { ...board, hierarchy: hierarchy.scope(board.id), lists, labels };
   });
 
   tool('create_board', 'Create a new board', {
@@ -176,6 +247,7 @@ function createBoardlyServer({ db, uploadsDir }) {
       `SELECT a.filename FROM attachments a JOIN cards c ON c.id = a.card_id
        JOIN lists l ON l.id = c.list_id WHERE l.board_id = ?`
     ).all(board.id);
+    files.push(...db.prepare('SELECT filename FROM project_files WHERE board_id=? AND filename IS NOT NULL').all(board.id));
     db.prepare('DELETE FROM boards WHERE id = ?').run(board.id);
     for (const f of files) {
       try { fs.unlinkSync(path.join(uploadsDir, f.filename)); } catch {}

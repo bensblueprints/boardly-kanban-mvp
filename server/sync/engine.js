@@ -247,7 +247,10 @@ function createSyncEngine({ db, uploadsDir }) {
     if (local) {
       if (table === 'cards') ctx.listsTouched.add(local.list_id);
       if (table === 'lists') ctx.boardsTouched.add(local.board_id);
-      if (updatedAt <= local.updated_at) return; // LWW: local wins
+      if (updatedAt <= local.updated_at) {
+        if (table === 'attachments') ensureAttachmentFile(local, ctx);
+        return; // LWW: local wins, but missing bytes still need retrying
+      }
       const fields = FIELDS[table];
       const assignments = [
         ...Object.keys(parentIds).map((col) => `${col} = ?`),
@@ -342,18 +345,7 @@ function createSyncEngine({ db, uploadsDir }) {
     }
     if (!all.length) return 0;
 
-    // Apply parents before children; Array#sort is stable, so seq order is
-    // preserved within each table.
-    const order = new Map(TABLE_ORDER.map((t, i) => [t, i]));
-    const sorted = [...all].sort((a, b) => order.get(a.table) - order.get(b.table));
-
-    const ctx = { listsTouched: new Set(), boardsTouched: new Set(), downloads: [] };
-    withTrackingSuppressed(db, () => {
-      db.transaction(() => {
-        for (const change of sorted) applyChange(change, ctx);
-        normalizePositions(ctx.listsTouched, ctx.boardsTouched);
-      })();
-    });
+    const ctx = applyIncoming(all);
 
     for (const d of ctx.downloads) {
       try {
@@ -361,13 +353,29 @@ function createSyncEngine({ db, uploadsDir }) {
         const buf = Buffer.from(await res.arrayBuffer());
         fs.writeFileSync(path.join(uploadsDir, d.filename), buf);
       } catch {
-        // Bytes unavailable right now — the row stays and a later pull of an
-        // update (or manual re-sync) retries the download.
+        throw new Error('Attachment download failed; sync will retry');
       }
     }
-
     setSyncMeta(db, 'cursor', cursor);
     return all.length;
+  }
+
+  function applyIncoming(all) {
+
+    // Apply parents before children; Array#sort is stable, so seq order is
+    // preserved within each table.
+    const order = new Map(TABLE_ORDER.map((t, i) => [t, i]));
+    const sorted = [...all].sort((a, b) => order.get(a.table) - order.get(b.table));
+
+    const ctx = { listsTouched: new Set(), boardsTouched: new Set(), downloads: [] };
+    db.transaction(() => {
+      withTrackingSuppressed(db, () => {
+        for (const change of sorted) applyChange(change, ctx);
+        normalizePositions(ctx.listsTouched, ctx.boardsTouched);
+      });
+    })();
+
+    return ctx;
   }
 
   // ---- one full round ----
@@ -417,7 +425,7 @@ function createSyncEngine({ db, uploadsDir }) {
     timer = null;
   }
 
-  return { configure, disable, status, syncNow, start, stop };
+  return { configure, disable, status, syncNow, start, stop, applyIncoming };
 }
 
-module.exports = { createSyncEngine };
+module.exports = { createSyncEngine, attachmentFilename, FIELDS, PARENTS };

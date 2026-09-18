@@ -1,0 +1,34 @@
+const assert=require('node:assert/strict'),crypto=require('node:crypto'),path=require('node:path'),Database=require('better-sqlite3');
+const {fixture}=require('./member-fixture'),{createSshConnections}=require('../server/ssh-connections');
+(async()=>{const f=await fixture();let db;try{
+ const p=await f.project('Computer assignments','Project');
+ const one=(await f.api(`/api/projects/${p.project.id}/members`,{method:'POST',body:{email:'one@example.com',role:'editor'}})).member;
+ const two=(await f.api(`/api/projects/${p.project.id}/members`,{method:'POST',body:{email:'two@example.com',role:'editor'}})).member;
+ const grants=await f.api(`/api/projects/${p.project.id}/members`);
+ for(const g of grants.members)await f.api(`/api/memberships/${g.grant_id}`,{method:'PATCH',body:{scopes:['ssh']}});
+ const config={label:'Assigned computer',host:'127.0.0.1',port:22,username:'qa',auth_type:'password',password:'fixture-only',fingerprint:'SHA256:'+'a'.repeat(43),allow_agent:true};
+ const machine=await f.api('/api/account/ssh',{method:'POST',body:config});
+ const base=`/api/projects/${p.project.id}/ssh`,as=m=>({user:m.user_id,workspace:'user_owner'});
+ assert.equal((await f.api(base,as(one))).inherited.length,1);
+ await f.api('/api/account/ssh/'+machine.id,{method:'PATCH',body:{access:{mode:'assigned',member_ids:[one.id]}}});
+ assert.equal((await f.api(base,as(one))).inherited.length,1);assert.equal((await f.api(base,as(two))).inherited.length,0);
+ assert.equal((await f.api(`/api/boards/${p.project.id}/chat/context`,as(two))).ssh.connections.length,0);
+ assert.equal((await f.request(base+'/'+machine.id+'/test',{...as(two),method:'POST',body:{}})).status,403);
+ const scoped=await f.api(base,{method:'POST',body:config});
+ await f.api(base+'/'+scoped.id,{method:'PATCH',body:{access:{mode:'assigned',member_ids:[one.id]}}});
+ for(const method of ['PATCH','DELETE'])assert.equal((await f.request(base+'/'+scoped.id,{...as(two),method,body:method==='PATCH'?{allow_agent:false}:undefined})).status,403);
+ assert.equal((await f.request(base+'/'+scoped.id,{...as(one),method:'PATCH',body:{access:{mode:'shared',member_ids:[]}}})).status,403);
+ assert.equal((await f.request('/api/account/ssh/'+machine.id,{method:'PATCH',body:{access:{mode:'assigned',member_ids:['not-a-member']}}})).status,400);
+ // No fixed 25-computer cap, and connected machines never create Stripe items.
+ for(let n=0;n<30;n++)await f.api('/api/account/ssh',{method:'POST',body:{...config,label:'Additional '+n}});
+ assert.equal((await f.api('/api/account/ssh')).connections.length,31);
+ const dbFile=path.join(f.root,'workspaces',crypto.createHash('sha256').update('user_owner').digest('hex'),'app.db');db=new Database(dbFile);
+ const members=[one,two],ssh=createSshConnections({db,key:Buffer.alloc(32),namespace:'user_owner',members:()=>members});
+ assert.equal(ssh.agentList(p.project.id,two.user_id).some(c=>c.id===machine.id),false);
+ assert.throws(()=>ssh.forJob(p.project.id,p.company.id,machine.id,two.user_id),{status:403});
+ assert.equal(ssh.agentList(p.project.id,one.user_id).some(c=>c.id===machine.id),true);
+ members.splice(0,1);assert.equal(ssh.agentList(p.project.id,one.user_id).some(c=>c.id===machine.id),false,'Removed members cannot retain assigned access');
+ await f.api('/api/account/ssh/'+machine.id,{method:'PATCH',body:{access:{mode:'owner',member_ids:[]}}});
+ assert.equal((await f.api(base,as(one))).inherited.some(c=>c.id===machine.id),false);
+ console.log('PASS: unlimited connected computers, shared/individual/owner-only access, HTTP and agent enforcement, membership revocation, assignment ownership and input validation. No real commands or charges.');
+}finally{db?.close();await f.close();}})().catch(e=>{console.error(e);process.exitCode=1;});

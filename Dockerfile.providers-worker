@@ -1,0 +1,3 @@
+FROM boardly-cloud-worker:onepassword-45945a8
+COPY --chown=node:node server /app/server
+COPY --chown=node:node scripts /app/scripts

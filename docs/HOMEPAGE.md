@@ -1,0 +1,13 @@
+# Homepage design and motion
+
+The public page lives in `client/public/landing/index.html` and `styles.css`. It uses the selected black Boardly owl with a graphite, white and lime palette. Product previews use real application screenshots captured from an isolated demonstration workspace. The company diagram, audio waveform and AI conversation examples are illustrations, labelled in the interface.
+
+`client/marketing.js` progressively enhances the static page using the existing Framer Motion 11.18.2 DOM API. Vite emits it as `dist/landing/motion.js`, with shared code under content-hashed `/assets/` URLs. No new package or external animation CDN is required. The development middleware maps the same script URL to its source entry. See the [Motion quick start](https://motion.dev/docs/quick-start) and [scroll animation reference](https://motion.dev/docs/scroll).
+
+Motion includes staggered hero entrances, section reveals, scroll-linked product perspective, spring hover responses and short preview transitions. Decorative CSS motion includes the ambient hero, connecting paths, waveform and hardware illustration. The footer pause control persists locally; the system reduced-motion preference always takes precedence. No audio plays automatically. Main content and signup links remain available without JavaScript.
+
+Preview tabs support arrows, Home and End with roving focus. AI mode buttons expose their selected state, and mobile navigation closes on selection, outside click and Escape. FAQ answers use native details elements. Product title-bar logos use explicit `.window-logo` sizing, separate from `.desktop-image`; the former shared `img` rule stretched the logo to screenshot dimensions. Decorative window close controls have been removed.
+
+Run `npm run build`, then `node test/landing-motion-browser.cjs` with Playwright available through `BOARDLY_PLAYWRIGHT_MODULE`. The browser test serves the production output and checks real motion, tabs/keyboard behavior, all image decoding, link targets, desktop/mobile overflow, bounded title-bar logo size, pause persistence, reduced-motion and static no-JavaScript content. `BOARDLY_LANDING_VERIFY_ORIGIN=https://boardlyagent.com` checks the deployed page instead. The live browser uses a temporary DNS override because the desktop router retains a stale negative DNS cache; HTTPS verification stays enabled.
+
+Website changes do not change ComputerUse pricing or availability, subscription entitlements, app security or authentication settings. Public notices continue to disclose planned hardware availability and private-preview capabilities.

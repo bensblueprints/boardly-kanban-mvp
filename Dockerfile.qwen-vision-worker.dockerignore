@@ -1,0 +1,6 @@
+*
+!Dockerfile.qwen-vision-worker
+!scripts/
+!scripts/codex-worker.cjs
+!scripts/computeruse-broker.cjs
+!scripts/project-computeruse-client.cjs

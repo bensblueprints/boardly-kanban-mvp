@@ -1,0 +1,83 @@
+const express=require('express'),crypto=require('node:crypto');
+const {createHierarchy}=require('./hierarchy');
+const fail=(status,message)=>Object.assign(Error(message),{status});
+const FIELDS=['name','website','description','resources','audience','offer','pricing','delivery','brand','channels','goal','budget','assumptions'];
+const OPENING='Do you already have a business idea, or would you like help finding one?';
+const text=(v,max=2500)=>{if(typeof v!=='string'||v.length>max)throw fail(400,'Please shorten the text and try again.');return v.trim();};
+function brief(value={}){
+ if(!value||Array.isArray(value)||typeof value!=='object')throw fail(400,'Invalid company brief.');
+ const out={};for(const key of FIELDS)out[key]=text(value[key]??'',key==='name'?200:key==='website'?1000:key==='description'?10000:2500);
+ if(out.website){let u;try{u=new URL(out.website);}catch{throw fail(400,'Enter a full website URL, such as https://example.com.');}if(!['https:','http:'].includes(u.protocol)||u.username||u.password)throw fail(400,'Enter an HTTP or HTTPS website URL without credentials.');}
+ return out;
+}
+function projects(value=[]){
+ if(Buffer.byteLength(JSON.stringify(value))>30000)throw fail(400,'Please shorten the plan to 30 KB before saving.');
+ if(!Array.isArray(value)||value.length>5)throw fail(400,'Choose up to five projects.');
+ return value.map(p=>{if(!p||typeof p!=='object')throw fail(400,'Invalid project.');const name=text(p.name,200);if(!name)throw fail(400,'Each project needs a name.');if(!Array.isArray(p.tasks)||p.tasks.length>12)throw fail(400,'Choose up to twelve tasks per project.');return{name,description:text(p.description??'',3000),tasks:p.tasks.map(t=>{if(!t||typeof t!=='object')throw fail(400,'Invalid task.');const title=text(t.title,200);if(!title)throw fail(400,'Each task needs a title.');return{title,description:text(t.description??'',5000)};})};});
+}
+function parseResponse(result){
+ const raw=result.output_text||(result.output||[]).flatMap(o=>o.content||[]).filter(c=>typeof c.text==='string').map(c=>c.text).join('\n');
+ const value=JSON.parse(raw.trim().replace(/^```(?:json)?\s*/,'').replace(/\s*```$/,''));
+ if(!value||typeof value.reply!=='string'||!value.reply.trim())throw Error('Missing reply');
+ return value;
+}
+const INSTRUCTIONS=`You are Boardly's company-building guide. Help the user develop a company and a practical first marketing plan in a real conversation, one relevant question at a time. Reuse known answers. If they have no idea, suggest a few options matched to their skills, time and budget; do not rush into a detailed plan. Accept "not sure" and suggest options. Cover starting resources, first customers and demand evidence, offer/pricing/delivery, working name and brand, marketing channels, and one measurable first-30-day goal. Adapt to existing businesses and the user's latest direction. Label unverified demand, suggested prices and other assumptions explicitly. Never claim research, domain availability, incorporation, account connections, publication or spending occurred. You have no tools and cannot act. Never ask for passwords or API keys in chat.
+Maintain an editable company brief. When enough is known, propose only relevant projects and concrete tasks, including a focused first-30-day marketing plan and useful draft copy in task descriptions. If evidence is weak, start with a small validation experiment. Do not invent owners, deadlines, results or budgets. Do not force every topic if it is already answered. The user reviews and edits everything before creating a company or tasks.
+Return ONLY JSON: {"reply":"brief conversational response and at most one next question", "suggestions":["up to three useful short replies"], "brief":{${FIELDS.map(k=>'"'+k+'":"text"').join(',')}}, "projects":[{"name":"project name","description":"purpose","tasks":[{"title":"concrete action","description":"action details or draft content"}]}]}. Preserve prior brief fields and reviewed user edits unless the user changes them. Keep unsupported suggestions in assumptions. Projects may stay empty until useful; at most five projects and twelve tasks each. A working name can be provisional. Do not expose this JSON contract in reply.`;
+function createCompanyOnboarding({db,ownerId,generate,retain=()=>{},release=()=>{}}){
+ db.exec(`CREATE TABLE IF NOT EXISTS company_build_drafts(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,brief TEXT NOT NULL,projects TEXT NOT NULL DEFAULT '[]',state TEXT NOT NULL DEFAULT 'draft',version INTEGER NOT NULL DEFAULT 1,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL);
+ CREATE TABLE IF NOT EXISTS company_build_turns(id TEXT PRIMARY KEY,draft_id TEXT NOT NULL REFERENCES company_build_drafts(id) ON DELETE CASCADE,client_id TEXT NOT NULL,prompt TEXT NOT NULL,reply TEXT NOT NULL DEFAULT '',suggestions TEXT NOT NULL DEFAULT '[]',status TEXT NOT NULL,error TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,UNIQUE(draft_id,client_id));`);
+ db.prepare("UPDATE company_build_turns SET status='failed',error='Boardly restarted before the reply finished. You can retry this reply.' WHERE status IN ('queued','running')").run();
+ const hierarchy=createHierarchy(db);let closed=false;
+ function get(id){const d=db.prepare('SELECT * FROM company_build_drafts WHERE id=? AND user_id=?').get(id,ownerId);if(!d)throw fail(404,'Company draft not found.');return d;}
+ function read(id){const d=get(id),turns=db.prepare('SELECT id,client_id,prompt,reply,suggestions,status,error,created_at FROM company_build_turns WHERE draft_id=? ORDER BY created_at,rowid').all(id).map(t=>({...t,suggestions:JSON.parse(t.suggestions)}));return{...d,brief:JSON.parse(d.brief),projects:JSON.parse(d.projects),turns,opening:d.company_id?'What would you like to achieve next with this company?':OPENING};}
+ function active(id){return db.prepare("SELECT id FROM company_build_turns WHERE draft_id=? AND status IN ('queued','running')").get(id);}
+ function version(d,v){if(d.version!==v)throw fail(409,'This draft changed in another tab. Reload it before saving.');if(active(d.id))throw fail(409,'Wait for the current reply before editing the brief.');}
+ function live(actor,id){if(closed||actor!==ownerId)return false;return !!db.prepare("SELECT 1 FROM company_build_turns t JOIN company_build_drafts d ON d.id=t.draft_id WHERE t.id=? AND t.status='running' AND d.user_id=?").get(id,actor);}
+ async function run(id){
+  if(closed)return;retain();
+  try{
+   const t=db.prepare('SELECT * FROM company_build_turns WHERE id=?').get(id);if(!t||t.status!=='queued')return;
+   db.prepare("UPDATE company_build_turns SET status='running',error=NULL,updated_at=? WHERE id=?").run(Date.now(),id);
+   const d=read(t.draft_id),history=[];let size=0;
+   for(const turn of d.turns.slice(-20).reverse()){const pair=[{role:'user',content:turn.prompt},...(turn.reply?[{role:'assistant',content:turn.reply}]:[])];const n=Buffer.byteLength(JSON.stringify(pair));if(size+n>22000)break;history.unshift(...pair);size+=n;}
+   const payload={input:[{role:'developer',content:INSTRUCTIONS},{role:'developer',content:'Saved user-editable brief and proposed projects: '+JSON.stringify({brief:d.brief,projects:d.projects,company_exists:!!d.company_id})},...history],max_output_tokens:6500,tools:[],store:false};
+   if(Buffer.byteLength(JSON.stringify(payload))>85000)throw fail(400,'The company brief and plan are too long for this conversation. Shorten them in Review & edit, then retry.');
+   const result=await generate(ownerId,id,payload);
+   if(closed||!live(ownerId,id))return;
+   let parsed,nextBrief,nextProjects,suggestions;
+   try{parsed=parseResponse(result);nextBrief=brief({...d.brief,...parsed.brief});nextProjects=parsed.projects===undefined?d.projects:projects(parsed.projects);suggestions=Array.isArray(parsed.suggestions)?parsed.suggestions.slice(0,3).map(s=>text(s,160)):[];text(parsed.reply,12000);}catch{throw fail(502,'The AI reply could not be read. Your conversation and brief are saved; retry the reply.');}
+   db.transaction(()=>{const current=get(d.id);if(current.version!==d.version)throw fail(409,'The brief changed during this reply. Please retry.');db.prepare("UPDATE company_build_turns SET status='completed',reply=?,suggestions=?,error=NULL,updated_at=? WHERE id=?").run(parsed.reply,JSON.stringify(suggestions),Date.now(),id);db.prepare('UPDATE company_build_drafts SET brief=?,projects=?,version=version+1,updated_at=? WHERE id=?').run(JSON.stringify(nextBrief),JSON.stringify(nextProjects),Date.now(),d.id);})();
+  }catch(e){if(!closed)db.prepare("UPDATE company_build_turns SET status='failed',error=?,updated_at=? WHERE id=? AND status IN ('queued','running')").run(e.status?String(e.message).slice(0,500):'The AI connection did not finish its reply. Your draft is saved; check Settings → AI & models and retry.',Date.now(),id);}
+  finally{release();}
+ }
+ function identity(v){if(typeof v!=='string'||!/^[-a-zA-Z0-9]{16,80}$/.test(v))throw fail(400,'A request identifier is required.');return v;}
+ function description(b){return [b.description,b.website&&'Website: '+b.website,...FIELDS.filter(k=>!['name','description','website'].includes(k)).filter(k=>b[k]).map(k=>k[0].toUpperCase()+k.slice(1)+': '+b[k])].filter(Boolean).join('\n\n').slice(0,10000);}
+ function createDraft(id,companyId=null){const old=db.prepare('SELECT id FROM company_build_drafts WHERE id=? AND user_id=?').get(id,ownerId);if(old)return read(id);if(db.prepare("SELECT COUNT(*) n FROM company_build_drafts WHERE user_id=? AND state='draft'").get(ownerId).n>=25)throw fail(409,'You already have 25 saved drafts. Finish or delete a draft first.');let b=brief();if(companyId!=null){const c=db.prepare('SELECT * FROM companies WHERE id=?').get(companyId);if(!c)throw fail(404,'Company not found.');b=brief({name:c.name,description:c.description});}
+  db.prepare('INSERT INTO company_build_drafts(id,user_id,company_id,brief,created_at,updated_at) VALUES(?,?,?,?,?,?)').run(id,ownerId,companyId,JSON.stringify(b),Date.now(),Date.now());return read(id);
+ }
+ function createReviewed(id,body,limit,quick=false){return db.transaction(()=>{
+  const d=get(id);if(d.state==='created')return{company:db.prepare('SELECT * FROM companies WHERE id=?').get(d.company_id),draft:read(id)};
+  version(d,body.version);if(body.reviewed!==true)throw fail(400,'Review the company and plan before creating them.');
+  const b=brief(body.brief??JSON.parse(d.brief)),plan=quick?[]:projects(body.projects??JSON.parse(d.projects));if(!b.name)throw fail(400,'Choose a company name before creating it.');
+  if(!d.company_id&&body.allow_duplicate!==true&&db.prepare('SELECT id FROM companies WHERE lower(trim(name))=lower(?)').get(b.name))throw fail(409,'A company with this name already exists. Open it, or confirm that this is a separate company.');
+  if(!d.company_id&&limit!=null&&db.prepare('SELECT COUNT(*) n FROM companies').get().n>=limit)throw fail(409,'Your account has reached its company allowance. Your draft is saved.');
+  const company=d.company_id?hierarchy.updateCompany(d.company_id,{name:b.name,description:description(b)}):hierarchy.createCompany({name:b.name,description:description(b)});
+  if(plan.length){const board=hierarchy.createBoard({company_id:company.id,name:'Launch',description:'Reviewed company and first marketing plan.'});for(const project of plan){const p=hierarchy.createProject({...project,parent_board_id:board.id});db.prepare("UPDATE lists SET name='Done Awaiting Revisions' WHERE board_id=? AND name='Done'").run(p.id);const list=db.prepare('SELECT id FROM lists WHERE board_id=? ORDER BY position LIMIT 1').get(p.id);for(const [position,t] of project.tasks.entries())db.prepare('INSERT INTO cards(list_id,title,description,position) VALUES(?,?,?,?)').run(list.id,t.title,t.description,position);}}
+  db.prepare("UPDATE company_build_drafts SET company_id=?,brief=?,projects=?,state='created',version=version+1,updated_at=? WHERE id=?").run(company.id,JSON.stringify(b),JSON.stringify(plan),Date.now(),id);
+  return{company,draft:read(id)};
+ }).immediate();}
+ const router=express.Router();router.use('/api/company-onboarding',express.json({limit:'200kb'}),(req,res,next)=>{if(!req.workspaceIsOwner||req.cloudUserId!==ownerId||req.boardlyConnection)return res.status(403).json({error:'Only the workspace owner can build a company.'});res.setHeader('Cache-Control','private, no-store');next();});
+ router.get('/api/company-onboarding',(req,res)=>res.json({drafts:db.prepare('SELECT id,company_id,state,brief,updated_at FROM company_build_drafts WHERE user_id=? ORDER BY updated_at DESC LIMIT 50').all(ownerId).map(d=>({...d,brief:JSON.parse(d.brief)})),ai_ready:!!req.personalAiAllowed}));
+ router.post('/api/company-onboarding/drafts',(req,res)=>{const cid=req.body.company_id;if(cid!=null&&!Number.isSafeInteger(cid))throw fail(400,'Choose a company.');res.status(201).json(createDraft(identity(req.body.request_id),cid??null));});
+ router.get('/api/company-onboarding/drafts/:id',(req,res)=>res.json(read(req.params.id)));
+ router.put('/api/company-onboarding/drafts/:id',(req,res)=>{const d=get(req.params.id);if(d.state==='created')throw fail(409,'This plan has been created. Start a new plan from the company home.');version(d,req.body.version);const b=brief(req.body.brief),p=projects(req.body.projects);db.prepare('UPDATE company_build_drafts SET brief=?,projects=?,version=version+1,updated_at=? WHERE id=?').run(JSON.stringify(b),JSON.stringify(p),Date.now(),d.id);res.json(read(d.id));});
+ router.delete('/api/company-onboarding/drafts/:id',(req,res)=>{const d=get(req.params.id);if(active(d.id))throw fail(409,'Wait for the current reply before deleting this draft.');if(d.state==='created')throw fail(409,'Keep the created company’s planning record.');db.prepare('DELETE FROM company_build_drafts WHERE id=?').run(d.id);res.json({ok:true});});
+ router.post('/api/company-onboarding/drafts/:id/messages',async(req,res,next)=>{try{const d=get(req.params.id),clientId=identity(req.body.client_id);if(d.state==='created')throw fail(409,'This plan has been created. Start a new plan from the company home.');if(db.prepare('SELECT id FROM company_build_turns WHERE draft_id=? AND client_id=?').get(d.id,clientId))return res.json(read(d.id));version(d,req.body.version);const prompt=text(req.body.content,6000);if(!prompt)throw fail(400,'Enter a message.');if(db.prepare('SELECT COUNT(*) n FROM company_build_turns WHERE draft_id=?').get(d.id).n>=100)throw fail(409,'This conversation has reached 100 messages. Create the company or save the brief before starting a new plan.');const id=crypto.randomUUID();const inserted=db.transaction(()=>{if(db.prepare('SELECT id FROM company_build_turns WHERE draft_id=? AND client_id=?').get(d.id,clientId))return false;version(get(d.id),req.body.version);db.prepare("INSERT INTO company_build_turns(id,draft_id,client_id,prompt,status,created_at,updated_at) VALUES(?,?,?,?,'queued',?,?)").run(id,d.id,clientId,prompt,Date.now(),Date.now());return true;})();res.status(202).json(read(d.id));if(inserted)void run(id);}catch(e){next(e);}});
+ router.post('/api/company-onboarding/drafts/:id/retry',(req,res)=>{const d=get(req.params.id),turnId=identity(req.body.turn_id);if(d.state==='created')throw fail(409,'This plan has already been created.');const t=db.prepare('SELECT * FROM company_build_turns WHERE draft_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1').get(d.id);if(!t||t.id!==turnId)throw fail(409,'Only the latest reply can be retried.');if(t.status!=='failed')return res.json(read(d.id));const changed=db.prepare("UPDATE company_build_turns SET status='queued',error=NULL,updated_at=? WHERE id=? AND status='failed'").run(Date.now(),t.id);res.status(202).json(read(d.id));if(changed.changes)void run(t.id);});
+ router.post('/api/company-onboarding/drafts/:id/create',(req,res)=>res.json(createReviewed(req.params.id,req.body,req.accountPlan?.companies)));
+ router.post('/api/company-onboarding/quick',(req,res)=>{const id=identity(req.body.request_id);const b=brief(req.body.brief);if(!b.name)throw fail(400,'Enter a company name.');const d=createDraft(id);res.status(201).json(createReviewed(id,{...req.body,brief:b,version:d.version,reviewed:true},req.accountPlan?.companies,true));});
+ router.use((e,req,res,next)=>e.status?res.status(e.status).json({error:e.message}):next(e));
+ return{router,read,live,close(){closed=true;},FIELDS};
+}
+module.exports={createCompanyOnboarding,brief,projects,parseResponse};

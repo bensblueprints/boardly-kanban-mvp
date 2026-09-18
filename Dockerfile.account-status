@@ -1,0 +1,2 @@
+FROM boardly-cloud:hardening-20260910
+COPY --chown=node:node server/cloud.js /app/server/cloud.js

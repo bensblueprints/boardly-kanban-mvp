@@ -1,0 +1,2 @@
+FROM boardly-cloud:chatgpt-722810b
+COPY --chown=node:node server/customer-billing.js /app/server/customer-billing.js

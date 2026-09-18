@@ -1,0 +1,2 @@
+FROM boardly-cloud-worker:github-errors-cb3cacd
+COPY --chown=node:node scripts/codex-worker.cjs scripts/subscription-runner.cjs scripts/response-images.cjs scripts/computeruse-broker.cjs scripts/project-computeruse-client.cjs /app/scripts/

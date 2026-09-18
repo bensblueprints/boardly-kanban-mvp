@@ -1,0 +1,57 @@
+const assert=require('node:assert/strict'),crypto=require('node:crypto'),fs=require('node:fs'),os=require('node:os'),path=require('node:path'),cp=require('node:child_process');
+const {Server,utils}=require('ssh2'),{fixture}=require('./member-fixture'),{workspacePath}=require('../server/cloud'),{createSshConnections}=require('../server/ssh-connections'),{loadKey}=require('../server/project-environment');
+(async()=>{
+ const hostKey=utils.generateKeyPairSync('ed25519'),fingerprint='SHA256:'+crypto.createHash('sha256').update(utils.parseKey(hostKey.private).getPublicSSH()).digest('base64').replace(/=+$/,'');
+ let allowedKey,authCalls=0;const sockets=new Set();
+ const server=new Server({hostKeys:[hostKey.private]},client=>{sockets.add(client);client.on('close',()=>sockets.delete(client));client.on('error',()=>{});client.on('authentication',ctx=>{authCalls++;if(ctx.method==='publickey'&&allowedKey&&ctx.username==='gpu'&&ctx.key.data.equals(allowedKey.getPublicSSH())&&(!ctx.signature||allowedKey.verify(ctx.blob,ctx.signature,ctx.hashAlgo)===true))ctx.accept();else ctx.reject();});client.on('ready',()=>client.on('session',accept=>accept().on('exec',(accept)=>{const stream=accept();stream.write('gpu-ready');stream.exit(0);stream.end();})));});
+ await new Promise(r=>server.listen(0,'127.0.0.1',r));const port=server.address().port;
+ let f,db;const scratch=fs.mkdtempSync(path.join(os.tmpdir(),'boardly-key-command-'));
+ try{
+  f=await fixture({publicAccess:true});const a=await f.project('A','GPU'),b=await f.project('B','Elsewhere');
+  const create=body=>f.api('/api/account/ssh/setup',{method:'POST',body:{host:'gpu@127.0.0.1',port,...body}});
+  const setup=await create({label:'Test GPU'}),id=setup.connection.id,base='/api/account/ssh/'+id;
+  assert.equal(setup.connection.username,'gpu');assert.equal(setup.connection.host,'127.0.0.1');assert.equal(setup.connection.allow_agent,0);assert.equal(setup.connection.access.mode,'owner');assert.equal(setup.connection.generated_key,true);assert.match(setup.public_key,/^ssh-ed25519 /);
+  assert.ok(!JSON.stringify(setup).includes('PRIVATE KEY'));allowedKey=utils.parseKey(setup.public_key);
+  const invalid=await f.request('/api/account/ssh/setup',{method:'POST',body:{host:'gpu@127.0.0.1; touch /tmp/unsafe'}});assert.equal(invalid.status,400);
+  const keyDir=path.join(scratch,'.ssh');fs.mkdirSync(keyDir);const ak=path.join(keyDir,'authorized_keys');fs.writeFileSync(ak,'existing-key-without-newline');
+  const script=setup.commands.linux.replaceAll('$HOME',scratch);
+  cp.execFileSync('sh',['-c',script],{stdio:'pipe'});cp.execFileSync('sh',['-c',script],{stdio:'pipe'});
+  const lines=fs.readFileSync(ak,'utf8').split('\n');assert.equal(lines[0],'existing-key-without-newline');assert.equal(lines.filter(l=>l===setup.public_key).length,1);assert.equal(fs.statSync(ak).mode&0o777,0o600);
+  assert.ok(setup.commands.windows.includes('administrators_authorized_keys'));assert.ok(setup.commands.windows.includes('*S-1-5-32-544:F'));
+  assert.equal((await f.request(base+'/activate',{method:'POST',body:{fingerprint,allow_agent:true}})).status,409);
+  const probe=await f.api(base+'/probe',{method:'POST',body:{}});assert.equal(probe.fingerprint,fingerprint);assert.equal(authCalls,0,'probe sends no authentication');
+  assert.equal((await f.request(base+'/activate',{method:'POST',body:{fingerprint:'SHA256:'+'a'.repeat(43),allow_agent:true}})).status,409);
+  const activated=await f.api(base+'/activate',{method:'POST',body:{fingerprint,allow_agent:true}});assert.equal(activated.connected,true);assert.equal(activated.connection.allow_agent,1);assert.ok(activated.connection.tested_at);assert.equal(activated.connection.fingerprint,fingerprint);
+  assert.equal((await f.request(base+'/probe',{method:'POST',body:{}})).status,409,'trusted host cannot be repinned through setup');
+  assert.equal((await f.api(base+'/test',{method:'POST',body:{}})).connected,true);
+  for(const p of [a,b])assert.ok((await f.api('/api/projects/'+p.project.id+'/ssh')).inherited.some(c=>c.id===id));
+  const grant=await f.api(`/api/companies/${a.company.id}/members`,{method:'POST',body:{email:'ssh-setup@example.com',role:'editor'}}),member=grant.member.user_id,opts={user:member,workspace:'user_owner'};
+  const grantId=(await f.api(`/api/companies/${a.company.id}/members`)).members[0].grant_id;
+  assert.equal((await f.request(`/api/companies/${a.company.id}/ssh/setup`,{...opts,method:'POST',body:{host:'gpu@127.0.0.1',port}})).status,403);
+  await f.api(`/api/memberships/${grantId}`,{method:'PATCH',body:{scopes:['ssh']}});
+  assert.ok(!(await f.api(`/api/projects/${a.project.id}/ssh`,opts)).inherited.some(c=>c.id===id),'owner-only connection hidden from permitted members');
+  for(const suffix of ['setup','probe','activate'])assert.equal((await f.request(base+'/'+suffix,{...opts,method:suffix==='setup'?'GET':'POST',...(suffix==='setup'?{}:{body:{}})})).status,403);
+  assert.equal((await f.request(base+'/setup',{user:member,workspace:member})).status,404,'other account isolated');
+  const scopedBase=`/api/projects/${a.project.id}/ssh`,scoped=await f.api(scopedBase+'/setup',{...opts,method:'POST',body:{host:'gpu@127.0.0.1',port}});
+  assert.match(scoped.public_key,/ssh-ed25519/);assert.notEqual(scoped.public_key,setup.public_key);assert.equal((await f.api(scopedBase+'/'+scoped.connection.id+'/setup',opts)).public_key,scoped.public_key);
+  assert.equal((await f.request(`/api/projects/${b.project.id}/ssh/${scoped.connection.id}/probe`,{...opts,method:'POST',body:{}})).status,403);
+  await f.api(`/api/memberships/${grantId}`,{method:'PATCH',body:{scopes:[]}});assert.equal((await f.request(scopedBase+'/'+scoped.connection.id+'/setup',opts)).status,403);
+  // Failed authentication must not enable or pin the connection.
+  await f.api(scopedBase+'/'+scoped.connection.id+'/probe',{method:'POST',body:{}});
+  assert.equal((await f.request(scopedBase+'/'+scoped.connection.id+'/activate',{method:'POST',body:{fingerprint,allow_agent:true}})).status,502);
+  let pending=(await f.api(scopedBase)).connections.find(c=>c.id===scoped.connection.id);assert.equal(pending.allow_agent,0);assert.equal(pending.fingerprint,'');
+  await f.api(scopedBase+'/'+scoped.connection.id,{method:'PATCH',body:{label:'Changed since scan'}});
+  assert.equal((await f.request(scopedBase+'/'+scoped.connection.id+'/activate',{method:'POST',body:{fingerprint,allow_agent:true}})).status,409);
+  db=new(require('better-sqlite3'))(path.join(workspacePath(f.root,'user_owner'),'app.db'));
+  const row=db.prepare('SELECT * FROM owner_ssh_connections WHERE id=?').get(id);assert.ok(!row.encrypted.includes('PRIVATE'));assert.equal(db.prepare('SELECT COUNT(*) n FROM ssh_setup').get().n,2);
+  const ssh=createSshConnections({db,key:loadKey(f.root),namespace:'user_owner'}),config=ssh.forJob(a.project.id,a.company.id,id);
+  assert.match(config.private_key,/PRIVATE KEY/);assert.equal((await ssh.execute(config,{requireEnabled:true,command:'GPU check'})).stdout,'gpu-ready');
+  assert.ok(!JSON.stringify(await f.api('/api/account/ssh')).includes(config.private_key));
+  assert.equal((await f.api(base+'/setup')).public_key,setup.public_key,'setup can resume without rotating the key');
+  const ops=await f.api('/api/management?query=ssh');assert.ok(JSON.stringify(ops).includes('/setup'));
+  await f.api(scopedBase+'/'+scoped.connection.id,{method:'PATCH',body:{auth_type:'password',password:'fixture-replacement'}});
+  assert.equal((await f.request(scopedBase+'/'+scoped.connection.id+'/setup')).status,404,'replacing credentials clears stale generated public key');
+  await f.api(base,{method:'DELETE'});assert.equal(db.prepare('SELECT 1 FROM ssh_setup WHERE connection_id=?').get(id),undefined);
+  console.log('PASS: real generated-key SSH, credential-free discovery, explicit fingerprint trust, encrypted/reopenable keys, safe idempotent install, owner/member isolation, scope revocation, failed-auth/stale-scan protection and inheritance');
+ }finally{db?.close();await f?.close();for(const s of sockets)s.end();await new Promise(r=>server.close(r));fs.rmSync(scratch,{recursive:true,force:true});}
+})().catch(e=>{console.error(e);process.exitCode=1;});

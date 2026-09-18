@@ -1,0 +1,20 @@
+{
+  "colors": {
+    "primary": "#b8f36b",
+    "primaryForeground": "#10130d",
+    "background": "#0c0e12",
+    "foreground": "#f5f5f6",
+    "input": "#171b22",
+    "inputForeground": "#f5f5f6",
+    "border": "#303640",
+    "mutedForeground": "#9ca6b5"
+  },
+  "darkColors": {
+    "primary": "#b8f36b",
+    "background": "#0c0e12",
+    "foreground": "#f5f5f6"
+  },
+  "design": {
+    "borderRadius": 14
+  }
+}

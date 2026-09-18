@@ -1,0 +1,3 @@
+FROM boardly-cloud-worker:onboarding-aa883e4
+COPY --chown=node:node scripts/codex-worker.cjs scripts/cloud-mcp-headers.cjs scripts/worker-mcp.cjs /app/scripts/
+COPY --chown=node:node deploy/cloud-worker-config.toml /home/node/.codex-defaults/config.toml

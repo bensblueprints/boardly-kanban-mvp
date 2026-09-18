@@ -28,7 +28,7 @@ try {
   console.log('[setup-native] Electron not installed — desktop mode binding skipped (fine for Docker/VPS).');
 }
 
-if (electronVersion) {
+if (electronVersion && process.env.BOARDLY_SKIP_ELECTRON_BINDING !== '1') {
   try {
     execSync(`npx prebuild-install --runtime=electron --target=${electronVersion}`, { cwd: bs3, stdio: 'inherit' });
     fs.copyFileSync(built, electronBinding);

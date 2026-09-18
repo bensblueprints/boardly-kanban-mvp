@@ -15,6 +15,8 @@ function createApp(opts = {}) {
   const dataDir = opts.dataDir || process.env.DATA_DIR || path.join(__dirname, '..', 'data');
   const adminPassword = opts.adminPassword || process.env.ADMIN_PASSWORD || 'admin';
   const autologinToken = opts.autologinToken || process.env.AUTOLOGIN_TOKEN || null;
+  const externalAuth = opts.externalAuth || null;
+  const cloudMode = !!externalAuth;
   // Desktop mode passes a large cap: it's a local app writing to your own disk,
   // so installers and other big files can be attached. A shared/VPS install
   // keeps a conservative default that can still be raised via MAX_UPLOAD_MB.
@@ -39,6 +41,10 @@ function createApp(opts = {}) {
     return sid;
   }
   function requireAuth(req, res, next) {
+    if (externalAuth) {
+      if (externalAuth(req)) return next();
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
     if (req.cookies.sid && sessions.has(req.cookies.sid)) return next();
     res.status(401).json({ error: 'Unauthorized' });
   }
@@ -53,7 +59,15 @@ function createApp(opts = {}) {
     }
   });
   const upload = multer({ storage, limits: { fileSize: maxUploadMb * 1024 * 1024 } });
-  app.use('/uploads', express.static(uploadsDir, { maxAge: '7d' }));
+  app.use('/uploads', requireAuth, (req, res, next) => {
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    if (cloudMode) {
+      res.setHeader('Content-Disposition', 'attachment');
+      res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'");
+    }
+    next();
+  }, express.static(uploadsDir, { cacheControl: false }));
 
   // ---- helpers ----
   const q = {
@@ -103,6 +117,7 @@ function createApp(opts = {}) {
       checklist: checklistProgress(card.id),
       comment_count: counts.comments,
       attachment_count: counts.attachments,
+      output_count: require('./task-files').taskFileCount(db,card.id),
       has_description: card.description.trim().length > 0
     };
   }
@@ -120,6 +135,7 @@ function createApp(opts = {}) {
       checklists,
       comments: db.prepare('SELECT * FROM comments WHERE card_id = ? ORDER BY id DESC').all(card.id),
       attachments: db.prepare('SELECT * FROM attachments WHERE card_id = ? ORDER BY id DESC').all(card.id),
+      output_count: require('./task-files').taskFileCount(db,card.id),
       activity: db.prepare('SELECT * FROM activity WHERE card_id = ? ORDER BY id DESC LIMIT 50').all(card.id)
     };
   }
@@ -132,7 +148,12 @@ function createApp(opts = {}) {
 
   // ================= AUTH =================
 
+  require('./task-files').registerTaskFileRoutes(app,{db,requireAuth});
+
+  app.get('/api/auth-config', (req, res) => res.json({ mode: 'local' }));
+
   app.post('/api/login', (req, res) => {
+    if (cloudMode) return res.status(404).json({ error: 'Use Clerk to sign in' });
     const pw = String(req.body?.password || '');
     const a = Buffer.from(pw);
     const b = Buffer.from(adminPassword);
@@ -143,6 +164,7 @@ function createApp(opts = {}) {
   });
 
   app.post('/api/logout', (req, res) => {
+    if (cloudMode) return res.status(404).json({ error: 'Use Clerk to sign out' });
     sessions.delete(req.cookies.sid);
     res.clearCookie('sid');
     res.json({ ok: true });
@@ -150,19 +172,23 @@ function createApp(opts = {}) {
 
   app.get('/api/me', (req, res) => {
     res.json({
-      authed: !!(req.cookies.sid && sessions.has(req.cookies.sid)),
+      authed: externalAuth ? !!externalAuth(req) : !!(req.cookies.sid && sessions.has(req.cookies.sid)),
       maxUploadMb
     });
   });
 
   // desktop-mode auto-login
-  if (autologinToken) {
+  if (autologinToken && !cloudMode) {
     app.get('/auth/auto', (req, res) => {
       if (req.query.token !== autologinToken) return res.status(403).send('Forbidden');
       newSession(res);
       res.redirect('/');
     });
   }
+
+  const hierarchy = require('./hierarchy').createHierarchy(db);
+  app.use(['/api/hierarchy','/api/companies','/api/company-boards','/api/projects'], requireAuth);
+  app.use(hierarchy.router);
 
   // ================= BOARDS =================
 
@@ -215,6 +241,7 @@ function createApp(opts = {}) {
       `SELECT a.filename FROM attachments a JOIN cards c ON c.id = a.card_id
        JOIN lists l ON l.id = c.list_id WHERE l.board_id = ?`
     ).all(board.id);
+    files.push(...db.prepare('SELECT filename FROM project_files WHERE board_id=? AND filename IS NOT NULL').all(board.id));
     db.prepare('DELETE FROM boards WHERE id = ?').run(board.id);
     for (const f of files) {
       try { fs.unlinkSync(path.join(uploadsDir, f.filename)); } catch {}
@@ -234,7 +261,7 @@ function createApp(opts = {}) {
           .all(l.id).map(cardSummary)
       }));
     const labels = db.prepare('SELECT * FROM labels WHERE board_id = ? ORDER BY id').all(board.id);
-    res.json({ ...board, lists, labels });
+    res.json({ ...board, hierarchy: (require('./hierarchy').ensureProjects(db), hierarchy.scope(board.id)), lists, labels });
   });
 
   app.get('/api/boards/:id/activity', requireAuth, (req, res) => {
@@ -535,6 +562,12 @@ function createApp(opts = {}) {
       return res.status(404).json({ error: 'Card not found' });
     }
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    try { req.revalidateMember?.(); } catch(e) { fs.rmSync(req.file.path,{force:true}); return res.status(e.status||403).json({error:e.message}); }
+    const quota = req.accountPlan ? req.accountPlan.storage_bytes : opts.storageQuotaBytes;
+    if (quota != null && require('./project-assets').storageUsage(db).usedBytes + req.file.size > quota) {
+      fs.rmSync(req.file.path, { force: true });
+      return res.status(413).json({ error: 'Your storage allowance is full' });
+    }
     const info = db.prepare(
       'INSERT INTO attachments (card_id, filename, original_name, size, mime) VALUES (?, ?, ?, ?, ?)'
     ).run(card.id, req.file.filename, req.file.originalname, req.file.size, req.file.mimetype);
@@ -648,6 +681,8 @@ function createApp(opts = {}) {
           }
         }
       }
+      const importLimit=req.accountPlan ? req.accountPlan.storage_bytes : opts.storageQuotaBytes;
+      if(importLimit!=null && require('./project-assets').storageUsage(db).usedBytes>importLimit)throw Object.assign(Error('This import exceeds the account storage allowance'),{status:413});
       db.prepare('INSERT INTO activity (board_id, card_id, action, detail) VALUES (?, NULL, ?, ?)')
         .run(boardId, 'board_imported', `Imported board "${b.name}"`);
     });
@@ -662,7 +697,8 @@ function createApp(opts = {}) {
     if (err && err.code === 'LIMIT_FILE_SIZE') {
       return res.status(413).json({ error: `File is too large — the limit is ${maxUploadMb} MB` });
     }
-    if (err) return res.status(500).json({ error: err.message || 'Upload failed' });
+    if(err&&cloudMode)return next(err);
+    if (err) return res.status(err.status||500).json({ error: err.message || 'Upload failed' });
     next();
   });
 
@@ -841,6 +877,7 @@ function createApp(opts = {}) {
 
   // Called by the desktop/server entrypoints on boot.
   app.startMcpIfEnabled = async () => {
+    if (cloudMode) return null;
     const settings = mcpSettings.readSettings(dataDir);
     if (!settings.enabled) return null;
     try {
@@ -918,7 +955,7 @@ function createApp(opts = {}) {
 
   const syncEngine = createSyncEngine({ db, uploadsDir });
   mountSyncRoutes(app, requireAuth, { engine: syncEngine });
-  syncEngine.start();
+  if (!cloudMode) syncEngine.start();
   app.syncEngine = syncEngine;
   app.stopSync = () => syncEngine.stop();
   // Test hook: lets black-box convergence tests read the raw DB. Not used by
