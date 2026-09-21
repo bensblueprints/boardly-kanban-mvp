@@ -25,12 +25,12 @@ function CopyField({ label, value, multiline = false }) {
   </div>;
 }
 
-export default function CloudConnections({ initialTab = 'mcp', onClose, embedded=false, developerAccess=true }) {
+export default function CloudConnections({ initialTab = 'mcp', onClose, embedded=false, developerAccess=true, mcpAccess=true }) {
   const [tab, setTab] = useState(initialTab), [connections, setConnections] = useState([]);
   const [origin, setOrigin] = useState(location.origin), [name, setName] = useState('');
   const [issued, setIssued] = useState(null), [error, setError] = useState(''), [busy, setBusy] = useState(false);
   const load = async () => { const d = await api.get('/api/connections'); setConnections(d.connections); setOrigin(d.origin); };
-  useEffect(() => { if(developerAccess)load().catch(e => setError(e.message)); }, [developerAccess]);
+  useEffect(() => { if(developerAccess||mcpAccess)load().catch(e => setError(e.message)); }, [developerAccess,mcpAccess]);
   useEffect(() => { const f = e => { if (!embedded && e.key === 'Escape') onClose(); }; window.addEventListener('keydown', f); return () => window.removeEventListener('keydown', f); }, [onClose,embedded]);
   const create = async e => {
     e.preventDefault(); setBusy(true); setError('');
@@ -42,7 +42,7 @@ export default function CloudConnections({ initialTab = 'mcp', onClose, embedded
     <section role={embedded?'region':'dialog'} aria-modal={embedded?undefined:true} aria-label="Boardly connections and downloads" onClick={e => e.stopPropagation()} className={embedded?'min-w-0':'w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl border border-zinc-700 bg-zinc-900 shadow-2xl'}>
       {!embedded&&<header className="flex items-center justify-between p-5 border-b border-zinc-800"><h2 className="font-semibold text-lg">Connect your workspace</h2><button aria-label="Close connections" onClick={onClose}><X size={20} /></button></header>}
       <nav className="flex flex-wrap gap-2 pb-4" aria-label="Connection type">
-        {[["mcp", 'MCP connector', Plug], ['sync', 'Desktop sync', Cloud], ['downloads', 'Download apps', Download]].filter(([id])=>developerAccess||id==='downloads').map(([id, title, Icon]) => <button key={id} aria-pressed={tab === id} onClick={() => { setTab(id); setError(''); }} className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm ${tab === id ? 'bg-indigo-500/20 text-indigo-200' : 'text-zinc-400 hover:bg-zinc-800'}`}><Icon size={16} />{title}</button>)}
+        {[["mcp", 'MCP connector', Plug], ['sync', 'Desktop sync', Cloud], ['downloads', 'Download apps', Download]].filter(([id])=>developerAccess||id==='mcp'||id==='downloads').map(([id, title, Icon]) => <button key={id} aria-pressed={tab === id} onClick={() => { setTab(id); setError(''); }} className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm ${tab === id ? 'bg-indigo-500/20 text-indigo-200' : 'text-zinc-400 hover:bg-zinc-800'}`}><Icon size={16} />{title}</button>)}
       </nav>
       <div className="space-y-5">
         {error && <p role="alert" className="text-sm text-rose-300">{error}</p>}

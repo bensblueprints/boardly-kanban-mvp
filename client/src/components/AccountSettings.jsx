@@ -44,7 +44,7 @@ export default function AccountSettings({onClose,initialSection='profile',profil
   ...(owner?[{id:'gpu',label:'GPU workers',icon:Cpu,description:'Connect your graphics cards to unlock Boardly GPU Workflows, monitor queues and generate images or videos.',keywords:'3090 5060 ComfyUI workflows queue graphics'}]:[]),
   ...connectorDefinitions.filter(c=>owner&&['github','computeruse','ssh','tailscale','onepassword','claude','kimi','local','fal','higgsfield'].includes(c.id)).map(c=>({...c,description:c.guide})),
   {id:'apps',label:'Apps & devices',icon:Download,description:'Download Boardly and manage supported desktop or external AI connections.',keywords:'MCP API sync download Windows Mac Linux'},
-  ...(platformOwner?[{id:'mcp',label:'Developer & MCP',icon:Plug,description:'Create and revoke keys for external AI clients accessing this workspace.'}]:[]),
+  {id:'mcp',label:'Developer & MCP',icon:Plug,description:'Connect your AI client to your account with a revocable MCP key.'},
   ...(owner?[{id:'data',label:'Import & export',icon:Database,description:'Bring existing boards into your workspace and export project data.'}]:[]),
   {id:'help',label:'Help & getting started',icon:HelpCircle,description:'Find your way around Boardly and understand how access is organized.'},
  ];
@@ -60,7 +60,7 @@ export default function AccountSettings({onClose,initialSection='profile',profil
   {owner&&section==='ssh'&&<SshConnections kind="owner" id={0}/>}
   {owner&&section==='gpu'&&<GpuWorkersSettings/>}
   {owner&&section==='tailscale'&&<><TailscaleConnection/><button onClick={()=>select('ssh')} className={settingsButton}>Next: add an SSH computer</button></>}
-  {(section==='apps'||section==='mcp'&&platformOwner)&&<CloudConnections key={section} embedded initialTab={section==='mcp'?'mcp':'downloads'} developerAccess={platformOwner}/>}
+  {(section==='apps'||section==='mcp')&&<CloudConnections key={section} embedded initialTab={section==='mcp'?'mcp':'downloads'} developerAccess={platformOwner}/>}
   {owner&&section==='data'&&<ImportData/>}
   {section==='help'&&<div className="space-y-5"><button className={settingsButton+' bg-indigo-600'} onClick={onHelp}>Open guided tutorial</button><div className="grid gap-4">{[['Your account','Manage your profile, AI funding, billing and reusable credentials from the profile menu.'],['Companies','Open a company’s Settings for its team and shared connectors. Company access includes the projects inside it.'],['Boards & projects','Boards group projects. Project settings manage specific repositories, computers, secrets, payment cards and project-only members.'],['Agents & permissions','Ask and Plan help you think. Work agents act with the permissions and connections you enable. Giving someone project access does not automatically grant every connector.']].map(([title,text])=><article className="border border-zinc-800 rounded-xl p-4" key={title}><h3 className="font-medium">{title}</h3><p className="text-sm text-zinc-400 mt-2">{text}</p></article>)}</div></div>}
  </SettingsShell>;

@@ -130,9 +130,7 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
       });
     }
     const connection = connections.authenticate(match[1]);
-    // Personal connections are owner-only during this initial launch. Paid
-    // customers need their own revocation/entitlement integration before enablement.
-    if (!connection || connection.user_id !== config.ownerId) return res.status(401).json({ error: 'Connection key expired or revoked' });
+    if (!connection) return res.status(401).json({ error: 'Connection key expired or revoked' });
     req.boardlyConnection = connection;
     req.boardlyManagement = managementRequests.has(req);
     next();
@@ -198,11 +196,11 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
       if(!auth.isAuthenticated){if(route==='/api/me')return res.json({authed:false,allowed:false,error:'Sign in to continue'});return res.status(401).json({error:'Sign in to continue'});}
       if(req.headers.origin&&req.headers.origin!==config.origin)return res.status(403).json({error:'Request origin is not allowed'});
       if(!['GET','HEAD','OPTIONS'].includes(req.method)&&!req.headers.origin&&!/^Bearer /i.test(req.headers.authorization||''))return res.status(403).json({error:'An origin or session bearer token is required'});
-      const own=access.status===200,shared=req.boardlyConnection?[]:memberships.accounts(auth.userId),choices=[];
+      const own=access.status===200,shared=memberships.accounts(auth.userId),choices=[];
       if(own)choices.push({owner_id:auth.userId,name:'My account',owner:true});
       for(const item of shared)if(item.owner_id!==auth.userId)choices.push({...item,owner:false});
-      const requested=req.boardlyConnection?auth.userId:req.headers['x-boardly-workspace'];
-      let chosen=choices.find(c=>c.owner_id===requested)||(requested&&route!=='/api/me'?null:choices[0]);
+      const requested=req.boardlyConnection?(req.headers['x-boardly-workspace']||auth.userId):req.headers['x-boardly-workspace'];
+      let chosen=choices.find(c=>c.owner_id===requested)||(req.boardlyConnection?choices.find(c=>c.owner_id===auth.userId):(requested&&route!=='/api/me'?null:choices[0]));
       if(!chosen){if(route==='/api/me')return res.json({authed:true,allowed:false,userId:auth.userId,error:access.error||'No shared projects are available',workspaces:[]});return res.status(403).json({error:'This account has not shared any work with you'});}
       let plan;
       if(personal.billing.ready()){const billed=await personal.billing.state(chosen.owner_id);plan={...billed.plan,extra_users:billed.extra_users,users:billed.plan.users===null?null:billed.plan.users+billed.extra_users};}
@@ -211,7 +209,13 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
       if(chosen.owner&&!config.freeEnabled&&auth.userId!==config.ownerId)plan={...plan,storage_bytes:config.storageLimitBytes||1073741824};
       if(req.boardlyConnection){const allowed=req.boardlyConnection.scope==='mcp'?(route==='/mcp'||managementRequests.has(req)):req.boardlyConnection.scope==='sync'?/^\/api\/sync\/(push|pull|attachments\/[a-f0-9-]+)$/.test(route)||route==='/api/account/status':req.boardlyConnection.scope==='worker'&&/^\/api\/worker\//.test(route);if(!allowed)return res.status(403).json({error:'This connection key does not permit that action'});}
       else if(route.startsWith('/api/worker/'))return res.status(403).json({error:'A worker connection is required'});
-      if((route.startsWith('/api/connections')||route==='/mcp'||route.startsWith('/api/sync/')||route==='/api/account/status')&&(!chosen.owner||auth.userId!==config.ownerId))return res.status(403).json({error:'This integration is currently available to the owner'});
+      const ownerOnlyIntegration=route.startsWith('/api/sync/')||route==='/api/account/status';
+      const connectionApi=route.startsWith('/api/connections');
+      const mcpRoute=route==='/mcp';
+      const accountMcpAllowed=(connectionApi&&chosen.owner&&auth.userId===chosen.owner_id&&!req.boardlyConnection)||
+        (mcpRoute&&((req.boardlyConnection?.scope==='mcp')||(chosen.owner&&auth.userId===chosen.owner_id&&!req.boardlyConnection)));
+      if(ownerOnlyIntegration&&(!chosen.owner||auth.userId!==config.ownerId))return res.status(403).json({error:'This integration is currently available to the owner'});
+      if((connectionApi||mcpRoute)&&!accountMcpAllowed)return res.status(403).json({error:'This integration is only available from the connection owner'});
       if(/^\/api\/(mcp|coach|login|logout)(\/|$)/i.test(req.path))return res.status(404).json({error:'Local desktop control is not available in cloud mode'});
       req.cloudUserId=auth.userId;req.cloudSessionId=auth.sessionId||auth.sessionClaims?.sid||null;req.workspaceOwnerId=chosen.owner_id;req.workspaceIsOwner=chosen.owner;req.accountPlan=plan;
       const tenant=tenantFor(chosen.owner_id,plan);req.tenant=tenant;
@@ -264,7 +268,7 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
   app.use(personal.providers.router);
   app.use(require('./project-computers').createComputerRoutes({memberships}));
   app.use((req,res,next)=>{
-    if(!req.tenant||req.workspaceIsOwner)return next();
+    if(!req.tenant||req.workspaceIsOwner||(req.boardlyConnection?.scope==='mcp'&&req.path==='/mcp'))return next();
     require('./member-access').memberGuard({db:req.tenant.app.db,memberships,ownerId:req.workspaceOwnerId,userId:req.cloudUserId})(req,res,next);
   });
   app.use((req,res,next)=>{
@@ -282,8 +286,40 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
     if (!connections.revoke(req.cloudUserId, req.params.id)) return res.status(404).json({ error: 'Connection not found' });
     res.json({ ok: true });
   });
+  const mcpReadTools=new Set(['list_project_files','list_project_folders','list_project_links','list_task_files','read_project_file','get_hierarchy','list_boards','get_board','get_card','find_cards','list_attachments']);
+  function mcpProjectId(db,name,args){
+    if(args.board_id!=null||args.project_id!=null)return Number(args.board_id??args.project_id);
+    const queries={
+      card_id:'SELECT l.board_id AS id FROM cards c JOIN lists l ON l.id=c.list_id WHERE c.id=?',
+      list_id:'SELECT board_id AS id FROM lists WHERE id=?',
+      label_id:'SELECT board_id AS id FROM labels WHERE id=?',
+      checklist_id:'SELECT l.board_id AS id FROM checklists x JOIN cards c ON c.id=x.card_id JOIN lists l ON l.id=c.list_id WHERE x.id=?',
+      checklist_item_id:'SELECT l.board_id AS id FROM checklist_items i JOIN checklists x ON x.id=i.checklist_id JOIN cards c ON c.id=x.card_id JOIN lists l ON l.id=c.list_id WHERE i.id=?',
+      file_id:'SELECT board_id AS id FROM project_files WHERE id=?',
+      folder_id:'SELECT board_id AS id FROM project_folders WHERE id=?',
+    };
+    for(const [key,sql] of Object.entries(queries))if(args[key]!=null)return db.prepare(sql).get(Number(args[key]))?.id??null;
+    return null;
+  }
+  function mcpAuthorize(req,name,args,result){
+    if(req.workspaceIsOwner)return result;
+    const db=req.tenant.app.db,permissions=require('./member-access').accessForMember(db,memberships.grants(req.workspaceOwnerId,req.cloudUserId));
+    if(name==='list_boards')return result.filter(project=>permissions.project(project.id));
+    if(name==='get_hierarchy'){
+      const projects=result.projects.filter(project=>permissions.project(project.id)),boardIds=new Set(projects.map(project=>project.parent_board_id)),companyIds=new Set(result.boards.filter(board=>boardIds.has(board.id)).map(board=>board.company_id));
+      return {...result,companies:result.companies.filter(company=>companyIds.has(company.id)),boards:result.boards.filter(board=>boardIds.has(board.id)),projects};
+    }
+    const projectId=mcpProjectId(db,name,args);
+    if(projectId!=null){const role=permissions.project(projectId);if(!role)throw Object.assign(Error('This project is not shared with your account'),{status:403});if(!mcpReadTools.has(name)&&role!=='editor')throw Object.assign(Error('This shared project is view-only'),{status:403});return result;}
+    if(args.company_id!=null||args.parent_board_id!=null){
+      const companyId=args.company_id!=null?Number(args.company_id):db.prepare('SELECT company_id FROM company_boards WHERE id=?').get(Number(args.parent_board_id))?.company_id;
+      const role=permissions.company(companyId);if(!role)throw Object.assign(Error('This company is not shared with your account'),{status:403});if(!mcpReadTools.has(name)&&role!=='editor')throw Object.assign(Error('This shared company is view-only'),{status:403});return result;
+    }
+    if(mcpReadTools.has(name))return result;
+    throw Object.assign(Error('This action is managed by the account owner'),{status:403});
+  }
   app.post('/mcp', express.json({ limit: '4mb' }), async (req, res, next) => {
-    const server = createBoardlyServer({ db: req.tenant.app.db, uploadsDir: req.tenant.uploadsDir, management: managementFor(req) });
+    const server = createBoardlyServer({ db: req.tenant.app.db, uploadsDir: req.tenant.uploadsDir, management: managementFor(req), authorize: (name,args,result)=>mcpAuthorize(req,name,args,result) });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on('close', () => { transport.close().catch(() => {}); server.close().catch(() => {}); });
     try { await server.connect(transport); await transport.handleRequest(req, res, req.body); }

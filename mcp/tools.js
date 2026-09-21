@@ -24,7 +24,7 @@ function resolveDataDir() {
   return path.join(__dirname, '..', 'data');
 }
 
-function createBoardlyServer({ db, uploadsDir, management }) {
+function createBoardlyServer({ db, uploadsDir, management, authorize }) {
   const server = new McpServer({ name: 'boardly', version: '1.2.0' });
   if (management) require('../server/management-api').registerManagementTools(server, management);
 
@@ -92,7 +92,8 @@ function createBoardlyServer({ db, uploadsDir, management }) {
   function tool(name, description, schema, handler) {
     server.registerTool(name, { description, inputSchema: schema }, async (args) => {
       try {
-        return ok(await handler(args));
+        const result=await handler(args);
+        return ok(authorize?await authorize(name,args,result):result);
       } catch (err) {
         return fail(err.message || String(err));
       }
