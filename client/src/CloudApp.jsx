@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
 import { ClerkProvider, SignIn, SignUp, useAuth, useClerk, useUser } from '@clerk/react';
+import AndroidDownload from './components/AndroidDownload.jsx';
 import BrandLogo from './components/BrandLogo.jsx';
 import WorkspaceSession from './WorkspaceSession.jsx';
 
@@ -26,6 +27,7 @@ function CloudSession({ ownerOnly }) {
       ? <SignUp routing="path" path="/sign-up" signInUrl="/sign-in" fallbackRedirectUrl="/app" />
       : <SignIn routing="path" path="/sign-in" signUpUrl={ownerOnly ? undefined : '/sign-up'} fallbackRedirectUrl="/app" withSignUp={!ownerOnly} transferable={!ownerOnly} />}
   </div>;
+  if(location.pathname==='/download/android')return <AndroidDownload getToken={getToken}/>;
   return <WorkspaceSession key={userId} userId={userId} getToken={getToken} profile={user?{name:user.fullName||user.username||user.primaryEmailAddress?.emailAddress,email:user.primaryEmailAddress?.emailAddress,imageUrl:user.imageUrl}:null} onManageProfile={()=>openUserProfile()} onLogout={() => signOut({ redirectUrl: '/' })} />;
 }
 

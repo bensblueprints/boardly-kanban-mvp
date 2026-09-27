@@ -10,6 +10,7 @@ import AccountFunding from './AccountFunding.jsx';
 import MediaConnection from './MediaConnection.jsx';
 import AIProviderConnection from './AIProviderConnection.jsx';
 import OnePasswordConnection from './OnePasswordConnection.jsx';
+import HuggingFaceConnection from './HuggingFaceConnection.jsx';
 import AccountGithub from './AccountGithub.jsx';
 import AccountComputerUse from './AccountComputerUse.jsx';
 import SshConnections from './SshConnections.jsx';
@@ -42,7 +43,7 @@ export default function AccountSettings({onClose,initialSection='profile',profil
   {id:'billing',label:'Billing & usage',icon:CreditCard,description:'Workspace plans, storage, user seats, invoices and subscription management.'},
   ...(owner?[{id:'connectors',label:'Connectors',icon:Plug,description:'Discover what Boardly can connect to and choose the right scope.',keywords:'integrations apps email SMTP IMAP cards secrets'}]:[]),
   ...(owner?[{id:'gpu',label:'GPU workers',icon:Cpu,description:'Connect your graphics cards to unlock Boardly GPU Workflows, monitor queues and generate images or videos.',keywords:'3090 5060 ComfyUI workflows queue graphics'}]:[]),
-  ...connectorDefinitions.filter(c=>owner&&['github','computeruse','ssh','tailscale','onepassword','claude','kimi','local','openwebui','fal','higgsfield'].includes(c.id)).map(c=>({...c,description:c.guide})),
+  ...connectorDefinitions.filter(c=>owner&&['github','huggingface','computeruse','ssh','tailscale','onepassword','claude','kimi','local','openwebui','fal','higgsfield'].includes(c.id)).map(c=>({...c,description:c.guide})),
   {id:'apps',label:'Apps & devices',icon:Download,description:'Download Boardly and manage supported desktop or external AI connections.',keywords:'MCP API sync download Windows Mac Linux'},
   {id:'mcp',label:'Developer & MCP',icon:Plug,description:'Connect your AI client to your account with a revocable MCP key.'},
   ...(owner?[{id:'data',label:'Import & export',icon:Database,description:'Bring existing boards into your workspace and export project data.'}]:[]),
@@ -53,6 +54,7 @@ export default function AccountSettings({onClose,initialSection='profile',profil
   {['billing','ai'].includes(section)&&<AccountFunding key={section} section={section}/>}
   {owner&&section==='connectors'&&<>{scopeConnector&&<ScopeChooser key={scopeConnector} connector={scopeConnector} onCancel={()=>setScopeConnector(null)}/>}<ConnectorCatalog platformOwner={platformOwner} onSelect={select} onChooseScope={id=>setScopeConnector(id)}/></>}
   {owner&&['fal','higgsfield'].includes(section)&&<MediaConnection key={section} provider={section}/>}
+  {owner&&section==='huggingface'&&<HuggingFaceConnection/>}
   {owner&&['claude','kimi','local','openwebui'].includes(section)&&<AIProviderConnection key={section} provider={section} platformOwner={platformOwner}/>}
   {owner&&section==='onepassword'&&<OnePasswordConnection/>}
   {owner&&section==='github'&&<AccountGithub/>}

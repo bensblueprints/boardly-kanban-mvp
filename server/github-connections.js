@@ -30,6 +30,7 @@ async function githubRequest(token, route, { method = 'GET', body } = {}) {
     await response.body?.cancel();
     throw fail(response.status === 401 || response.status === 403 ? 403 : response.status === 404 ? 404 : response.status === 409 || response.status === 422 ? 409 : 502, messages[response.status] || 'GitHub could not complete this request. Inspect the repository before retrying.');
   }
+  if(response.status===204)return {no_content:true};
   // Bound responses, including recursive trees and file blobs.
   const chunks = []; let size = 0;
   for await (const chunk of response.body) { size += chunk.length; if (size > 12 * 1024 * 1024) throw fail(413, 'GitHub response is too large. Read a narrower directory or smaller file.'); chunks.push(chunk); }
@@ -48,6 +49,7 @@ function createGithubConnections({ db, key, namespace, request = githubRequest }
     CREATE UNIQUE INDEX IF NOT EXISTS github_project ON github_connections(project_id) WHERE project_id IS NOT NULL;`);
   if(!db.prepare('PRAGMA table_info(github_connections)').all().some(c=>c.name==='credential_source'))db.exec("ALTER TABLE github_connections ADD COLUMN credential_source TEXT NOT NULL DEFAULT 'scoped'");
   db.exec('CREATE TABLE IF NOT EXISTS github_account_credentials (id TEXT PRIMARY KEY,encrypted TEXT NOT NULL,updated_at INTEGER NOT NULL,tested_at INTEGER,login TEXT)');
+  db.exec('CREATE TABLE IF NOT EXISTS github_access_reviews(id TEXT PRIMARY KEY,body TEXT NOT NULL,credential_version INTEGER NOT NULL,status TEXT NOT NULL,created_at INTEGER NOT NULL,result TEXT)');
   const columns = 'id,company_id,project_id,repository,branch,allow_agent,created_at,updated_at,tested_at,last_commit_sha,last_pushed_at,credential_source';
   const hierarchy = require('./hierarchy').createHierarchy(db);
   const field = kind => { if (!['companies', 'projects'].includes(kind)) throw fail(400, 'Invalid GitHub scope'); return kind === 'companies' ? 'company_id' : 'project_id'; };
@@ -201,6 +203,49 @@ function createGithubConnections({ db, key, namespace, request = githubRequest }
   }catch(e){next(e);}});
   router.use('/api/account/github',(req,res,next)=>req.workspaceIsOwner?next():res.status(403).json({error:'Only the account owner can manage the account GitHub PAT'}));
   router.get('/api/account/github',(req,res)=>res.json(accountState()));
+  const accessAccount=()=>{const a=accountRow();if(!a?.encrypted)throw fail(409,'Connect your account GitHub PAT first.');return {version:a.updated_at,token:decrypt({...accountBinding,encrypted:a.encrypted})};};
+  const userName=value=>{if(typeof value!=='string'||!/^[a-zA-Z0-9][a-zA-Z0-9-]{0,38}$/.test(value))throw fail(400,'Enter a GitHub username.');return value;};
+  const accessView=r=>({id:r.id,...JSON.parse(r.body),status:r.status,created_at:r.created_at,result:r.result?JSON.parse(r.result):null});
+  async function accessSnapshot(auth,repository,username){
+    const repo=await request(auth.token,'/repos/'+repository);
+    if(!repo.permissions?.admin)throw fail(403,'This GitHub token needs repository Administration write access, and your account must be a repository administrator.');
+    const user=await request(auth.token,'/users/'+username);
+    if(!user.login||user.login.toLowerCase()!==username.toLowerCase())throw fail(404,'GitHub user not found.');
+    let current=null;try{const permission=await request(auth.token,'/repos/'+repository+'/collaborators/'+username+'/permission');current=permission.role_name||permission.permission||null;}catch(e){if(e.status!==404)throw e;}
+    if(accountRow()?.updated_at!==auth.version)throw fail(409,'GitHub credential changed. Prepare a new review.');
+    return {repository:repositoryName(repo.full_name||repository),username:user.login,current_role:current,owner_type:repo.owner?.type||'Organization'};
+  }
+  router.get('/api/account/github/access', (req,res)=>res.json({reviews:db.prepare('SELECT * FROM github_access_reviews ORDER BY created_at DESC LIMIT 30').all().map(accessView)}));
+  async function previewAccess(data){
+    const repository=repositoryName(data.repository),username=userName(data.username),role=data.role;
+    if(!['pull','triage','push','maintain','admin'].includes(role))throw fail(400,'Choose Read, Triage, Write, Maintain or Admin.');
+    const auth=accessAccount(),snapshot=await accessSnapshot(auth,repository,username);
+    if(snapshot.owner_type==='User'&&role!=='push')throw fail(400,'Personal GitHub repositories support collaborator Write access. Choose Write, or use an organization repository for other roles.');
+    const id=crypto.randomUUID(),body={...snapshot,role};
+    db.prepare('INSERT INTO github_access_reviews VALUES(?,?,?,?,?,NULL)').run(id,JSON.stringify(body),auth.version,'pending',Date.now());
+    return {...accessView(db.prepare('SELECT * FROM github_access_reviews WHERE id=?').get(id)),review_url:'/app#/settings/github'};
+  }
+  router.post('/api/account/github/access/preview',async(req,res,next)=>{try{res.json(await previewAccess(req.body));}catch(e){next(e);}});
+  router.post('/api/account/github/access/:id/confirm',async(req,res,next)=>{try{
+    if(req.boardlyConnection)throw fail(403,'The account owner must confirm access changes in Boardly. Agent and MCP tokens cannot approve invitations.');
+    if(req.body.confirmed!==true)throw fail(400,'Review and confirm this access change.');
+    const row=db.prepare('SELECT * FROM github_access_reviews WHERE id=?').get(req.params.id);
+    if(!row)throw fail(404,'Access review not found.');
+    if(row.status==='completed')return res.json(accessView(row));
+    if(row.status!=='pending'||Date.now()-row.created_at>600000)throw fail(409,'This review is expired or already submitted. Check access before preparing another.');
+    const auth=accessAccount();if(auth.version!==row.credential_version)throw fail(409,'GitHub credential changed. Prepare a new review.');
+    const data=JSON.parse(row.body),fresh=await accessSnapshot(auth,data.repository,data.username);
+    if(fresh.current_role!==data.current_role)throw fail(409,'The user’s GitHub access changed. Prepare a new review.');
+    if(!db.prepare("UPDATE github_access_reviews SET status='submitting' WHERE id=? AND status='pending'").run(row.id).changes)throw fail(409,'This request is already being submitted.');
+    try {
+      const result=await request(auth.token,'/repos/'+data.repository+'/collaborators/'+data.username,{method:'PUT',body:{permission:data.role}});
+      if(!result?.id&&!result?.no_content)throw fail(502,'GitHub returned an unexpected receipt.');
+      const receipt={status:result?.id?'invitation_pending':'access_updated',invitation_id:result?.id||null,repository:data.repository,username:data.username,role:data.role};
+      db.prepare("UPDATE github_access_reviews SET status='completed',result=? WHERE id=?").run(JSON.stringify(receipt),row.id);
+      res.json(accessView(db.prepare('SELECT * FROM github_access_reviews WHERE id=?').get(row.id)));
+    }catch(e){db.prepare("UPDATE github_access_reviews SET status='needs_review' WHERE id=?").run(row.id);throw fail(e.status||502,'GitHub could not confirm the outcome. Check repository access/invitations before trying again.');}
+  }catch(e){next(e);}});
+
   router.put('/api/account/github',(req,res)=>res.json(saveAccount(req.body.token)));
   // Keep the revision tombstone so delete/re-add cannot revive an in-flight operation.
   router.delete('/api/account/github',(req,res)=>{const old=accountRow();if(old)db.prepare("UPDATE github_account_credentials SET encrypted='',updated_at=?,tested_at=NULL,login=NULL WHERE id='account'").run(Math.max(Date.now(),old.updated_at+1));res.json({ok:true});});
@@ -230,6 +275,6 @@ function createGithubConnections({ db, key, namespace, request = githubRequest }
     const result = await ssh.execute(server,{requireEnabled:true,command:`export BOARDLY_RELEASE_SHA='${release.sha}'; export BOARDLY_REPOSITORY='${row.repository}'; ${data.command}`,valid:() => { try { return permitted() && ssh.forJob(projectId,companyId,server.id,actor).updated_at === server.updated_at; } catch { return false; } }});
     return { ...result,release,deployed:result.code === 0,verification:data.verification };
   }
-  return { router,save,saveAccount,accountState,direct,effective,agentList,context,forJob,operate,run,redact:input => { let result = input; for (const row of db.prepare('SELECT * FROM github_connections').all()) result = redact(result,{token:decrypt(row)}); const account=accountRow();if(account?.encrypted)result=redact(result,{token:decrypt({...accountBinding,encrypted:account.encrypted})});return result; } };
+  return { router,save,saveAccount,previewAccess,accountState,direct,effective,agentList,context,forJob,operate,run,redact:input => { let result = input; for (const row of db.prepare('SELECT * FROM github_connections').all()) result = redact(result,{token:decrypt(row)}); const account=accountRow();if(account?.encrypted)result=redact(result,{token:decrypt({...accountBinding,encrypted:account.encrypted})});return result; } };
 }
 module.exports = { createGithubConnections, githubRequest, repositoryName, branchName, filePath };

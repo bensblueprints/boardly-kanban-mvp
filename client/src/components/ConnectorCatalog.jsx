@@ -63,6 +63,15 @@ export const connectorDefinitions = [
       "Verify your API key and choose a model. Your Kimi Code or chat subscription is separate from API billing.",
   },
   {
+    id: "huggingface",
+    label: "Hugging Face",
+    icon: BrainCircuit,
+    scope: "Account",
+    category: "AI",
+    description: "Connect your Hugging Face account and organization membership.",
+    guide: "Verify your personal access token and view your organizations. Automated invitations depend on your organization plan and SSO setup.",
+  },
+  {
     id: "openwebui",
     label: "Open WebUI",
     icon: BrainCircuit,
@@ -225,6 +234,7 @@ function statusRequest(id, scope, entityId) {
         );
       },
     ];
+  if (id === "huggingface") return ["/api/account/huggingface", d => saved(d.connected, "Account connected")];
   if (id === "onepassword")
     return [
       scope === "account" ? "/api/account/onepassword" : base + "/onepassword",

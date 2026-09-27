@@ -42,7 +42,7 @@ function createOpenWebUIRequest({resolve=dns.lookup, request=https.request}={}) 
           let size=0;const parts=[];
           res.on('data', chunk=>{size+=chunk.length;if(size>6000000)req.destroy(Error('Response too large'));else parts.push(chunk);});
           res.on('error', ()=>reject(fail(502, 'Open WebUI interrupted the response.')));
-          res.on('end', ()=>resolveResponse(new Response(Buffer.concat(parts),{status:res.statusCode})));
+          res.on('end', ()=>{try{resolveResponse(new Response([204,205].includes(res.statusCode)?null:Buffer.concat(parts),{status:res.statusCode}));}catch{reject(fail(502, 'Open WebUI returned an invalid response.'));}});
         });
         req.on('error', ()=>reject(fail(controller.signal.aborted?504:502, 'Open WebUI could not complete the connection. Check its address, TLS certificate and availability.')));
         req.end(body ? JSON.stringify(body) : undefined);

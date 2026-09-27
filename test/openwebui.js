@@ -11,17 +11,18 @@ const {createBilling}=require('../server/customer-billing');
  assert.equal(baseURL('https://models.example.com/prefix/api/'),'https://models.example.com/prefix');
  for(const address of ['127.0.0.1','10.0.0.1','169.254.169.254','100.64.0.1','0.0.0.0','::1','::ffff:127.0.0.1','fc00::1','fe80::1','2002:7f00:1::','2001:db8::1'])assert.equal(publicAddress(address),false,address);
  for(const address of ['1.1.1.1','2606:4700:4700::1111'])assert.equal(publicAddress(address),true,address);
- let dialed=0,pinned,redirect=false;
+ let dialed=0,pinned,redirect=false,empty=false;
  const request=(url,options,callback)=>{
   dialed++;assert.equal(url.href,'https://models.example.com/api/models');assert.equal(options.agent,false);assert.equal(options.headers.Authorization,'Bearer fixture-private');
   options.lookup(url.hostname,{all:true},(_,addresses)=>pinned=addresses);
-  const req=new EventEmitter();req.end=()=>{const res=new PassThrough();res.statusCode=redirect?302:200;res.headers={location:'https://evil.example'};callback(res);res.end(JSON.stringify({data:[{id:'model'}]}));};req.destroy=()=>{};return req;
+  const req=new EventEmitter();req.end=()=>{const res=new PassThrough();res.statusCode=redirect?302:empty?204:200;res.headers={location:'https://evil.example'};callback(res);res.end(JSON.stringify({data:[{id:'model'}]}));};req.destroy=()=>{};return req;
  };
  const c={base_url:'https://models.example.com',token:'fixture-private'};
  const transport=createOpenWebUIRequest({resolve:async()=>[{address:'1.1.1.1',family:4}],request});
  assert.equal((await transport(c,'/api/models')).status,200);assert.deepEqual(pinned,[{address:'1.1.1.1',family:4}]);
- redirect=true;await assert.rejects(()=>transport(c,'/api/models'),{status:400});assert.equal(dialed,2);
- const mixed=createOpenWebUIRequest({resolve:async()=>[{address:'1.1.1.1',family:4},{address:'127.0.0.1',family:4}],request});await assert.rejects(()=>mixed(c,'/api/models'),{status:400});assert.equal(dialed,2);
+ empty=true;assert.equal((await transport(c,'/api/models')).status,204);empty=false;
+ redirect=true;await assert.rejects(()=>transport(c,'/api/models'),{status:400});assert.equal(dialed,3);
+ const mixed=createOpenWebUIRequest({resolve:async()=>[{address:'1.1.1.1',family:4},{address:'127.0.0.1',family:4}],request});await assert.rejects(()=>mixed(c,'/api/models'),{status:400});assert.equal(dialed,3);
  const paid=new Set(['user_paid']),calls=[];let revokeDuringCall=false;
  const fake=async(connection,route,body)=>{
   calls.push({connection,route,body});assert.equal(connection.base_url,'https://models.example.com');assert.equal(connection.token,'fixture-paid-key');

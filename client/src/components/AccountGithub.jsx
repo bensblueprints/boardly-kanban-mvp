@@ -1,3 +1,4 @@
+import GithubAccess from './GithubAccess.jsx';
 import React,{useEffect,useRef,useState} from 'react';
 import {api} from '../api.js';
 const button='rounded-lg border border-zinc-700 px-3 py-2 text-sm hover:bg-zinc-800 disabled:opacity-40';
@@ -18,5 +19,6 @@ export default function AccountGithub({focus=false}){
    <button disabled={busy||!token} className={button}>{busy?'Saving…':'Save account GitHub PAT'}</button>
   </form>
   {state.has_token&&<div className="flex flex-wrap gap-3"><button disabled={busy} className={button} onClick={()=>act(async()=>{const result=await api.post(base+'/test',{});setNotice('GitHub account verified as '+result.login+'. Test each assigned repository to confirm its access.');})}>Test account PAT</button><button disabled={busy} className={button} onClick={()=>{if(window.confirm('Remove the account GitHub PAT? Repositories using it will stop connecting until you add a new PAT. Separate repository tokens are unaffected.'))act(async()=>{await api.del(base);setToken('');setNotice('Account PAT removed. Repository assignments are kept.');});}}>Remove account PAT</button></div>}</>}
+ <GithubAccess/>
  </section>;
 }
