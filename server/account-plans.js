@@ -24,6 +24,13 @@ function createPlanService(config,identity) {
       cached.set(ownerId,{until:now+30000,value});return value;
     } catch(e) {if(e.status===404)return PLANS.basic;throw Object.assign(Error('Could not verify the sponsoring account plan. Try again shortly.'),{status:503});}
   }
-  return {sponsored};
+  async function paidAccess(userId) {
+    if(userId===config.ownerId)return true;
+    try {
+      const subscription=await identity.billing.getUserBillingSubscription(userId);
+      return (subscription.subscriptionItems||[]).some(i=>i.status==='active'&&(!i.periodEnd||i.periodEnd>Date.now())&&['agency','serial_entrepreneur'].includes(i.plan?.slug));
+    } catch(e) {if(e.status===404)return false;throw Object.assign(Error('Could not verify your paid subscription. Try again shortly.'),{status:503});}
+  }
+  return {sponsored,paidAccess};
 }
 module.exports={PLANS,OWNER,planFor,createPlanService};

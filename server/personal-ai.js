@@ -4,7 +4,7 @@ const Database=require('better-sqlite3');
 const express=require('express');
 const {RATES,cost,VERSION}=require('./ai-rates');
 const fail=(status,message)=>Object.assign(Error(message),{status});
-function createPersonalAI({config,key,request=fetch,tailnet,providerConnectorRequest}){
+function createPersonalAI({config,key,request=fetch,tailnet,providerConnectorRequest,paidPlanAccess,openWebUIRequest}){
  const db=new Database(path.join(config.dataDir,'personal-ai.db'));require('node:fs').chmodSync(path.join(config.dataDir,'personal-ai.db'),0o600);db.pragma('journal_mode = WAL');
  db.exec(`CREATE TABLE IF NOT EXISTS ai_accounts(user_id TEXT PRIMARY KEY,mode TEXT NOT NULL DEFAULT 'none',encrypted_key TEXT,model TEXT NOT NULL DEFAULT 'gpt-6-astra',monthly_cap_nano INTEGER NOT NULL DEFAULT 20000000000);
  CREATE TABLE IF NOT EXISTS ai_requests(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,job_id TEXT NOT NULL,mode TEXT NOT NULL,status TEXT NOT NULL,hold_nano INTEGER NOT NULL,created_at INTEGER NOT NULL);
@@ -15,7 +15,7 @@ function createPersonalAI({config,key,request=fetch,tailnet,providerConnectorReq
  const billing=require('./customer-billing').createBilling({db,config,request});
  const account=user=>db.prepare('SELECT * FROM ai_accounts WHERE user_id=?').get(user)||{user_id:user,mode:'none',model:'gpt-6-astra',monthly_cap_nano:20e9};
  function setMode(user,mode){if(!['none','chatgpt','provider'].includes(mode))throw Error('Invalid connection mode');const old=account(user);db.prepare('INSERT INTO ai_accounts VALUES (?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET mode=excluded.mode').run(user,mode,old.encrypted_key||null,old.model,old.monthly_cap_nano);}
- const providers=require('./ai-providers').createAIProviders({db,key,tailnet,request:providerConnectorRequest,account,setMode});
+ const providers=require('./ai-providers').createAIProviders({db,key,tailnet,request:providerConnectorRequest,account,setMode,openWebUIRequest,paidAccess:async user=>user===config.ownerId|| (config.billing?.secretKey?await billing.paidAccess(user):await paidPlanAccess?.(user)||false)});
  function seal(user,value){const iv=crypto.randomBytes(12),c=crypto.createCipheriv('aes-256-gcm',key,iv);c.setAAD(Buffer.from('personal-ai:'+user));return Buffer.concat([iv,c.update(value),c.final(),c.getAuthTag()]).toString('base64');}
  function unseal(user,value){const b=Buffer.from(value,'base64'),d=crypto.createDecipheriv('aes-256-gcm',key,b.subarray(0,12));d.setAAD(Buffer.from('personal-ai:'+user));d.setAuthTag(b.subarray(-16));return Buffer.concat([d.update(b.subarray(12,-16)),d.final()]).toString();}
  const month=()=>Date.UTC(new Date().getUTCFullYear(),new Date().getUTCMonth(),1);

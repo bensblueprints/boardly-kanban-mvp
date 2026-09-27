@@ -54,9 +54,9 @@ const {createAIProviders,payloadFor,outputFor}=require('../server/ai-providers')
  const providers=createAIProviders({db,key:crypto.randomBytes(32),account:u=>({mode:accounts.get(u)||'none'}),setMode:(u,m)=>accounts.set(u,m),tailnet:{async device(u,d){check(u,d);},async dial(u,d,port){check(u,d);assert.equal(port,11434);return new Promise((resolve,reject)=>{const s=net.connect(server.address().port,'127.0.0.1',()=>resolve(s));s.on('error',reject);});}}});
  try{
   await assert.rejects(()=>providers.save('local-owner','local',{device_id:'foreign-server',port:11434},()=>{}),{status:404});assert.equal(calls.length,0);
-  await providers.save('local-owner','local',{device_id:'my-model-server',port:11434},()=>{});providers.activate('local-owner','local');
-  const r=await providers.respond(providers.authorize('local-owner'),'job-local',{input:[{role:'user',content:'Hi'}],tools:[]});assert.equal(r.output[0].content[0].text,'Local response');assert.deepEqual(calls,['/v1/models','/v1/chat/completions']);
-  assert.throws(()=>providers.authorize('different-account'),{status:402});
+  await providers.save('local-owner','local',{device_id:'my-model-server',port:11434},()=>{});await providers.activate('local-owner','local');
+  const r=await providers.respond(await providers.authorize('local-owner'),'job-local',{input:[{role:'user',content:'Hi'}],tools:[]});assert.equal(r.output[0].content[0].text,'Local response');assert.deepEqual(calls,['/v1/models','/v1/chat/completions']);
+  await assert.rejects(()=>providers.authorize('different-account'),{status:402});
  }finally{server.closeAllConnections();await new Promise(r=>server.close(r));db.close();}
  const screenshot={type:'function_call_output',call_id:'call_s',output:[{type:'input_image',image_url:'data:image/png;base64,AAAA'}]};
  for(const provider of ['claude','kimi','local']){const p=payloadFor({provider,model:'fixture'},{input:[screenshot],tools:[]});assert.ok(JSON.stringify(p).includes(provider==='claude'?'"type":"image"':'"type":"image_url"'));}

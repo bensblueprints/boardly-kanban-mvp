@@ -46,6 +46,14 @@ function createBilling({db,config,request=fetch}){
   return{customer:cid,items:result.data};
  }
  const entitled=s=>s.status==='active'&&(!s.current_period_end||s.current_period_end*1000>Date.now());
+ // Only subscriptions verified against this account's Stripe customer qualify.
+ // Configured recurring add-ons (including voice, when deployed) qualify too.
+ async function paidAccess(userId){
+  if(userId===config.ownerId)return true;
+  if(!cfg.secretKey)return false;
+  const all=await subscriptions(userId),allowed=Object.values(prices).filter(Boolean).concat(cfg.voicePrices||[]);
+  return all.items.some(s=>entitled(s)&&!s.pause_collection&&s.items.data.some(i=>allowed.includes(i.price.id)&&(i.quantity??1)>0&&(!i.current_period_end||i.current_period_end*1000>Date.now())));
+ }
  async function state(userId){
   const complimentary=db.prepare('SELECT COALESCE(SUM(quantity),0) n FROM billing_complimentary_seats WHERE user_id=?').get(userId).n;
   if(!ready())return{ready:false,plan:userId===config.ownerId?OWNER:PLANS.basic,extra_users:complimentary,paid_extra_users:0,complimentary_users:complimentary,ai:false};
@@ -110,6 +118,6 @@ function createBilling({db,config,request=fetch}){
   // ordering, forged checkout redirects and replay cannot grant a subscription.
   res.json({received:true});
  });
- return{ready,state,checkout,report,webhook,portal:async userId=>stripe('billing_portal/sessions',{customer:await customer(userId),configuration:cfg.portalConfiguration,return_url:accountUrl})};
+ return{ready,state,paidAccess,checkout,report,webhook,portal:async userId=>stripe('billing_portal/sessions',{customer:await customer(userId),configuration:cfg.portalConfiguration,return_url:accountUrl})};
 }
 module.exports={createBilling};

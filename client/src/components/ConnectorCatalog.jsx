@@ -63,6 +63,15 @@ export const connectorDefinitions = [
       "Verify your API key and choose a model. Your Kimi Code or chat subscription is separate from API billing.",
   },
   {
+    id: "openwebui",
+    label: "Open WebUI",
+    icon: BrainCircuit,
+    scope: "Account",
+    category: "AI",
+    description: "Use your own Open WebUI models for Boardly agents.",
+    guide: "For paying customers: connect your HTTPS server, verify your API key and select a model with tool calling.",
+  },
+  {
     id: "local",
     label: "Local AI",
     icon: BrainCircuit,
@@ -205,7 +214,7 @@ function statusRequest(id, scope, entityId) {
           scope === "account" ? "API key saved" : "Generation enabled",
         ),
     ];
-  if (["claude", "kimi", "local"].includes(id))
+  if (["claude", "kimi", "local", "openwebui"].includes(id))
     return [
       "/api/account/ai-providers",
       (d) => {

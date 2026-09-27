@@ -44,7 +44,7 @@ function readCloudConfig(env = process.env) {
     storageLimitBytes, freeEnabled: true, openaiApiKey: env.BOARDLY_OPENAI_API_KEY || '',
     audio: { url: env.BOARDLY_AUDIO_URL || '', token: env.BOARDLY_AUDIO_TOKEN_FILE ? fs.readFileSync(env.BOARDLY_AUDIO_TOKEN_FILE, 'utf8').trim() : env.BOARDLY_AUDIO_TOKEN || '' },
     chatgpt: { url: env.BOARDLY_CHATGPT_URL || '', token: env.BOARDLY_CHATGPT_TOKEN_FILE ? fs.readFileSync(env.BOARDLY_CHATGPT_TOKEN_FILE, 'utf8').trim() : '' },
-    billing:{portalConfiguration:env.STRIPE_PORTAL_CONFIGURATION_ID,planPortalConfiguration:env.STRIPE_PLAN_PORTAL_CONFIGURATION_ID,seatPortalConfiguration:env.STRIPE_SEAT_PORTAL_CONFIGURATION_ID,secretKey:env.STRIPE_SECRET_KEY,webhookSecret:env.STRIPE_WEBHOOK_SECRET,serialPrice:env.STRIPE_SERIAL_PRICE_ID,agencyPrice:env.STRIPE_AGENCY_PRICE_ID,seatPrice:env.STRIPE_SEAT_PRICE_ID,aiPrice:env.STRIPE_AI_PRICE_ID,meterEvent:env.STRIPE_AI_METER_EVENT},
+    billing:{portalConfiguration:env.STRIPE_PORTAL_CONFIGURATION_ID,planPortalConfiguration:env.STRIPE_PLAN_PORTAL_CONFIGURATION_ID,seatPortalConfiguration:env.STRIPE_SEAT_PORTAL_CONFIGURATION_ID,secretKey:env.STRIPE_SECRET_KEY,webhookSecret:env.STRIPE_WEBHOOK_SECRET,serialPrice:env.STRIPE_SERIAL_PRICE_ID,agencyPrice:env.STRIPE_AGENCY_PRICE_ID,seatPrice:env.STRIPE_SEAT_PRICE_ID,aiPrice:env.STRIPE_AI_PRICE_ID,meterEvent:env.STRIPE_AI_METER_EVENT,voicePrices:[env.STRIPE_VOICE_STARTER_PRICE_ID,env.STRIPE_VOICE_PLUS_PRICE_ID,env.STRIPE_VOICE_PRO_PRICE_ID].filter(Boolean)},
   };
 }
 
@@ -59,7 +59,7 @@ function accessFor(auth, config) {
   return plan ? { status: 200, plan } : { status: 403, error: 'An active Boardly subscription is required' };
 }
 
-function createCloudApp(config = readCloudConfig(), { emailConnector, identityClient, providerRequest, githubRequest, computeruseRequest, computeruseDesktopRequest, onepasswordClient, providerConnectorRequest, mediaRequest, botRequest } = {}) {
+function createCloudApp(config = readCloudConfig(), { emailConnector, identityClient, providerRequest, githubRequest, computeruseRequest, computeruseDesktopRequest, onepasswordClient, providerConnectorRequest, openWebUIRequest, mediaRequest, botRequest } = {}) {
   const { createConnections } = require('./connections');
   const { createSyncHub } = require('./sync/hub');
   const { createProjectChat } = require('./project-chat');
@@ -91,7 +91,7 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
   const {planFor,createPlanService,PLANS} = require('./account-plans');
   const planService = createPlanService(config,identity);
   const tailnet=require('./tailnet').createTailnet(config.tailnet||{url:process.env.BOARDLY_TAILNET_URL,token:process.env.BOARDLY_TAILNET_TOKEN_FILE?fs.readFileSync(process.env.BOARDLY_TAILNET_TOKEN_FILE,'utf8').trim():undefined});
-  const personal=require('./personal-ai').createPersonalAI({config,key:projectKey,request:providerRequest,tailnet,providerConnectorRequest});
+  const personal=require('./personal-ai').createPersonalAI({config,key:projectKey,request:providerRequest,tailnet,providerConnectorRequest,openWebUIRequest,paidPlanAccess:planService.paidAccess});
   const chatgpt=require('./chatgpt').createChatGPT(config.chatgpt,personal);
   app.use(personal.billing.webhook);
   const dist = path.join(__dirname, '..', 'dist');
