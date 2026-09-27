@@ -2,7 +2,7 @@
   "expo": {
     "name": "Boardly",
     "slug": "boardly-agent",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -26,7 +26,8 @@
       "permissions": [
         "android.permission.RECORD_AUDIO",
         "android.permission.CAMERA"
-      ]
+      ],
+      "versionCode": 2
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -41,7 +42,8 @@
       "expo-secure-store",
       "expo-web-browser",
       "expo-sharing",
-      "./plugins/with-release-signing.cjs"
+      "./plugins/with-release-signing.cjs",
+      "./plugins/with-optional-camera.cjs"
     ],
     "scheme": "boardly",
     "backgroundColor": "#0c0e12"

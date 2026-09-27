@@ -7,8 +7,9 @@ import * as Sharing from 'expo-sharing';
 import * as Crypto from 'expo-crypto';
 import { ORIGIN, isWorkspaceUrl, downloadUrl } from './config';
 
-export default function ProjectWorkspace({ route, workspaceId, userId, title, onClose, onSignOut }: {
+export default function ProjectWorkspace({ route, workspaceId, userId, title, profile, onManageProfile, onClose, onSignOut }: {
   route: string; workspaceId: string; userId: string; title: string; onClose: () => void; onSignOut: () => void;
+  profile: { name?: string; email?: string; imageUrl?: string }; onManageProfile: () => void;
 }) {
   const { getToken } = useAuth();
   const web = useRef<WebView>(null), documentId = useRef(''), currentUrl = useRef(''), generation = useRef(0);
@@ -26,16 +27,17 @@ export default function ProjectWorkspace({ route, workspaceId, userId, title, on
     if (!(source === ORIGIN || source === ORIGIN + '/' || isWorkspaceUrl(source)) || !isWorkspaceUrl(currentUrl.current) || event.nativeEvent.data.length > 250000) return;
     let message: { type: string; id: string; nonce: string; url?: string; name?: string; workspaceId?: string; content?: string };
     try { message = JSON.parse(event.nativeEvent.data); } catch { return; }
-    if (!message || typeof message !== 'object' || typeof message.id !== 'string' || typeof message.nonce !== 'string' || !['ready', 'token', 'signout', 'download', 'shareText'].includes(message.type)) return;
+    if (!message || typeof message !== 'object' || typeof message.id !== 'string' || typeof message.nonce !== 'string' || !['ready', 'token', 'signout', 'profile', 'download', 'shareText'].includes(message.type)) return;
     if (!/^[a-zA-Z0-9-]{1,80}$/.test(message.id) || !/^[a-f0-9-]{36}$/.test(message.nonce)) return;
-    if (message.type === 'ready') { if (documentId.current !== message.nonce) generation.current++; documentId.current = message.nonce; reply(message.id, message.nonce, { userId, workspaceId }); return; }
+    if (message.type === 'ready') { if (documentId.current !== message.nonce) generation.current++; documentId.current = message.nonce; reply(message.id, message.nonce, { userId, workspaceId, profile, capabilities: { manageProfile: true } }); return; }
     if (message.nonce !== documentId.current) return;
     const activeGeneration = generation.current;
     try {
       if (message.type === 'token') {
         const token = await getToken();
         if (activeGeneration === generation.current) reply(message.id, message.nonce, token);
-      } else if (message.type === 'signout') onSignOut();
+      } else if (message.type === 'profile') { onManageProfile(); reply(message.id, message.nonce, { opened: true }); }
+      else if (message.type === 'signout') onSignOut();
       else if (message.type === 'download' || message.type === 'shareText') {
         const url = message.type === 'download' ? downloadUrl(message.url || '') : null, token = await getToken();
         if (!token || activeGeneration !== generation.current) throw new Error('Sign in again to download this file.');

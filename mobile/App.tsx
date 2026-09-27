@@ -4,11 +4,12 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { ClerkProvider, useAuth, useClerk, useUser } from '@clerk/expo';
 import { tokenCache } from '@clerk/expo/token-cache';
-import { AuthView, UserButton } from '@clerk/expo/native';
+import { AuthView, UserButton, UserProfileView } from '@clerk/expo/native';
 import NetInfo from '@react-native-community/netinfo';
 import * as Haptics from 'expo-haptics';
 import { ORIGIN, PUBLISHABLE_KEY } from './src/config';
 import ProjectWorkspace from './src/ProjectWorkspace';
+import AndroidUpdate from './src/AndroidUpdate';
 
 type Account = { owner_id: string; name: string; owner: boolean };
 type Access = { allowed: boolean; userId: string; workspaceId: string; workspaces: Account[]; error?: string };
@@ -24,6 +25,8 @@ function Boardly() {
   const [selection, setSelection] = useState(''), [company, setCompany] = useState<number | null>(null), [search, setSearch] = useState('');
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [online, setOnline] = useState(true);
   const [opened, setOpened] = useState<{ route: string; title: string } | null>(null), [accountsOpen, setAccountsOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  useEffect(() => { if (!isSignedIn) setProfileOpen(false); }, [isSignedIn]);
   const request = useRef<AbortController | null>(null);
   useEffect(() => { request.current?.abort(); setAccess(null); setTree(null); setOpened(null); setSelection(''); return () => request.current?.abort(); }, [userId]);
   const refresh = useCallback(async () => {
@@ -61,7 +64,7 @@ function Boardly() {
       <Pressable accessibilityRole="button" style={s.primary} onPress={() => setAuthOpen(true)}><Text style={s.primaryText}>Continue to Boardly →</Text></Pressable>
       <Text style={s.small}>Sign in with your existing Boardly account or create one.</Text>
       <Pressable onPress={() => Linking.openURL(ORIGIN)}><Text style={s.link}>Explore Boardly</Text></Pressable>
-    </View> : opened && access && userId ? <ProjectWorkspace key={userId + access.workspaceId} {...opened} workspaceId={access.workspaceId} userId={userId} onClose={() => { setOpened(null); refresh(); }} onSignOut={logout} /> : <>
+    </View> : opened && access && userId ? <ProjectWorkspace key={userId + access.workspaceId} {...opened} workspaceId={access.workspaceId} userId={userId} profile={{ name: user?.fullName || user?.username || undefined, email: user?.primaryEmailAddress?.emailAddress, imageUrl: user?.imageUrl }} onManageProfile={() => setProfileOpen(true)} onClose={() => { setOpened(null); refresh(); }} onSignOut={logout} /> : <>
       <View style={s.header}><Image source={logo} style={s.logo} accessibilityLabel="Boardly" /><Text style={s.brand}>Boardly</Text><UserButton /></View>
       {!online && <Text style={s.offline}>You’re offline. Reconnect to load and update projects.</Text>}
       <ScrollView contentContainerStyle={s.content} refreshControl={<RefreshControl refreshing={busy} onRefresh={refresh} tintColor="#b8f36b" />}>
@@ -70,6 +73,12 @@ function Boardly() {
         {!!error && <View style={s.error}><Text style={s.text}>{error}</Text><Pressable onPress={refresh}><Text style={s.link}>Try again</Text></Pressable></View>}
         <View style={s.stats}><View><Text style={s.statNumber}>{tree?.companies.length ?? '—'}</Text><Text style={s.small}>Companies</Text></View><View><Text style={s.statNumber}>{tree?.projects.length ?? '—'}</Text><Text style={s.small}>Projects</Text></View><View><Text style={s.statNumber}>{tree?.projects.reduce((sum, project) => sum + project.task_count, 0) ?? '—'}</Text><Text style={s.small}>Open tasks</Text></View></View>
         <Pressable style={s.feature} disabled={!access} onPress={() => open('#/', 'Your workspace')}><Text style={s.featureTitle}>Your AI team, ready to work ↗</Text><Text style={s.small}>Open a company or project to chat, hear a briefing, and start work.</Text></Pressable>
+        <View accessibilityLabel="Workspace shortcuts" style={{ gap: 10 }}>
+          <Pressable accessibilityRole="button" style={s.account} disabled={!access} onPress={() => open('#/', 'Dashboard & all boards')}><Text style={s.link}>Dashboard & all boards →</Text></Pressable>
+          <Pressable accessibilityRole="button" style={s.account} disabled={!access} onPress={() => open('#/settings/profile', 'Account settings')}><Text style={s.link}>Account settings →</Text></Pressable>
+          <Pressable accessibilityRole="button" style={s.account} disabled={!access} onPress={() => open('#/settings/billing', 'Billing & usage')}><Text style={s.link}>Billing & usage →</Text></Pressable>
+          <Pressable accessibilityRole="button" style={s.account} disabled={!access} onPress={() => open('#/settings/ai', 'AI & models')}><Text style={s.link}>AI & models →</Text></Pressable>
+        </View>
         <TextInput accessibilityLabel="Search projects" placeholder="Search projects…" placeholderTextColor="#828c9a" value={search} onChangeText={setSearch} style={s.search} autoCorrect={false} />
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.filters}>
           <Pressable style={[s.chip, company === null && s.selected]} onPress={() => setCompany(null)}><Text style={company === null ? s.chipActive : s.text}>All projects</Text></Pressable>
@@ -78,9 +87,11 @@ function Boardly() {
         {company !== null && <Pressable style={s.companyLink} onPress={() => open('#/company/' + company, tree?.companies.find(item => item.id === company)?.name || 'Company')}><Text style={s.link}>Open company · Chat & audio briefing →</Text></Pressable>}
         {projects.map(project => { const board = tree?.boards.find(item => item.id === project.parent_board_id); const companyName = tree?.companies.find(item => item.id === board?.company_id)?.name; return <Pressable accessibilityRole="button" accessibilityLabel={'Open project ' + project.name} key={project.id} style={s.project} onPress={() => open('#/board/' + project.id, project.name)}><View style={s.projectRow}><Text style={s.projectEmoji}>{project.emoji || '📁'}</Text><Text style={s.projectTitle}>{project.name}</Text><Text style={s.link}>↗</Text></View><Text style={s.small}>{[companyName, board?.name].filter(Boolean).join(' / ')}</Text>{!!project.description && <Text numberOfLines={2} style={s.description}>{project.description}</Text>}<Text style={s.taskCount}>{project.task_count} open tasks · Chat & audio</Text></Pressable>; })}
         {!busy && !projects.length && !!tree && <View style={s.empty}><Text style={s.text}>{search ? 'No projects match that search.' : 'Your next project starts here.'}</Text><Pressable onPress={() => open('#/', 'Your workspace')}><Text style={s.link}>Open workspace to create a project →</Text></Pressable></View>}
+        <AndroidUpdate key={userId} />
         <Pressable style={s.help} disabled={!access} onPress={() => open('#/tutorial', 'Help & tutorial')}><Text style={s.link}>Getting started & tutorial →</Text></Pressable>
       </ScrollView>
     </>}
+    <Modal animationType="slide" visible={profileOpen && !!isSignedIn} presentationStyle="fullScreen" onRequestClose={() => setProfileOpen(false)}><SafeAreaView style={s.safe}><UserProfileView style={{ flex: 1 }} onDismiss={() => setProfileOpen(false)} /></SafeAreaView></Modal>
     <Modal animationType="slide" visible={authOpen} presentationStyle="fullScreen" onRequestClose={() => setAuthOpen(false)}><SafeAreaView style={s.safe}><AuthView logo={<Image source={logo} accessibilityLabel="Boardly" style={s.authLogo} />} onDismiss={() => setAuthOpen(false)} /></SafeAreaView></Modal>
     <Modal transparent animationType="fade" visible={accountsOpen} onRequestClose={() => setAccountsOpen(false)}><Pressable style={s.scrim} onPress={() => setAccountsOpen(false)}><View style={s.sheet}><Text style={s.featureTitle}>Choose your account</Text>{access?.workspaces.map(account => <Pressable key={account.owner_id} style={s.accountChoice} onPress={() => { setAccountsOpen(false); if (account.owner_id === access.workspaceId) return; setCompany(null); setTree(null); setAccess(null); setOpened(null); setSelection(account.owner_id); }}><Text style={s.text}>{account.name}{account.owner ? ' · Owner' : ''}</Text></Pressable>)}<Pressable style={s.accountChoice} onPress={() => { setAccountsOpen(false); logout(); }}><Text style={s.link}>Sign out</Text></Pressable></View></Pressable></Modal>
   </SafeAreaView>;

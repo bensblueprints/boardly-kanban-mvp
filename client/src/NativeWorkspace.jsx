@@ -21,7 +21,7 @@ function NativeWorkspace() {
   }, [attempt]);
   if (error) return <main className="h-full flex flex-col items-center justify-center p-6 gap-5"><h1 className="text-xl font-semibold">Open your workspace</h1><p className="text-zinc-400 text-center">{error}</p><button className="text-lime-300" onClick={() => setAttempt(value => value + 1)}>Try again</button><a href="/app" className="text-zinc-400">Open Boardly in the browser</a></main>;
   if (!session) return <div className="h-full flex items-center justify-center">Opening Boardly…</div>;
-  return <WorkspaceSession userId={session.userId} getToken={nativeToken} onLogout={() => nativeRequest('signout')} />;
+  return <WorkspaceSession userId={session.userId} getToken={nativeToken} profile={session.profile} onManageProfile={session.capabilities?.manageProfile ? () => nativeRequest('profile').catch(failure => window.alert(failure.message)) : undefined} onLogout={() => nativeRequest('signout')} />;
 }
 
 createRoot(document.getElementById('root')).render(<NativeWorkspace />);
