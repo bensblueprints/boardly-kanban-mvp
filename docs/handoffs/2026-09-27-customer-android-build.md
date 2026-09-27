@@ -10,7 +10,7 @@ Verification: TypeScript, authenticated download-route tests, isolated browser w
 
 Artifacts: `/home/ben/Boardly-builds/2026-09-27/`. Logs and hashes accompany the build. Native build outputs, credentials and signing files are excluded from Git.
 
-This build does not itself publish a GitHub release or replace production customer download metadata. The modified web profile bridge also requires deployment before its new profile action is exposed in the hosted workspace. Customer sign-in and the complete authenticated updater flow on this exact build still require end-to-end verification before claiming the complete app release. Physical Pixel was not connected during this build.
+Published GitHub release: https://github.com/bensblueprints/boardly-kanban-mvp/releases/tag/android-v1.0.1 . APK, AAB, SHA256SUMS and artifacts.json are attached; uploaded APK/AAB digests match the verified local artifacts. Release tag points to `8d2e2698ff9e7579c0632851654000568c72a47b`. This publication does not replace production customer download metadata. The modified web profile bridge also requires deployment before its new profile action is exposed in the hosted workspace. Customer sign-in and the complete authenticated updater flow on this exact build still require end-to-end verification before claiming the complete app release. Physical Pixel was not connected during this build.
 
 ## Artifact verification
 
