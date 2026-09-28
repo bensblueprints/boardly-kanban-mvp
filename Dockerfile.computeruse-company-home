@@ -1,0 +1,3 @@
+FROM boardly-cloud:computeruse-desktops-f38bc55
+COPY --chown=node:node server/project-computers.js server/project-chat.js server/organization-agents.js server/agent-scheduling.js server/hosted-ai.js server/member-permissions.js /app/server/
+COPY --chown=node:node dist /app/dist

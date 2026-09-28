@@ -1,0 +1,5 @@
+FROM boardly-cloud:openwebui-798c2dd
+ARG SOURCE_REVISION
+LABEL org.opencontainers.image.revision=$SOURCE_REVISION
+COPY --chown=node:node server/cloud.js server/github-connections.js server/hosted-ai.js server/huggingface.js server/android-download.js server/openwebui.js /app/server/
+COPY --chown=node:node dist /app/dist

@@ -1,0 +1,18 @@
+services:
+  boardly-cloud:
+    build:
+      context: .
+      dockerfile: Dockerfile.cloud
+    env_file: .env.cloud
+    ports:
+      - "127.0.0.1:5317:5315"
+    volumes:
+      - boardly-cloud-data:/data
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+volumes:
+  boardly-cloud-data:

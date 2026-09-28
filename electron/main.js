@@ -4,6 +4,11 @@ const { app, BrowserWindow, shell } = require('electron');
 const path = require('path');
 const crypto = require('crypto');
 
+// Keep the existing data location when changing the displayed app name.
+const existingUserData = app.getPath('userData');
+app.setName('boredly');
+app.setPath('userData', existingUserData);
+
 let win;
 
 app.whenReady().then(async () => {
@@ -31,7 +36,7 @@ app.whenReady().then(async () => {
       height: 900,
       autoHideMenuBar: true,
       backgroundColor: '#09090b',
-      title: 'Boardly',
+      title: 'boredly',
       webPreferences: { contextIsolation: true, nodeIntegration: false }
     });
     // open external links in the system browser

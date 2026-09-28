@@ -1,0 +1,3 @@
+FROM boardly-cloud:ssh-setup-75e9b42
+# UI release only: preserve the tested API, credentials, workers and services.
+COPY --chown=node:node dist /app/dist

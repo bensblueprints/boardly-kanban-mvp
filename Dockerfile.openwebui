@@ -1,0 +1,4 @@
+FROM boardly-cloud:mcp-access-7189b2c
+COPY --chown=node:node server/openwebui.js server/ai-providers.js server/account-plans.js server/customer-billing.js server/personal-ai.js server/cloud.js /app/server/
+COPY --chown=node:node package.json package-lock.json /app/
+COPY --chown=node:node dist /app/dist

@@ -1,0 +1,15 @@
+{
+  "id": "/app",
+  "name": "Boardly",
+  "short_name": "Boardly",
+  "description": "Your businesses, projects and AI in one workspace.",
+  "start_url": "/app",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#09090b",
+  "theme_color": "#171923",
+  "icons": [
+    { "src": "/landing/brand/boardly-icon-black-v1.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/landing/brand/boardly-icon-source.png", "sizes": "1254x1254", "type": "image/png", "purpose": "any" }
+  ]
+}

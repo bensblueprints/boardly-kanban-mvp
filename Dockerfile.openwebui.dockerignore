@@ -1,0 +1,12 @@
+**
+!server/
+!server/openwebui.js
+!server/ai-providers.js
+!server/account-plans.js
+!server/customer-billing.js
+!server/personal-ai.js
+!server/cloud.js
+!package.json
+!package-lock.json
+!dist/
+!dist/**

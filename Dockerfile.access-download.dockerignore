@@ -1,0 +1,10 @@
+**
+!server/
+!server/cloud.js
+!server/github-connections.js
+!server/hosted-ai.js
+!server/huggingface.js
+!server/android-download.js
+!server/openwebui.js
+!dist/
+!dist/**

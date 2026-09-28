@@ -1,0 +1,6 @@
+**
+!Dockerfile.providers-worker
+!server/
+!server/**
+!scripts/
+!scripts/**

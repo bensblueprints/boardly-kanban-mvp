@@ -1,0 +1,4 @@
+FROM boardly-cloud:hardening-v2-20260910
+COPY --chown=node:node server /app/server
+COPY --chown=node:node dist /app/dist
+ENV COMPUTERUSE_API_ORIGIN=https://api.computeruse.space

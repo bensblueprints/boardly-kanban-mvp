@@ -1,0 +1,4 @@
+**
+!Dockerfile.minimize
+!dist/
+!dist/**

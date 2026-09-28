@@ -1,0 +1,18 @@
+FROM ghcr.io/speaches-ai/speaches@sha256:21e3df06d842fb7802ab470dd77c25f0e8c0d22950e8d8c6ae886e851af53ef8
+
+# Match ONNX's thread pool to the four-CPU service limit. The upstream default
+# creates a pool for the host CPU count, causing heavy throttling in a container.
+RUN python - <<'PY'
+from pathlib import Path
+target = Path('/home/ubuntu/speaches/src/speaches/executors/kokoro/model_manager.py')
+source = target.read_text()
+needle = 'inf_sess = InferenceSession(model_files.model, providers=available_providers_with_opts)'
+assert source.count(needle) == 1, 'Review the thread-pool patch when upgrading Speaches'
+source = source.replace(needle, '''from onnxruntime import SessionOptions
+        options = SessionOptions()
+        options.intra_op_num_threads = 4
+        options.inter_op_num_threads = 1
+        options.add_session_config_entry("session.intra_op.allow_spinning", "0")
+        inf_sess = InferenceSession(model_files.model, sess_options=options, providers=available_providers_with_opts)''')
+target.write_text(source)
+PY
