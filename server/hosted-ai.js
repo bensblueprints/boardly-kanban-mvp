@@ -110,6 +110,7 @@ function createHostedAI({db,uploadsDir,personal,canEdit,canUse=()=>false,retain,
   finally{clearInterval(beat);personal.flush();}
  }
  db.exec(`CREATE TABLE IF NOT EXISTS chat_run_checkpoints(job_id TEXT PRIMARY KEY REFERENCES chat_jobs(id) ON DELETE CASCADE,input_json TEXT NOT NULL,updated_at INTEGER NOT NULL);`);
+ db.exec(`CREATE TABLE IF NOT EXISTS chat_blocker_reviews(job_id TEXT PRIMARY KEY REFERENCES chat_jobs(id) ON DELETE CASCADE,created_at INTEGER NOT NULL);`);
  async function retryResponse(j,allowed,progress,fn){
   for(let attempt=0;;attempt++){
    if(closed)throw Object.assign(Error('AI server is restarting'),{status:503});allowed();
@@ -193,11 +194,20 @@ function createHostedAI({db,uploadsDir,personal,canEdit,canUse=()=>false,retain,
      if(j.mode==='work')blockers.completed(j);db.transaction(()=>{db.prepare('INSERT INTO chat_messages VALUES (?,?,?,?,?)').run(crypto.randomUUID(),j.thread_id,'assistant',safeText(answer),Date.now());db.prepare("UPDATE chat_jobs SET status='completed',progress='Completed',updated_at=? WHERE id=?").run(Date.now(),j.id);})();return;}
     if(j.mode!=='work')throw Error('Action tools are disabled in Ask and Plan.');
     // Opaque reasoning continuity stays in memory and is never persisted or shown.
-    input.push(...output);persist();let waitingRequested=false;
+    input.push(...output);persist();let waitingRequested=false,blockerReviewRequested=false;
     for(const call of calls){
+      if(blockerReviewRequested){input.push({type:'function_call_output',call_id:call.call_id,output:'Not executed: review the recovery guidance before choosing another action.'});persist();continue;}
       if(guidance.pending(j.id).length){input.push({type:'function_call_output',call_id:call.call_id,output:'Not executed: new user guidance arrived.'});persist();continue;}
       allowed();progress('Working in this project: '+call.name.replaceAll('_',' '));let result;try{if(!toolAllowed(call.name))throw Error('The owner has not enabled this member permission scope');const args=JSON.parse(call.arguments);
-      if(call.name==='report_blocker'){if(!args.blocker?.trim()||!args.next_action?.trim()||!args.summary?.trim())throw Error('A summary, blocker and next action are required');const blocker=safeText(args.blocker).slice(0,10000),nextAction=safeText(args.next_action).slice(0,10000);db.transaction(()=>{db.prepare("UPDATE chat_jobs SET status='blocked',blocker=?,next_action=?,draft=?,progress='Blocked · action needed',updated_at=? WHERE id=?").run(blocker,nextAction,safeText(args.summary),Date.now(),j.id);blockers.record(j,blocker,nextAction);})();return;}
+      if(call.name==='report_blocker'){if(!args.blocker?.trim()||!args.next_action?.trim()||!args.summary?.trim())throw Error('A summary, blocker and next action are required');const blocker=safeText(args.blocker).slice(0,10000),nextAction=safeText(args.next_action).slice(0,10000);
+       const review=db.prepare('INSERT OR IGNORE INTO chat_blocker_reviews(job_id,created_at) VALUES (?,?)').run(j.id,Date.now());
+       if(review.changes){
+        blockerReviewRequested=true;
+        input.push({type:'function_call_output',call_id:call.call_id,output:require('./agent-outcome').recoveryInstruction});
+        activity('Checking recovery options before stopping','status');
+        progress('Checking recovery options before stopping');persist();continue;
+       }
+       db.transaction(()=>{db.prepare("UPDATE chat_jobs SET status='blocked',blocker=?,next_action=?,draft=?,progress='Blocked · action needed',updated_at=? WHERE id=?").run(blocker,nextAction,safeText(args.summary),Date.now(),j.id);blockers.record(j,blocker,nextAction);})();return;}
       if(call.name==='employee_team')result={...employees.context(j.board_id),delegated:employees.children(j.id)};
       else if(call.name==='employee_delegate')result=employees.delegate(j.id,args);
       else if(call.name==='employee_wait'){waitingRequested=true;result={assignments:employees.children(j.id),message:'The manager resumes automatically after active employees report their results.'};}

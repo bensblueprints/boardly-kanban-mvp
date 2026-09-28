@@ -84,7 +84,7 @@ async function run(job) {
     finally { updating = false; }
   };
   const timer = setInterval(heartbeat, 2000), started = Date.now();
-  let status = 'failed', failure, failureCode, wallet, email, ssh, github, computeruse, media, outputBroker, outputUploader, githubStatus=null, checkpoint=null, round=Number(job.continuation_count)||0;
+  let status = 'failed', failure, failureCode, wallet, email, ssh, github, computeruse, media, outputBroker, outputUploader, githubStatus=null, checkpoint=null, blockerReviewed=false, invalidCheckpoints=0, round=Number(job.continuation_count)||0;
   try {
     fs.mkdirSync(outputDir,{recursive:true,mode:0o700});
     const outputs=require('./output-upload.cjs');
@@ -246,7 +246,20 @@ async function run(job) {
         status='failed';break;
       }
       if(!persistent){text=clean(raw).slice(0,200000);status='completed';break;}
-      try{checkpoint=parseOutcome(raw);}catch(e){status='blocked';checkpoint={state:'blocked',summary:text||'The assignment needs review.',blocker:e.message,next_action:'Review the saved work and resume the assignment.'};break;}
+      try{checkpoint=parseOutcome(raw);}catch(e){
+        if(invalidCheckpoints++<2){
+          step(`worker:checkpoint-repair:${round}`,'Repairing the agent checkpoint automatically','running');
+          nextPrompt=persistentInstruction+'\nYour last checkpoint was invalid: '+e.message+'. Return a valid checkpoint for the saved work. Do not repeat external actions to repair response formatting.';
+          await heartbeat();continue;
+        }
+        status='blocked';checkpoint={state:'blocked',summary:text||'The assignment needs review.',blocker:'The agent returned invalid checkpoints after two automatic repair attempts: '+e.message,next_action:'Inspect the selected model/runtime checkpoint support. Saved work is retained.'};break;
+      }
+      if(checkpoint.state==='blocked'&&!blockerReviewed){
+        blockerReviewed=true;
+        step(`worker:blocker-review:${round}`,'Checking recovery options before stopping','running');
+        nextPrompt=persistentInstruction+'\n'+require('../server/agent-outcome').recoveryInstruction+'\nProposed blocker: '+checkpoint.blocker+'\nProposed next action: '+checkpoint.next_action;
+        await heartbeat();continue;
+      }
       text=clean(checkpoint.summary).slice(0,200000);
       if(checkpoint.state!=='continue'){status=checkpoint.state;break;}
       step(`worker:checkpoint:${round}`,'Continuing to the next step','completed',checkpoint.next_step);
