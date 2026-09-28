@@ -1,4 +1,4 @@
-FROM boardly-cloud:access-download-57b18d9
+FROM boardly-cloud:blocker-recovery-718a0c5
 ARG SOURCE_REVISION
 LABEL org.opencontainers.image.revision=$SOURCE_REVISION
 COPY --chown=node:node server/project-chat.js server/project-employees.js /app/server/
