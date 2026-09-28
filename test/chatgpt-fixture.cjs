@@ -9,17 +9,23 @@ assert.ok(dir.startsWith(${JSON.stringify(root)}));assert.equal(process.env.OPEN
 const auth=()=>{try{return JSON.parse(fs.readFileSync(authFile,'utf8'));}catch{return null;}};
 const emit=v=>process.stdout.write(JSON.stringify(v)+'\\n');
 if(process.argv.includes('app-server')){
- let pending=null;
+ let pending=null,refreshes=0,turns=0;
  const timer=setInterval(()=>{const approval=path.join(dir,'approve.json');if(pending&&fs.existsSync(approval)){const a=JSON.parse(fs.readFileSync(approval,'utf8'));fs.rmSync(approval);fs.writeFileSync(authFile,JSON.stringify({...a,privateToken:'NEVER-RETURN-THIS-CREDENTIAL'}),{mode:0o600});emit({method:'account/login/completed',params:{loginId:pending,success:true,error:null}});pending=null;}},20);
  process.stdin.on('end',()=>{clearInterval(timer);process.exit(0);});
  readline.createInterface({input:process.stdin}).on('line',line=>{const m=JSON.parse(line);if(m.method==='initialized')return;
  let result={};
- if(m.method==='account/read')result={account:auth()?{type:'chatgpt',email:auth().email,planType:'plus'}:null,requiresOpenaiAuth:true};
+ const faultFile=path.join(dir,'fault.json'),statsFile=path.join(dir,'stats.json');
+ const fault=fs.existsSync(faultFile)?JSON.parse(fs.readFileSync(faultFile,'utf8')):{};
+ if(m.method==='account/read'){
+  if(m.params.refreshToken){refreshes++;fs.writeFileSync(statsFile,JSON.stringify({refreshes,turns}));if(fault.refreshError){emit({id:m.id,error:{message:fault.refreshError}});return;}}
+  result={account:auth()?{type:'chatgpt',email:auth().email,planType:'plus'}:null,requiresOpenaiAuth:true};
+ }
  if(m.method==='account/login/start'){assert.equal(m.params.type,'chatgptDeviceCode');pending='login-'+path.basename(path.dirname(path.dirname(dir)));result={type:'chatgptDeviceCode',loginId:pending,verificationUrl:'https://auth.openai.com/codex/device',userCode:'ABCD-1234'};}
  if(m.method==='account/login/cancel'){pending=null;result={};}
  if(m.method==='account/logout'){fs.rmSync(authFile,{force:true});pending=null;}
  if(m.method==='thread/start'){assert.equal(m.params.ephemeral,true);assert.equal(m.params.sandbox,'read-only');result={thread:{id:'thread-'+m.id}};}
  if(m.method==='turn/start'){
+  turns++;fs.writeFileSync(statsFile,JSON.stringify({refreshes,turns}));
   const input=m.params.input[0].text,payload=JSON.parse(input.slice(input.indexOf('\\n')+1)),a=auth();
   assert.ok(a);assert.ok(!input.includes('NEVER-RETURN-THIS-CREDENTIAL'));
   const outputs=payload.input.filter(x=>x.type==='function_call_output');let value={text:'ChatGPT reply from '+a.email,calls:[]};
@@ -31,6 +37,7 @@ if(process.argv.includes('app-server')){
   const threadId=m.params.threadId,turnId='turn-'+m.id;result={turn:{id:turnId,status:'inProgress'}};
   emit({method:'turn/started',params:{threadId,turn:{id:turnId}}});
   setTimeout(()=>{
+   if(fault.turnError&&(!refreshes||fault.permanent))return emit({method:'turn/completed',params:{threadId,turn:{id:turnId,status:'failed',error:{message:fault.turnError}}}});
    if(input.includes('simulate-rate-limit'))return emit({method:'turn/completed',params:{threadId,turn:{id:turnId,status:'failed',error:{message:'usage_limit_reached'}}}});
    emit({method:'item/completed',params:{threadId,item:{type:'agentMessage',text:JSON.stringify(value)}}});
    emit({method:'thread/tokenUsage/updated',params:{threadId,tokenUsage:{last:{inputTokens:30,outputTokens:10}}}});
@@ -57,10 +64,11 @@ if(process.argv.includes('app-server')){
  });
 }
 `,{mode:0o700});
- const service=createChatGPTService({root:path.join(root,'profiles'),token,command});service.server.listen(0,'127.0.0.1');await new Promise(r=>service.server.once('listening',r));const url='http://127.0.0.1:'+service.server.address().port;
+ let service=createChatGPTService({root:path.join(root,'profiles'),token,command});service.server.listen(0,'127.0.0.1');await new Promise(r=>service.server.once('listening',r));let url='http://127.0.0.1:'+service.server.address().port;
  const hash=user=>crypto.createHash('sha256').update(user).digest('hex');
  const request=(user,action,body,headers={})=>fetch(`${url}/accounts/${hash(user)}/${action}`,{method:action==='status'?'GET':'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json',...headers},body:body===undefined?undefined:JSON.stringify(body)});
  async function approve(user,email){const dir=path.join(root,'profiles',hash(user),'home','.codex');fs.writeFileSync(path.join(dir,'approve.json'),JSON.stringify({email}));for(let i=0;i<100;i++){const v=await(await request(user,'status')).json();if(v.connected)return v;await new Promise(r=>setTimeout(r,20));}throw Error('Mock login did not complete');}
- return{root,service,url,token,request,approve,async close(){await service.close();await new Promise(r=>setTimeout(r,2100));fs.rmSync(root,{recursive:true,force:true});}};
+ const profileFile=(user,name)=>path.join(root,'profiles',hash(user),'home','.codex',name);
+ return{root,get service(){return service;},get url(){return url;},token,request,approve,async restart(){await service.close();await new Promise(r=>setTimeout(r,2100));service=createChatGPTService({root:path.join(root,'profiles'),token,command});service.server.listen(0,'127.0.0.1');await new Promise(r=>service.server.once('listening',r));url='http://127.0.0.1:'+service.server.address().port;},fault(user,value){fs.writeFileSync(profileFile(user,'fault.json'),JSON.stringify(value));},stats(user){return JSON.parse(fs.readFileSync(profileFile(user,'stats.json'),'utf8'));},async close(){await service.close();await new Promise(r=>setTimeout(r,2100));fs.rmSync(root,{recursive:true,force:true});}};
 }
 module.exports={connectorFixture};

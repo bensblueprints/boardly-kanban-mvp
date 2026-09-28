@@ -3,6 +3,17 @@
 const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),crypto=require('node:crypto');
 const http=require('node:http'),readline=require('node:readline'),{spawn}=require('node:child_process');
 const fail=(status,message)=>Object.assign(Error(message),{status});
+const reconnectMessage='Your ChatGPT connection needs sign-in again. Reconnect in Account & AI.';
+// Provider diagnostics stay private. A network failure during authentication
+// must remain retryable rather than stranding the saved assignment as signed out.
+function providerFailure(detail,fallback){
+ const message=JSON.stringify(detail||{});
+ if(/usage.limit|quota|insufficient.*credit/i.test(message))return Object.assign(fail(429,'Your ChatGPT usage limit was reached. Switching to your enabled local fallback when available.'),{code:'allowance_exhausted'});
+ if(/rate.limit|\b429\b/i.test(message))return fail(429,'ChatGPT is temporarily rate limited. Retrying shortly.');
+ if(/error sending request|certificate|timed? ?out|timeout|connection (refused|reset|closed)|temporarily unavailable|\b50[0234]\b/i.test(message))return fail(503,'ChatGPT connection was interrupted. Retrying the saved request.');
+ if(/\b401\b|unauthorized|refresh.token|invalid.grant|sign.in|authentication/i.test(message))return Object.assign(fail(401,reconnectMessage),{code:'chatgpt_auth_required'});
+ return fallback||fail(503,'ChatGPT response was interrupted. Retrying the saved request.');
+}
 const schema={type:'object',additionalProperties:false,required:['text','calls'],properties:{text:{type:'string'},calls:{type:'array',items:{type:'object',additionalProperties:false,required:['name','arguments'],properties:{name:{type:'string'},arguments:{type:'string'}}}}}};
 const disabled=['shell_tool','unified_exec','apply_patch_freeform','apps','plugins','hooks','plugin_hooks','multi_agent','multi_agent_mode','multi_agent_v2','browser_use','browser_use_external','in_app_browser','js_repl','code_mode','image_generation','imagegenext','memory_tool','memories','tool_suggest','skill_search'];
 function safeConfig(){return ['-c','cli_auth_credentials_store="file"','-c','approval_policy="never"','-c','project_doc_max_bytes=0','-c','web_search="disabled"','-c','mcp_servers={}','-c','apps._default.enabled=false','-c','features.skip_host_skill_discovery=true',...disabled.flatMap(f=>['-c',`features.${f}=false`])];}
@@ -15,14 +26,21 @@ function createChatGPTService({root,token,command='codex',spawnProcess=spawn,log
   let p=profiles.get(id);if(p)return p;
   const dir=path.join(root,id);fs.mkdirSync(dir,{recursive:true,mode:0o700});
   const home=path.join(dir,'home'),codexHome=path.join(home,'.codex');fs.mkdirSync(codexHome,{recursive:true,mode:0o700});
-  p={id,dir,home,codexHome,rpc:null,pending:null,error:null,runs:new Set(),generation:0,used:Date.now(),verified:null,lock:Promise.resolve()};
+  p={id,dir,home,codexHome,rpc:null,pending:null,error:null,authError:false,authRevision:0,runs:new Set(),generation:0,used:Date.now(),verified:null,lock:Promise.resolve()};
   try{p.verified=JSON.parse(fs.readFileSync(path.join(dir,'verified.json'),'utf8')).at;}catch{}
+  try{p.authError=fs.readFileSync(path.join(dir,'auth-required'),'utf8')===credentialDigest(p);}catch{}
   profiles.set(id,p);return p;
  }
  const environment=p=>({PATH:process.env.PATH||'/usr/local/bin:/usr/bin:/bin',HOME:p.home,CODEX_HOME:p.codexHome,LANG:'C.UTF-8'});
  function kill(child){if(!child.pid)return;try{process.kill(-child.pid,'SIGTERM');}catch{}const timer=setTimeout(()=>{try{process.kill(-child.pid,'SIGKILL');}catch{}},2000);timer.unref();}
  function invalidate(p){p.generation++;for(const child of p.runs){child.cancel?.();kill(child);}p.pending=null;p.verified=null;fs.rmSync(path.join(p.dir,'verified.json'),{force:true});}
  function serialize(p,fn){const result=p.lock.then(fn);p.lock=result.catch(()=>{});return result;}
+ function credentialDigest(p){try{return crypto.createHash('sha256').update(fs.readFileSync(path.join(p.codexHome,'auth.json'))).digest('hex');}catch{return 'missing';}}
+ function authRequired(p,required){
+  p.authError=required;
+  const marker=path.join(p.dir,'auth-required');
+  if(required){p.verified=null;fs.rmSync(path.join(p.dir,'verified.json'),{force:true});fs.writeFileSync(marker,credentialDigest(p),{mode:0o600});}else fs.rmSync(marker,{force:true});
+ }
  async function rpc(p){
   p.used=Date.now();if(p.rpc)return p.rpc.ready;
   if([...profiles.values()].filter(x=>x.rpc).length>=64)throw fail(429,'ChatGPT sign-in is busy. Please try again shortly.');
@@ -35,9 +53,9 @@ function createChatGPTService({root,token,command='codex',spawnProcess=spawn,log
   child.stdin.on('error',()=>{});child.stderr.resume();
   readline.createInterface({input:child.stdout}).on('line',line=>{
    let msg;try{msg=JSON.parse(line);}catch{return;}
-   if(msg.id!==undefined&&pending.has(msg.id)){const r=pending.get(msg.id);pending.delete(msg.id);clearTimeout(r.timer);if(msg.error){const network=/error sending request|certificate|timed out|connection refused/i.test(msg.error.message||'');r.reject(fail(network?503:400,network?'boredly could not reach OpenAI sign-in. Please retry shortly.':'OpenAI could not complete sign-in. Enable device-code login in ChatGPT Settings → Security, then try again.'));}else r.resolve(msg.result);}
+   if(msg.id!==undefined&&pending.has(msg.id)){const r=pending.get(msg.id);pending.delete(msg.id);clearTimeout(r.timer);if(msg.error)r.reject(providerFailure(msg.error,fail(400,'OpenAI could not complete this request. For device sign-in, enable device-code login in ChatGPT Settings → Security.')));else r.resolve(msg.result);}
    else if(msg.params?.threadId&&turns.has(msg.params.threadId)){turns.get(msg.params.threadId)(msg);}
-   else if(msg.method==='account/login/completed'&&p.pending?.login_id===msg.params?.loginId){p.pending=null;p.error=msg.params.success?null:'ChatGPT sign-in was not completed. Start a new code and approve it in OpenAI.';}
+   else if(msg.method==='account/login/completed'&&p.pending?.login_id===msg.params?.loginId){p.pending=null;p.error=msg.params.success?null:'ChatGPT sign-in was not completed. Start a new code and approve it in OpenAI.';if(msg.params.success){authRequired(p,false);p.authRevision++;}}
    // No tool/approval request is ever forwarded or approved.
   });
   const ended=()=>{if(p.rpc===state){p.rpc=null;if(p.pending){p.pending=null;p.error='ChatGPT sign-in was interrupted. Please start a new code.';}}for(const r of pending.values()){clearTimeout(r.timer);r.reject(fail(503,'ChatGPT connection was interrupted'));}pending.clear();for(const notify of turns.values())notify({method:'connector/closed'});turns.clear();};
@@ -50,8 +68,8 @@ function createChatGPTService({root,token,command='codex',spawnProcess=spawn,log
   if(p.pending&&p.pending.expires_at<Date.now()){const r=await rpc(p);await r.send('account/login/cancel',{loginId:p.pending.login_id});p.pending=null;p.error='Your code expired. Start a new sign-in code.';}
   if(!p.rpc&&!fs.existsSync(path.join(p.codexHome,'auth.json')))return{connected:false,pending:null,error:p.error,verified_at:null};
   const r=await rpc(p),value=await r.send('account/read',{refreshToken:false}),account=value?.account;
-  const connected=account?.type==='chatgpt';
-  return{connected,email:connected?account.email:null,plan:connected?account.planType:null,pending:p.pending,error:p.error,verified_at:connected?p.verified:null};
+  const connected=account?.type==='chatgpt'&&!p.authError;
+  return{connected,email:connected?account.email:null,plan:connected?account.planType:null,pending:p.pending,error:p.error||(p.authError?reconnectMessage:null),verified_at:connected?p.verified:null};
  }
  async function login(p){return serialize(p,async()=>{
   if(p.runs.size)throw fail(409,'Wait for your current AI reply before changing its ChatGPT connection');
@@ -70,10 +88,34 @@ function createChatGPTService({root,token,command='codex',spawnProcess=spawn,log
   // Killing in-flight processes before erasing the profile prevents a refreshed
   // credential from reappearing after disconnect.
   await new Promise(r=>setTimeout(r,2100));
-  fs.rmSync(p.home,{recursive:true,force:true});fs.mkdirSync(p.codexHome,{recursive:true,mode:0o700});p.error=null;
+  fs.rmSync(p.home,{recursive:true,force:true});fs.mkdirSync(p.codexHome,{recursive:true,mode:0o700});p.error=null;authRequired(p,false);
   return{connected:false,pending:null,verified_at:null};
  });}
  async function respond(p,payload){
+  const generation=p.generation,revision=p.authRevision;
+  try{return await respondOnce(p,payload);}catch(e){
+   if(e.code!=='chatgpt_auth_required')throw e;
+   // The connector generates proposals only; it never executes their tools.
+   // One retry cannot duplicate a Boardly action. Serialize refreshes so
+   // concurrent threads never rotate the same credential independently.
+   await serialize(p,async()=>{
+    if(generation!==p.generation)throw fail(401,'ChatGPT was disconnected. Reconnect before resuming.');
+    if(p.authError)throw fail(401,reconnectMessage);
+    if(revision!==p.authRevision)return;
+    try{
+     const value=await(await rpc(p)).send('account/read',{refreshToken:true});
+     if(value?.account?.type!=='chatgpt')throw Object.assign(fail(401,reconnectMessage),{code:'chatgpt_auth_required'});
+     p.authRevision++;
+    }catch(error){if(error.code==='chatgpt_auth_required')authRequired(p,true);throw error;}
+   });
+   if(generation!==p.generation)throw fail(401,'ChatGPT was disconnected. Reconnect before resuming.');
+   try{return await respondOnce(p,payload);}catch(error){
+    if(error.code==='chatgpt_auth_required'&&generation===p.generation)authRequired(p,true);
+    throw error;
+   }
+  }
+ }
+ async function respondOnce(p,payload){
   if(!payload||!Array.isArray(payload.input)||!Array.isArray(payload.tools)||!['gpt-6-astra','gpt-5.6-sol','gpt-5.6-terra'].includes(payload.model)||Buffer.byteLength(JSON.stringify(payload))>4000000)throw fail(400,'This conversation is too large or its model is unsupported');
   // All threads use the same account's app-server authentication manager. Do
   // not fork exec processes sharing a rotating refresh token/auth.json.
@@ -99,11 +141,7 @@ function createChatGPTService({root,token,command='codex',spawnProcess=spawn,log
      if(msg.method==='thread/tokenUsage/updated')usage=v.tokenUsage?.last||{};
      if(msg.method==='turn/completed'){
       if(v.turn?.status==='completed')return resolve();
-      const detail=v.turn?.error||{},message=JSON.stringify(detail);
-      if(/usage.limit|quota|insufficient.*credit/i.test(message))return reject(Object.assign(fail(429,'Your ChatGPT usage limit was reached. Switching to your enabled local fallback when available.'),{code:'allowance_exhausted'}));
-      if(/rate.limit|429/i.test(message))return reject(fail(429,'ChatGPT is temporarily rate limited. Retrying shortly.'));
-      if(/401|unauthorized|refresh.token|sign.in|authentication/i.test(message))return reject(fail(401,'Your ChatGPT connection needs sign-in again. Reconnect in Account & AI.'));
-      reject(fail(503,'ChatGPT response was interrupted. Retrying the saved request.'));
+      reject(providerFailure(v.turn?.error));
      }
     });
     timer=setTimeout(()=>{if(turnId)r.send('turn/interrupt',{threadId,turnId}).catch(()=>{});reject(fail(504,'ChatGPT response stalled. Retrying the saved request.'));},runTimeout);

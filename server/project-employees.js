@@ -7,6 +7,7 @@ function createProjectEmployees({db,ownerId,clean,enqueue=()=>{}}){
  CREATE TABLE IF NOT EXISTS employee_teams(board_id INTEGER PRIMARY KEY REFERENCES boards(id) ON DELETE CASCADE,enabled INTEGER NOT NULL DEFAULT 0,requested_by TEXT NOT NULL,runtime TEXT NOT NULL,instruction TEXT NOT NULL,updated_at INTEGER NOT NULL);
  CREATE TABLE IF NOT EXISTS employee_assignments(id TEXT PRIMARY KEY,employee_id TEXT NOT NULL REFERENCES project_employees(id),card_id INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,job_id TEXT NOT NULL UNIQUE REFERENCES chat_jobs(id) ON DELETE CASCADE,reported_status TEXT,created_at INTEGER NOT NULL);
  CREATE TABLE IF NOT EXISTS employee_messages(id TEXT PRIMARY KEY,board_id INTEGER NOT NULL REFERENCES boards(id) ON DELETE CASCADE,sender_id TEXT,recipient_id TEXT,job_id TEXT,body TEXT NOT NULL,created_at INTEGER NOT NULL);`);
+ if(!db.prepare('PRAGMA table_info(employee_teams)').all().some(c=>c.name==='ordered'))db.exec('ALTER TABLE employee_teams ADD COLUMN ordered INTEGER NOT NULL DEFAULT 0');
  db.exec(`CREATE TABLE IF NOT EXISTS employee_delegations(parent_job_id TEXT NOT NULL REFERENCES chat_jobs(id) ON DELETE CASCADE,child_job_id TEXT NOT NULL UNIQUE REFERENCES chat_jobs(id) ON DELETE CASCADE,request_key TEXT NOT NULL,request_json TEXT NOT NULL,PRIMARY KEY(parent_job_id,request_key));
  CREATE TABLE IF NOT EXISTS employee_waits(job_id TEXT PRIMARY KEY REFERENCES chat_jobs(id) ON DELETE CASCADE);`);
  // Preserve employee IDs, assignments and handoffs when upgrading the coordinator.
@@ -64,9 +65,11 @@ function createProjectEmployees({db,ownerId,clean,enqueue=()=>{}}){
   for(const p of db.prepare("SELECT DISTINCT d.parent_job_id,j.status FROM employee_delegations d JOIN chat_jobs j ON j.id=d.parent_job_id WHERE j.status IN ('cancelled','failed','interrupted','blocked')").all())for(const c of children(p.parent_job_id))if(activeStates.has(c.status))cancel(c.job_id);
   for(const w of db.prepare('SELECT w.job_id,j.status FROM employee_waits w JOIN chat_jobs j ON j.id=w.job_id').all())if(w.status!=='queued'||!children(w.job_id).some(c=>activeStates.has(c.status))){db.prepare('DELETE FROM employee_waits WHERE job_id=?').run(w.job_id);if(w.status==='queued')db.prepare("UPDATE chat_jobs SET progress='Reviewing employee results',updated_at=? WHERE id=?").run(Date.now(),w.job_id);}
  }
- function configure(id,enabled,instruction,actor=ownerId,runtime='api'){
+ function configure(id,enabled,instruction,actor=ownerId,runtime='api',ordered){
   if(typeof enabled!=='boolean'||typeof instruction!=='string'||instruction.length>10000)throw fail(400,'Choose a team state and instructions');ensure(id);
-  db.prepare('INSERT INTO employee_teams VALUES(?,?,?,?,?,?) ON CONFLICT(board_id) DO UPDATE SET enabled=excluded.enabled,requested_by=excluded.requested_by,runtime=excluded.runtime,instruction=excluded.instruction,updated_at=excluded.updated_at').run(id,Number(enabled),actor,runtime,clean(id,instruction),Date.now());
+  if(ordered!==undefined&&typeof ordered!=='boolean')throw fail(400,'Ordered queue must be a boolean');
+  const queueOrder=ordered===undefined?(db.prepare('SELECT ordered FROM employee_teams WHERE board_id=?').get(id)?.ordered||0):Number(ordered);
+  db.prepare('INSERT INTO employee_teams(board_id,enabled,requested_by,runtime,instruction,updated_at,ordered) VALUES(?,?,?,?,?,?,?) ON CONFLICT(board_id) DO UPDATE SET enabled=excluded.enabled,requested_by=excluded.requested_by,runtime=excluded.runtime,instruction=excluded.instruction,updated_at=excluded.updated_at,ordered=excluded.ordered').run(id,Number(enabled),actor,runtime,clean(id,instruction),Date.now(),queueOrder);
   note(id,null,null,enabled?'Continuous team enabled. Morgan will manage unclaimed To Do tasks and call specialists; blocked tasks wait for their dependency.':'Continuous team paused. Existing assignments keep their individual Stop controls.');return context(id);
  }
  function tick(){
@@ -77,7 +80,18 @@ function createProjectEmployees({db,ownerId,clean,enqueue=()=>{}}){
     note(row.board_id,row.employee_id,null,`${row.name}: task #${row.card_id} ${row.status}. ${(row.blocker||row.draft||'').slice(0,5000)}${row.next_action?'\nNext action: '+row.next_action:''}`,row.job_id);db.prepare('UPDATE employee_assignments SET reported_status=? WHERE id=?').run(row.status,row.id);
    })();
   }
-  for(const team of db.prepare('SELECT * FROM employee_teams WHERE enabled=1').all()){
+  // Opt-in account queue: finish or block one task before claiming the next.
+  // Existing manually-started work on these boards also holds the queue so an
+  // operator can safely resume a saved conversation without duplicate dispatch.
+  db.transaction(()=>{
+   const active=db.prepare("SELECT 1 FROM chat_jobs j JOIN chat_threads t ON t.id=j.thread_id JOIN employee_teams e ON e.board_id=t.board_id WHERE e.ordered=1 AND e.requested_by=? AND j.status IN ('queued','running','recovering') LIMIT 1").get(ownerId);
+   if(active)return;
+   const next=db.prepare(`SELECT c.id,l.board_id,e.instruction,e.requested_by,e.runtime FROM cards c JOIN lists l ON l.id=c.list_id JOIN employee_teams e ON e.board_id=l.board_id
+    WHERE e.enabled=1 AND e.ordered=1 AND e.requested_by=? AND c.archived=0 AND l.archived=0 AND lower(trim(l.name))='to do'
+    ORDER BY l.board_id,l.position,c.position,c.id LIMIT 1`).get(ownerId);
+   if(next){const worker=roster(next.board_id).find(e=>e.role==='Engineer');assign(next.board_id,worker.id,next.id,next.instruction,next.requested_by,next.runtime);}
+  }).immediate();
+  for(const team of db.prepare('SELECT * FROM employee_teams WHERE enabled=1 AND ordered=0').all()){
    // Only the owner can enable unattended task dispatch. Members may execute
    // scoped assignments but cannot promote project text into standing authority.
    if(team.requested_by!==ownerId)continue;

@@ -1,0 +1,4 @@
+FROM boardly-chatgpt:reliability-24304c9
+ARG SOURCE_REVISION
+LABEL org.opencontainers.image.revision=$SOURCE_REVISION
+COPY --chown=node:node scripts/chatgpt-service.cjs /app/scripts/chatgpt-service.cjs
