@@ -2,13 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { X, Copy, Download, Plug, Cloud, Trash2, Check } from 'lucide-react';
 import { api } from '../api.js';
 
-const release = 'https://github.com/bensblueprints/boardly-kanban-mvp/releases/download/v1.9.0/';
-export const desktopDownloads = [
-  ['Windows', 'Windows installer', release + 'Boardly.Setup.1.9.0.exe'],
-  ['Mac', 'Apple Silicon · macOS', release + 'Boardly-1.9.0-arm64.dmg'],
-  ['Linux', 'AppImage · x64', release + 'Boardly-1.9.0.AppImage'],
-  ['Linux', 'Debian / Ubuntu · x64', release + 'boardly_1.9.0_amd64.deb'],
-];
+import DesktopDownloads from './DesktopDownloads.jsx';
+export {desktopDownloads} from './DesktopDownloads.jsx';
 
 function CopyField({ label, value, multiline = false }) {
   const [copied, setCopied] = useState(false), [error, setError] = useState('');
@@ -46,12 +41,7 @@ export default function CloudConnections({ initialTab = 'mcp', onClose, embedded
       </nav>
       <div className="space-y-5">
         {error && <p role="alert" className="text-sm text-rose-300">{error}</p>}
-        {tab === 'downloads' ? <>
-          <div><h3 className="font-semibold">Boardly for your desktop</h3><p className="text-sm text-zinc-400 mt-1">Keep a local copy of your boards and sync with your cloud workspace.</p></div>
-          <div className="grid sm:grid-cols-2 gap-3">{desktopDownloads.map(([platform, detail, href]) => <a key={href} href={href} className="p-4 rounded-xl border border-zinc-700 hover:border-indigo-400 flex gap-3 items-center"><Download size={22} className="text-indigo-300" /><span><strong className="block">{platform}</strong><span className="text-xs text-zinc-400">{detail} · v1.9.0</span></span></a>)}</div>
-          <p className="text-sm text-zinc-400">After installing, open <strong className="text-zinc-200">Sync</strong> in the desktop app. Create a desktop key here, then paste the server address and key into the app’s existing-token form.</p>
-          {developerAccess?<button onClick={() => setTab('sync')} className="rounded-lg bg-indigo-600 hover:bg-indigo-500 px-4 py-2 text-sm">Connect a desktop</button>:<p className="text-sm text-amber-200">Cloud desktop sync and MCP keys are currently available to the platform owner.</p>}
-        </> : <>
+        {tab === 'downloads' ? <DesktopDownloads developerAccess={developerAccess} onConnect={() => setTab('sync')}/> : <>
           <div><h3 className="font-semibold">{tab === 'mcp' ? 'Let your AI client work with Boardly' : 'Sync this account with your desktop'}</h3>
             <p className="text-sm text-zinc-400 mt-1">{tab === 'mcp' ? 'Connect a client that supports Streamable HTTP and a Bearer token. It will use the same boards you see here.' : 'Use a separate key for each computer. Changes to boards, cards, checklists and attachments sync both ways.'}</p></div>
           <CopyField label={tab === 'mcp' ? 'MCP server URL' : 'Sync server URL'} value={origin + (tab === 'mcp' ? '/mcp' : '')} />
