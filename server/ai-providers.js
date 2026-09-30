@@ -12,18 +12,23 @@ function imagePart(p,anthropic=false){
 // Translate the existing scoped Work tools without giving a provider filesystem,
 // vault or transport credentials. Opaque provider continuity is memory-only.
 function messages(input,anthropic=false){
- const out=[],system=[],seen=new Set();
+ const out=[],system=[],seen=new Set(),images=[];
  const append=(role,content)=>{if(anthropic&&out.at(-1)?.role===role)out.at(-1).content.push(...content);else out.push({role,content});};
  for(const item of input||[]){
+  if(item.type!=='function_call_output'&&images.length)out.push(...images.splice(0));
   if(item.boardly_provider_turn){if(!seen.has(item.boardly_provider_turn)){seen.add(item.boardly_provider_turn);out.push(item.boardly_provider_message);}continue;}
   if(item.type==='reasoning')continue;
   if(item.type==='function_call'){
    if(anthropic)append('assistant',[{type:'tool_use',id:item.call_id,name:item.name,input:JSON.parse(item.arguments)}]);
-   else out.push({role:'assistant',content:null,tool_calls:[{id:item.call_id,type:'function',function:{name:item.name,arguments:item.arguments}}]});
+   else {const call={id:item.call_id,type:'function',function:{name:item.name,arguments:item.arguments}};
+    // Public checkpoints omit opaque provider turns. Rebuild parallel calls as
+    // one assistant turn followed by every result, as Chat Completions requires.
+    if(out.at(-1)?.role==='assistant'&&out.at(-1).tool_calls)out.at(-1).tool_calls.push(call);
+    else out.push({role:'assistant',content:null,tool_calls:[call]});}
   }else if(item.type==='function_call_output'){
    const parts=Array.isArray(item.output)?item.output:null;
    if(anthropic)append('user',[{type:'tool_result',tool_use_id:item.call_id,content:parts?parts.map(p=>imagePart(p,true)):text(item.output)}]);
-   else {out.push({role:'tool',tool_call_id:item.call_id,content:parts?'Desktop screenshot follows.':text(item.output)});if(parts)out.push({role:'user',content:parts.map(p=>imagePart(p))});}
+   else {out.push({role:'tool',tool_call_id:item.call_id,content:parts?'Desktop screenshot follows.':text(item.output)});if(parts)images.push({role:'user',content:parts.map(p=>imagePart(p))});}
   }else if(item.role==='developer'||item.role==='system'){
    if(anthropic)system.push(text(item.content));else out.push({role:'system',content:text(item.content)});
   }else if(item.role){
@@ -31,25 +36,31 @@ function messages(input,anthropic=false){
    if(anthropic)append(item.role==='assistant'?'assistant':'user',content);else out.push({role:item.role,content});
   }
  }
+ out.push(...images);
  return {messages:out,system:system.join('\n\n')};
 }
 function payloadFor(connection,payload){
  const anthropic=connection.provider==='claude',converted=messages(payload.input,anthropic);
- return {model:connection.model,messages:converted.messages,max_tokens:payload.max_output_tokens||4096,...(anthropic?{system:converted.system}:{}),...(payload.tools?.length?{tools:payload.tools.map(t=>anthropic?{name:t.name,description:t.description,input_schema:t.parameters}:{type:'function',function:{name:t.name,description:t.description,parameters:t.parameters}})}:{})};
+ // Work has a bounded output budget and recovers from public checkpoints that
+ // deliberately exclude private reasoning. Use the same non-thinking mode as
+ // connection probes so DeepSeek can resume without missing reasoning state.
+ return {model:connection.model,messages:converted.messages,max_tokens:payload.max_output_tokens||4096,...(connection.provider==='deepseek'?{thinking:{type:'disabled'}}:{}),...(anthropic?{system:converted.system}:{}),...(payload.tools?.length?{tools:payload.tools.map(t=>anthropic?{name:t.name,description:t.description,input_schema:t.parameters}:{type:'function',function:{name:t.name,description:t.description,parameters:t.parameters}})}:{})};
 }
 function outputFor(provider,result){
  const turn=crypto.randomUUID(),output=[];let message;
+ const invalid=message=>Object.assign(fail(502,message),{retryable:false});
+ if(result.stop_reason==='max_tokens'||result.choices?.[0]?.finish_reason==='length')throw invalid('The AI response reached its output limit before finishing. No actions from this incomplete response were executed. Use a smaller step or a larger output budget before resuming.');
  if(provider==='claude'){
-  if(!Array.isArray(result.content))throw fail(502,'Claude returned an invalid response.');
+  if(!Array.isArray(result.content))throw invalid('Claude returned an invalid response.');
   message={role:'assistant',content:result.content};
   for(const part of result.content){if(part.type==='text'&&part.text)output.push({type:'message',role:'assistant',content:[{type:'output_text',text:part.text}]});else if(part.type==='tool_use')output.push({type:'function_call',call_id:part.id,name:part.name,arguments:JSON.stringify(part.input)});}
  }else{
-  const raw=result.choices?.[0]?.message;if(!raw)throw fail(502,'The AI server returned an invalid response.');
+  const raw=result.choices?.[0]?.message;if(!raw)throw invalid('The AI server returned an invalid response.');
   message={role:'assistant',content:raw.content||null,...(typeof raw.reasoning_content==='string'?{reasoning_content:raw.reasoning_content}:{}),...(raw.tool_calls?.length?{tool_calls:raw.tool_calls.map(c=>({id:c.id,type:'function',function:{name:c.function?.name,arguments:c.function?.arguments}}))}:{})};
   if(typeof raw.content==='string'&&raw.content)output.push({type:'message',role:'assistant',content:[{type:'output_text',text:raw.content}]});
   for(const call of raw.tool_calls||[])output.push({type:'function_call',call_id:call.id,name:call.function?.name,arguments:call.function?.arguments});
  }
- if(output.length===0)throw fail(502,'The AI server returned no usable answer. Check the selected model and output limit.');
+ if(output.length===0)throw invalid('The AI server returned no usable answer. Check the selected model and output limit.');
  for(const item of output){item.boardly_provider_turn=turn;item.boardly_provider_message=message;}
  return {id:result.id||turn,output,usage:result.usage};
 }
@@ -121,11 +132,15 @@ function createAIProviders({db,key,tailnet,request=fetch,account,setMode,paidAcc
   await requireAccess(a.user_id,a.provider);
   const permitted=()=>a.selectionValid?(a.selectionValid(),true):a.fallback?fallbackEnabled(a.user_id):account(a.user_id).mode==='provider'&&current(a.user_id)===a.provider;
   const r=row(storageUser(a.user_id,a.companyId),a.provider);if(!r||r.revision!==a.revision||!permitted())throw fail(409,'The AI connection changed. Start or resume with the current connection.');
-  const c={...decode(r),model:a.model},body=payloadFor(c,payload);if(a.probe&&a.provider==='deepseek')body.thinking={type:'disabled'};if(Buffer.byteLength(JSON.stringify(body))>6000000)throw fail(400,'This conversation is too large for this connection.');
+  const c={...decode(r),model:a.model},body=payloadFor(c,payload);if(Buffer.byteLength(JSON.stringify(body))>6000000)throw fail(400,'This conversation is too large for this connection.');
   const id=crypto.randomUUID();db.prepare("INSERT INTO ai_provider_calls VALUES(?,?,?,?,?,'pending',NULL,NULL,?)").run(id,a.user_id,jobId,a.provider,a.model,Date.now());
   try{
-   const result=await call(a.user_id,c,a.provider==='claude'?'/v1/messages':'/v1/chat/completions',body,a.probe?30000:undefined),output=outputFor(a.provider,result),u=result.usage||{};
+   const result=await call(a.user_id,c,a.provider==='claude'?'/v1/messages':'/v1/chat/completions',body,a.probe?30000:undefined),u=result.usage||{};
    const count=n=>Number.isSafeInteger(n)&&n>=0?n:null;
+   // Provider tokens can be charged even when output is unusable. Retain usage
+   // before validating rather than losing it in the interrupted-call path.
+   db.prepare('UPDATE ai_provider_calls SET input_tokens=?,output_tokens=? WHERE id=?').run(count(u.input_tokens??u.prompt_tokens),count(u.output_tokens??u.completion_tokens),id);
+   const output=outputFor(a.provider,result);
    db.prepare("UPDATE ai_provider_calls SET status='completed',input_tokens=?,output_tokens=? WHERE id=?").run(count(u.input_tokens??u.prompt_tokens),count(u.output_tokens??u.completion_tokens),id);
    await requireAccess(a.user_id,a.provider);if(row(storageUser(a.user_id,a.companyId),a.provider)?.revision!==a.revision||!permitted())throw fail(409,'The AI connection changed while the response was running.');return output;
   }catch(e){db.prepare("UPDATE ai_provider_calls SET status='interrupted' WHERE id=? AND status='pending'").run(id);throw e.status?e:fail(502,'The AI response was interrupted. Review activity before retrying.');}
