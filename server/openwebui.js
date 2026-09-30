@@ -44,7 +44,7 @@ function createOpenWebUIRequest({resolve=dns.lookup, request=https.request}={}) 
           res.on('error', ()=>reject(fail(502, 'Open WebUI interrupted the response.')));
           res.on('end', ()=>{try{resolveResponse(new Response([204,205].includes(res.statusCode)?null:Buffer.concat(parts),{status:res.statusCode}));}catch{reject(fail(502, 'Open WebUI returned an invalid response.'));}});
         });
-        req.on('error', ()=>reject(fail(controller.signal.aborted?504:502, 'Open WebUI could not complete the connection. Check its address, TLS certificate and availability.')));
+        req.on('error', ()=>reject(fail(controller.signal.aborted?504:502, controller.signal.aborted?'Open WebUI did not respond before the request timed out. Check the selected model and server load.':'Open WebUI could not complete the connection. Check its address, TLS certificate and availability.')));
         req.end(body ? JSON.stringify(body) : undefined);
       });
     } finally { clearTimeout(timer); }

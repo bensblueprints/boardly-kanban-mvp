@@ -34,21 +34,21 @@ function GeneralSettings({kind,entity,owner,onSaved,onBack,onExport}){
 
 export default function ScopeSettings({kind,entity,section='general',owner,can,onSaved,onBack,onExport}){
  const company=kind==='company',scope=company?'Company':'Board',apiKind=company?'companies':'projects';
- const allowed=id=>id==='ai'?company&&owner:['onepassword','fal','higgsfield','discord','telegram'].includes(id)?owner:id==='emails'?company&&owner:can(id==='computeruse'?'computers':id);
+ const allowed=id=>id==='ai'?owner:['onepassword','fal','higgsfield','discord','telegram'].includes(id)?owner:id==='emails'?company&&owner:can(id==='computeruse'?'computers':id);
  const connectors=connectorDefinitions.filter(c=>(company?['github','computeruse','ssh','emails','onepassword','fal','higgsfield','discord','telegram']:['github','computeruse','ssh','environment','payments','onepassword','fal','higgsfield']).includes(c.id)&&allowed(c.id));
  const sections=[
   {id:'general',label:'General',icon:company?Building2:FolderCog,description:`Name, ${company?'organization':'description and export'} and ${scope.toLowerCase()} management.`},
-  ...(company&&owner?[{id:'ai',label:'AI & models',icon:BrainCircuit,description:'Inherit Organization AI or choose a provider and model for this company.'}]:[]),
+  ...(owner?[{id:'ai',label:'AI & models',icon:BrainCircuit,description:`Inherit ${company?'Organization':'Department'} AI or choose a provider and model for this ${scope.toLowerCase()}.`}]:[]),
   ...(can('members')?[{id:'members',label:'Team & permissions',icon:Users,description:company?'Manage company members and the permissions they inherit in its Boards.':'Manage board-only members and review inherited company access.'}]:[]),
   {id:'connectors',label:'Connectors',icon:Plug,description:`Tools and resources available to this ${scope.toLowerCase()}.`,keywords:'integrations'},
   ...connectors.map(c=>({...c,description:c.guide})),
  ];
  const select=id=>location.hash=`#/${company?'company':'board'}/${entity.id}/settings/${id}`;
  return <SettingsShell scope={scope} name={entity.hierarchy?.project_name||entity.name} sections={sections} section={section} onSelect={select} onBack={onBack}>
-  {section==='ai'&&company&&owner&&<CompanyAI companyId={entity.id}/>}
+  {section==='ai'&&owner&&<CompanyAI key={entity.id} scopeKind={company?'company':'project'} scopeId={entity.id}/>}
   {section==='general'&&<GeneralSettings key={kind+entity.id} kind={kind} entity={entity} owner={owner} onSaved={onSaved} onBack={onBack} onExport={onExport}/>}
   {section==='members'&&can('members')&&<Members embedded kind={apiKind} id={entity.id}/>}
-  {section==='connectors'&&<>{company&&owner&&<section aria-label="Default company AI" className="space-y-4 border-b border-zinc-800 pb-6"><h3 className="font-semibold flex gap-2 items-center"><BrainCircuit size={20}/>Default AI for this company</h3><CompanyAI companyId={entity.id}/></section>}<ConnectorCatalog key={kind+entity.id} scope={kind} entityId={entity.id} allowed={allowed} onSelect={select}/>{!connectors.length&&<p className="text-sm text-zinc-400">Ask the Organization owner for the connector permissions you need. Your Board access is unchanged.</p>}{owner&&<button className={settingsButton} onClick={()=>accountSettings('connectors')}>Manage Organization connections</button>}</>}
+  {section==='connectors'&&<>{owner&&<section aria-label={`Default ${scope.toLowerCase()} AI`} className="space-y-4 border-b border-zinc-800 pb-6"><h3 className="font-semibold flex gap-2 items-center"><BrainCircuit size={20}/>Default AI for this {scope.toLowerCase()}</h3><CompanyAI key={entity.id} scopeKind={company?'company':'project'} scopeId={entity.id}/></section>}<ConnectorCatalog key={kind+entity.id} scope={kind} entityId={entity.id} allowed={allowed} onSelect={select}/>{!connectors.length&&<p className="text-sm text-zinc-400">Ask the Organization owner for the connector permissions you need. Your Board access is unchanged.</p>}{owner&&<button className={settingsButton} onClick={()=>accountSettings('connectors')}>Manage Organization connections</button>}</>}
   {section!=='ai'&&allowed(section)&&<>
    <ConnectorHelp id={section}/>
    {['discord','telegram'].includes(section)&&company&&owner&&<BotConnection key={section+entity.id} companyId={entity.id} provider={section}/>}

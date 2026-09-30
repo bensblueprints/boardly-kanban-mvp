@@ -172,10 +172,10 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
         const a=await personal.authorize(ownerId);return personal.respond(a,id,payload);
       }});
       tenant.chat.organization.companyAI=tenant.companyAI;
-      tenant.chat.organization.runtimeForProject=id=>tenant.companyAI.policy(tenant.companyAI.project(id)).source!=='inherit'?'api':ownerId===config.ownerId&&personal.account(ownerId).mode==='none'?'codex':'api';
+      tenant.chat.organization.runtimeForProject=id=>tenant.companyAI.hasOverride({kind:'project',id})?'api':ownerId===config.ownerId&&personal.account(ownerId).mode==='none'?'codex':'api';
       const funded={...personal,authorize:async(actor,jobId)=>{
         const companyId=tenant.companyAI.job(jobId),chosen=await tenant.companyAI.authorize(companyId);
-        if(chosen){const valid=chosen.selectionValid;chosen.selectionValid=()=>{valid();if(tenant.companyAI.job(jobId)!==companyId)throw Object.assign(Error('Board moved to another company. Resume with its current AI settings.'),{status:409});};return chosen;}
+        if(chosen){const valid=chosen.selectionValid;chosen.selectionValid=()=>{valid();if(JSON.stringify(tenant.companyAI.job(jobId))!==JSON.stringify(companyId))throw Object.assign(Error('Board moved to another company. Resume with its current AI settings.'),{status:409});};return chosen;}
         if(jobId&&personal.providers.fallbackForRun(ownerId,jobId))return personal.providers.fallbackAuthorize(ownerId);
         if(ownerId===config.ownerId&&personal.account(ownerId).mode==='none')return{user_id:ownerId,actor_id:actor,mode:'subscription',model:personal.account(ownerId).model};
         if(personal.account(ownerId).mode==='chatgpt')return chatgpt.authorize(ownerId);
@@ -188,7 +188,7 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
         try{return await(a.mode==='subscription'?tenant.subscription.respond(a.actor_id,id,payload):a.mode==='chatgpt'?chatgpt.respond(a,id,payload):personal.respond(a,id,payload));}
         catch(e){if(require('./runtime-policy').failureKind(e)==='allowance'&&personal.providers.startFallback(ownerId,id,'Paid AI allowance exhausted'))return fallback();throw e;}
       }};
-      tenant.companyOnboarding=require('./company-onboarding').createCompanyOnboarding({db:local.db,ownerId,generate:async(actor,id,payload)=>{const a=await funded.authorize(actor);return funded.respond(a,id,{...payload,model:a.model||personal.account(ownerId).model});},retain:()=>tenant.active++,release:()=>tenant.active--});
+      tenant.companyOnboarding=require('./company-onboarding').createCompanyOnboarding({db:local.db,ownerId,context:(companyId,valid)=>require('./company-plan-context').companyPlanContext({companyId,valid,github:tenant.github,companyAI:tenant.companyAI}),generate:async(actor,id,payload)=>{const a=await funded.authorize(actor,id);return funded.respond(a,id,{...payload,model:a.model||personal.account(ownerId).model});},retain:()=>tenant.active++,release:()=>tenant.active--});
       tenant.gpu=require('./gpu-workflows').createGpuWorkflows({db:local.db,ssh:tenant.ssh,ownerId,actions:()=>tenant.gpuActions,generate:async(actor,id,payload)=>{const a=await funded.authorize(actor,id);return funded.respond(a,id,{...payload,model:a.model||personal.account(ownerId).model});},retain:()=>tenant.active++,release:()=>tenant.active--});
       tenant.chat.hosted=require('./hosted-ai').createHostedAI({db:local.db,uploadsDir:tenant.uploadsDir,personal:funded,canManageAccess:actor=>actor===ownerId,canEdit:(actor,id)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).project(id)==='editor',canUse:(actor,id,scope)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).capabilities('project',id).includes(scope),retain:()=>tenant.active++,release:()=>tenant.active--,storageLimit:()=>tenant.plan.storage_bytes,organization:tenant.chat.organization,employees:tenant.chat.employees,ssh:tenant.ssh,github:tenant.github,computeruse:tenant.computeruse,media:tenant.media});
       tenant.chat.localFallback=(jobId)=>personal.providers.startFallback(ownerId,jobId,'Native ChatGPT allowance exhausted');
@@ -255,7 +255,7 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
   app.use(async(req,res,next)=>{try{
     if(!req.tenant)return next();
     const payer=req.workspaceOwnerId,mode=personal.account(payer).mode;
-    const companyId=req.tenant.companyAI.request(req),companyOverride=req.tenant.companyAI.policy(companyId).source!=='inherit';
+    const companyId=req.tenant.companyAI.request(req),companyOverride=req.tenant.companyAI.hasOverride(companyId);
     const subscription=!companyOverride&&payer===config.ownerId&&mode==='none';
     req.aiRuntime=req.workspaceIsOwner&&subscription?'codex':'api';
     req.aiFunding=subscription?'owner_subscription':mode==='chatgpt'?'owner_chatgpt':'owner_api';

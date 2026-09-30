@@ -3,6 +3,7 @@ import {Building2,KanbanSquare,FolderOpen,Plus,ArrowLeft,Mail,Settings2,Plug} fr
 import {api} from '../api.js';
 import {useAccess} from '../access.jsx';
 import ScopeSettings from './ScopeSettings.jsx';
+import DepartmentSettings from './DepartmentSettings.jsx';
 import AgentHub from './AgentHub.jsx';
 import AudioBriefing from './AudioBriefing.jsx';
 import AiActions from './AiActions.jsx';
@@ -55,12 +56,13 @@ export default function CompanyWorkspace({onOpen,cloud=true}){
  });}
  if(cloud&&owner&&view.kind==='company-build')return <CompanyOnboarding key={view.id} id={view.id}/>;
  if(cloud&&owner&&view.kind==='company-add')return view.id==='quick'?<QuickCompany/>:<main className="max-w-4xl mx-auto p-6 space-y-6"><button className={button} onClick={()=>navigate('#/')}>Back to companies</button><CompanyStart/></main>;
+ if(cloud&&owner&&view.kind==='collection'&&board&&view.settings)return <DepartmentSettings entity={board} section={view.settings} onBack={()=>navigate(`#/collection/${board.id}`)}/>;
  if(view.kind==='company'&&company&&view.settings)return <ScopeSettings kind="company" entity={company} section={view.settings} owner={owner} can={canCompany} onSaved={load} onBack={()=>navigate(`#/company/${company.id}`)}/>;
  return <main className="max-w-6xl mx-auto px-6 py-8 space-y-6">
   <style>{`[data-membership-ui] [hidden]{display:none!important}`}</style>
   <nav className="flex flex-wrap gap-2 text-sm text-zinc-400"><button onClick={()=>navigate('#/')}>Companies</button>{view.kind==='company'&&<><span>/</span><span className="text-zinc-200">{heading}</span></>}{view.kind==='collection'&&board&&<><span>/</span><button onClick={()=>navigate(`#/company/${board.company_id??'unassigned'}`)}>{data.companies.find(c=>c.id===board.company_id)?.name||'Unassigned'}</button><span>/</span><span className="text-zinc-200">{board.name}</span></>}</nav>
   <div className="flex flex-wrap justify-between gap-4 items-start"><div><h1 className="text-2xl font-bold">{heading}</h1><p className="text-sm text-zinc-400 mt-2">{view.kind==='home'?'Organization → Companies → Departments → Boards. Each Board holds its tasks, AI chat and files.':view.kind==='company'?'Departments, Boards and shared company connections.':'Each Board has its own tasks, AI chat, files and settings.'}</p></div>
-   <div className="flex flex-wrap gap-2">{view.kind==='company'&&company&&<button aria-label="Company settings" className={button} onClick={()=>navigate(`#/company/${company.id}/settings/general`)}><Settings2 size={16} className="inline mr-2"/>Settings</button>}<div className="flex gap-2" hidden={!owner}>{view.kind==='home'?<button className={button+' bg-indigo-600'} onClick={()=>cloud?navigate('#/company-add/choose'):newForm('company')}>Add company</button>:view.kind==='company'?<><button className={button} onClick={()=>newForm('board')}>New department</button></>:board&&<><button className={button+' bg-indigo-600'} onClick={()=>newForm('project')}>New board</button><button className={button} onClick={()=>setForm({kind:'board',id:board.id,name:board.name})}>Rename department</button></>}</div></div>
+   <div className="flex flex-wrap gap-2">{cloud&&owner&&view.kind==='collection'&&board&&<button aria-label="Department settings" className={button} onClick={()=>navigate(`#/collection/${board.id}/settings/ai`)}><Settings2 size={16} className="inline mr-2"/>Settings</button>}{view.kind==='company'&&company&&<button aria-label="Company settings" className={button} onClick={()=>navigate(`#/company/${company.id}/settings/general`)}><Settings2 size={16} className="inline mr-2"/>Settings</button>}<div className="flex gap-2" hidden={!owner}>{view.kind==='home'?<button className={button+' bg-indigo-600'} onClick={()=>cloud?navigate('#/company-add/choose'):newForm('company')}>Add company</button>:view.kind==='company'?<><button className={button} onClick={()=>newForm('board')}>New department</button></>:board&&<><button className={button+' bg-indigo-600'} onClick={()=>newForm('project')}>New board</button><button className={button} onClick={()=>setForm({kind:'board',id:board.id,name:board.name})}>Rename department</button></>}</div></div>
   </div>
   {view.kind==='home'&&cloud&&owner&&<CompanyStart choices={!data.companies.length}/>}
   {view.kind==='company'&&company&&cloud&&owner&&<button className={button} disabled={busy} onClick={()=>act(()=>startCompanyPlan(company.id))}>Plan my next steps</button>}

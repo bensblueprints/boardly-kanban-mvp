@@ -44,7 +44,7 @@ build = run(['docker', 'build', '--label', 'org.opencontainers.image.revision=' 
 smoke = 'require("./server/company-ai");require("./server/cloud");const {createAIProviders}=require("./server/ai-providers");const D=require("better-sqlite3"),db=new D(":memory:");const p=createAIProviders({db,key:Buffer.alloc(32),account:()=>({mode:"none"}),setMode:()=>{}});if(p.publicState("probe","deepseek").label!=="DeepSeek")throw Error("DeepSeek missing");db.close();console.log("company AI candidate loaded");'
 run(['docker', 'run', '--rm', '--network', 'none', '--entrypoint', 'node', candidate, '-e', smoke])
 print('Built and smoke-tested company AI candidate.', flush=True)
-for test in ['model-probe.js', 'company-ai.js', 'ai-providers.js', 'chatgpt.js', 'openwebui.js', 'runtime-recovery.js']:
+for test in ['mcp-sync-without-ai.js', 'management-api.js', 'scoped-ai.js', 'company-planner-context.js', 'company-onboarding.js', 'model-probe.js', 'company-ai.js', 'ai-providers.js', 'chatgpt.js', 'openwebui.js', 'runtime-recovery.js']:
     output = run(['docker', 'run', '--rm', '--network', 'none', '--mount', 'type=bind,src=' + str(stage / 'qa-test') + ',dst=/app/test,readonly', '--entrypoint', 'node', candidate, 'test/' + test])
     (stage / (test + '.log')).write_text(output)
     print(output.strip(), flush=True)
@@ -53,6 +53,8 @@ def recoverable_jobs():
     jobs = []
     for file in (root / 'data/workspaces').glob('*/app.db'):
         with sqlite3.connect(file.as_uri() + '?mode=ro', uri=True) as db:
+            if db.execute("SELECT 1 FROM sqlite_master WHERE name='company_build_turns'").fetchone():
+                assert not db.execute("SELECT 1 FROM company_build_turns WHERE status IN ('queued','running') LIMIT 1").fetchone(), 'Active company planner; postpone deployment'
             for table in ['chat_jobs', 'discussion_jobs']:
                 if not db.execute('SELECT 1 FROM sqlite_master WHERE name=?', (table,)).fetchone():
                     continue
