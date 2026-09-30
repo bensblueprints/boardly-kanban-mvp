@@ -32,7 +32,7 @@ html, body, #root { height: 100%; }
 .split-primary, .split-secondary { min-width: 0; min-height: 0; overflow: hidden; }
 .split-primary { display: flex; flex-direction: column; }
 .split-workspace-open[data-layout="side"] { grid-template-columns: minmax(0, var(--primary-size)) 10px minmax(0, 1fr); }
-.split-workspace-open[data-layout="stacked"] { min-height: 480px; grid-template-rows: minmax(0, var(--primary-size)) 10px minmax(0, 1fr); }
+.split-workspace-open[data-layout="stacked"] { min-height: 0; grid-template-rows: minmax(0, var(--primary-size)) 10px minmax(0, 1fr); }
 .workspace-divider { display: flex; align-items: center; justify-content: center; touch-action: none; user-select: none; background: #18181b; border: 1px solid #27272a; outline-offset: -2px; }
 .workspace-divider:hover, .workspace-divider:focus-visible { background: #312e81; outline: 2px solid #818cf8; }
 .workspace-divider span { border-radius: 2px; background: #71717a; }
@@ -54,3 +54,7 @@ html, body, #root { height: 100%; }
 .computer-live-window button { min-height: 40px; }
 @media (max-height: 520px) { .computer-project-name { display: none; } .computer-window-header, .computer-control-bar { padding-block: 4px; } }
 @media (max-width: 640px) { .computer-live-window { width: calc(100vw - 12px); height: calc(100dvh - 16px); } .computer-live-window-maximized { width: 100vw; height: 100dvh; } }
+
+/* Keep sending controls in the pane while history and connections scroll. */
+.coding-pane .chat-composer { max-height: 70%; overflow-y: auto; background: #09090b; padding: .75rem max(1rem, env(safe-area-inset-right)) max(.75rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left)); }
+.chat-actions { position: sticky; bottom: -.75rem; background: #09090b; padding-block: .5rem; z-index: 1; }
