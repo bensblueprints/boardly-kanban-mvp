@@ -343,7 +343,7 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
   app.all('/mcp', (req, res) => res.status(405).json({ error: 'Use Streamable HTTP POST' }));
   app.use((req, res, next) => {
     if (!req.tenant) return next();
-    if (/^\/api\/(chat|worker|agents|swarms|discussions)(\/|$)/i.test(req.path) || /^\/api\/boards\/\d+\/(chat\/|agent$|employees(?:\/|$))/i.test(req.path)) return req.tenant.subscription.router(req,res,err=>err?next(err):req.tenant.chat(req, res, next));
+    if (/^\/api\/(chat|worker|agents|swarms|discussions|work-monitor)(\/|$)/i.test(req.path) || /^\/api\/boards\/\d+\/(chat\/|agent$|employees(?:\/|$))/i.test(req.path)) return req.tenant.subscription.router(req,res,err=>err?next(err):req.tenant.chat(req, res, next));
     if(/^\/api\/account\/huggingface(?:\/|$)/.test(req.path))return req.tenant.huggingface.router(req,res,next);
     if(/^\/api\/account\/github(?:\/|$)/.test(req.path))return req.tenant.github.router(req,res,next);
     if(/^\/api\/account\/ssh(?:\/|$)/.test(req.path))return req.tenant.ssh.router(req,res,next);
@@ -364,11 +364,11 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
   });
   let cloudClosed=false,recoveringCloud=false;
   const recoverCloud=async()=>{if(cloudClosed||recoveringCloud)return;recoveringCloud=true;try{for(const ownerId of connections.workspaceOwners()){
-    if(cloudClosed)break;if(tenants.has(ownerId)){tenants.get(ownerId).chat.employees.tick();continue;}
+    if(cloudClosed)break;if(tenants.has(ownerId)){const chat=tenants.get(ownerId).chat;chat.employees.tick();chat.monitor.tick();continue;}
     const file=path.join(workspacePath(config.dataDir,ownerId),'app.db');if(!fs.existsSync(file))continue;
-    const db=new(require('better-sqlite3'))(file,{readonly:true});let pending=false;try{pending=!!db.prepare("SELECT 1 FROM chat_jobs WHERE runtime='api' AND (status='queued' OR (mode='work' AND status='running')) LIMIT 1").get();}catch{}finally{db.close();}if(!pending){const check=new(require('better-sqlite3'))(file,{readonly:true});try{pending=!!check.prepare('SELECT 1 FROM employee_teams WHERE enabled=1 LIMIT 1').get();}catch{}try{pending=pending||!!check.prepare("SELECT 1 FROM gpu_workflow_runs WHERE status IN ('queued','running') LIMIT 1").get();}catch{}finally{check.close();}}if(!pending)continue;
+    const db=new(require('better-sqlite3'))(file,{readonly:true});let pending=false;try{pending=!!db.prepare("SELECT 1 FROM chat_jobs WHERE runtime='api' AND (status='queued' OR (mode='work' AND status='running')) LIMIT 1").get();}catch{}finally{db.close();}if(!pending){const check=new(require('better-sqlite3'))(file,{readonly:true});try{pending=!!check.prepare('SELECT 1 FROM employee_teams WHERE enabled=1 LIMIT 1').get();}catch{}try{pending=pending||!!check.prepare('SELECT 1 FROM work_monitor_settings WHERE enabled=1').get();}catch{}try{pending=pending||!!check.prepare("SELECT 1 FROM gpu_workflow_runs WHERE status IN ('queued','running') LIMIT 1").get();}catch{}finally{check.close();}}if(!pending)continue;
     let plan;if(personal.billing.ready()){const billed=await personal.billing.state(ownerId);plan={...billed.plan,extra_users:billed.extra_users,users:billed.plan.users===null?null:billed.plan.users+billed.extra_users};}else plan=await planService.sponsored(ownerId);
-    if(!cloudClosed&&plan)tenantFor(ownerId,plan).chat.employees.tick();
+    if(!cloudClosed&&plan){const chat=tenantFor(ownerId,plan).chat;chat.employees.tick();chat.monitor.tick();}
   }}catch{/* Retry recovery after transient provider/storage failures. */}finally{recoveringCloud=false;}};
   const recoveryTimer=setInterval(recoverCloud,15000);recoveryTimer.unref();queueMicrotask(recoverCloud);
   app.closeWorkspaces = () => {cloudClosed=true;clearInterval(recoveryTimer);

@@ -88,7 +88,9 @@ function createProjectEmployees({db,ownerId,clean,enqueue=()=>{}}){
    if(active)return;
    const next=db.prepare(`SELECT c.id,l.board_id,e.instruction,e.requested_by,e.runtime FROM cards c JOIN lists l ON l.id=c.list_id JOIN employee_teams e ON e.board_id=l.board_id
     WHERE e.enabled=1 AND e.ordered=1 AND e.requested_by=? AND c.archived=0 AND l.archived=0 AND lower(trim(l.name))='to do'
-    ORDER BY l.board_id,l.position,c.position,c.id LIMIT 1`).get(ownerId);
+    AND NOT EXISTS(SELECT 1 FROM employee_assignments a WHERE a.card_id=c.id)
+    AND NOT EXISTS(SELECT 1 FROM chat_jobs j JOIN chat_threads t ON t.id=j.thread_id WHERE t.card_id=c.id AND j.status IN ('queued','running','recovering','blocked','cancelled'))
+    ORDER BY COALESCE((SELECT MAX(a.created_at) FROM employee_assignments a JOIN project_employees pe ON pe.id=a.employee_id WHERE pe.board_id=l.board_id),0),l.board_id,l.position,c.position,c.id LIMIT 1`).get(ownerId);
    if(next){const worker=roster(next.board_id).find(e=>e.role==='Engineer');assign(next.board_id,worker.id,next.id,next.instruction,next.requested_by,next.runtime);}
   }).immediate();
   for(const team of db.prepare('SELECT * FROM employee_teams WHERE enabled=1 AND ordered=0').all()){

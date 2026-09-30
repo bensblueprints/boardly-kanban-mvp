@@ -53,6 +53,7 @@ function createProjectChat({ db, connections, userId, uploadsDir, environment, p
   const organization = require('./organization-agents').createOrganizationAgents({db,clean,userId,hosted:()=>router.hosted,githubContext,sshContext,computerContext});
   router.organization=organization; router.use(organization.router);
   router.employees=require('./project-employees').createProjectEmployees({db,ownerId:userId,clean,enqueue:()=>router.hosted?.enqueue()});
+  router.monitor=require('./work-monitor').createWorkMonitor({db,ownerId:userId,employees:router.employees});router.use(router.monitor.router);
   organization.employees=router.employees;
   const employeeBase='/api/boards/:boardId/employees';
   router.use(employeeBase,(req,res,next)=>{const id=Number(req.params.boardId);if((req.boardlyConnection&&!req.boardlyManagement)||!canWriteFiles(req.cloudUserId||userId,id))return res.status(403).json({error:'Project edit access is required'});next();});

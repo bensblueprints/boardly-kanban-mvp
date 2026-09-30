@@ -41,6 +41,8 @@ build = run(['docker', 'build', '--label', 'org.opencontainers.image.revision=' 
 (stage / 'build.log').write_text(build)
 run(['docker', 'run', '--rm', '--network', 'none', '--entrypoint', 'node', candidate, 'test/github-read-range.js'])
 run(['docker', 'run', '--rm', '--network', 'none', '--entrypoint', 'node', candidate, 'test/hosted-work-evidence.js'])
+if (stage / 'test/work-monitor.js').exists():
+    run(['docker', 'run', '--rm', '--network', 'none', '--entrypoint', 'node', candidate, 'test/work-monitor.js'])
 print('Built and smoke-tested Work evidence candidate.', flush=True)
 
 def recoverable_jobs():
