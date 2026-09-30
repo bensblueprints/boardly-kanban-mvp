@@ -63,6 +63,15 @@ export const connectorDefinitions = [
       "Verify your API key and choose a model. Your Kimi Code or chat subscription is separate from API billing.",
   },
   {
+    id: "deepseek",
+    label: "DeepSeek",
+    icon: BrainCircuit,
+    scope: "Account",
+    category: "AI",
+    description: "Power Boardly agents with your DeepSeek API account.",
+    guide: "Verify your API key to load available models, select one and choose Use for Boardly agents.",
+  },
+  {
     id: "huggingface",
     label: "Hugging Face",
     icon: BrainCircuit,
@@ -223,7 +232,7 @@ function statusRequest(id, scope, entityId) {
           scope === "account" ? "API key saved" : "Generation enabled",
         ),
     ];
-  if (["claude", "kimi", "local", "openwebui"].includes(id))
+  if (["claude", "kimi", "deepseek", "local", "openwebui"].includes(id))
     return [
       "/api/account/ai-providers",
       (d) => {

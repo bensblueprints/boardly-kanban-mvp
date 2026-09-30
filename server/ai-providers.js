@@ -1,6 +1,6 @@
 const crypto=require('node:crypto'),http=require('node:http'),express=require('express');
 const fail=(status,message)=>Object.assign(Error(message),{status});
-const definitions={claude:{label:'Claude',origin:'https://api.anthropic.com',protocol:'anthropic'},kimi:{label:'Kimi',origin:'https://api.moonshot.ai',protocol:'chat'},local:{label:'Local AI',protocol:'chat'},openwebui:{label:'Open WebUI',protocol:'chat'}};
+const definitions={claude:{label:'Claude',origin:'https://api.anthropic.com',protocol:'anthropic'},kimi:{label:'Kimi',origin:'https://api.moonshot.ai',protocol:'chat'},deepseek:{label:'DeepSeek',origin:'https://api.deepseek.com',protocol:'chat'},local:{label:'Local AI',protocol:'chat'},openwebui:{label:'Open WebUI',protocol:'chat'}};
 const text=v=>typeof v==='string'?v:'';
 function imagePart(p,anthropic=false){
  if(p.type==='input_image'){

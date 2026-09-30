@@ -30,6 +30,15 @@ export const connectorHelp = {
     check: "Your model appears as the active connection after activation.",
     fix: "A Kimi chat or Code subscription is separate from API access. Check your API account if a key is rejected.",
   },
+  deepseek: {
+    steps: [
+      "Open the DeepSeek API dashboard linked below and create an API key.",
+      "Paste it into the DeepSeek API key box. Click Verify connection to load the models available to your account.",
+      "Choose a model, click Verify & save model, then Use for Boardly agents.",
+    ],
+    check: "Verification fetches your model list without generating a paid AI response. Your selected model appears after activation.",
+    fix: "If verification fails, check your API key and model access in DeepSeek. Check your DeepSeek balance if a task cannot run.",
+  },
   local: {
     steps: [
       "Start your model app, such as Ollama or LM Studio, on your own computer and load a model.",
