@@ -2,22 +2,23 @@ const assert=require('node:assert/strict'),crypto=require('node:crypto'),path=re
 const Database=require('better-sqlite3'),{fixture}=require('./member-fixture');
 const {createAIProviders,payloadFor,outputFor}=require('../server/ai-providers');
 (async()=>{
- const keys={claude:'test-claude-private-value',kimi:'test-kimi-private-value'},requests=[];
+ const keys={claude:'test-claude-private-value',kimi:'test-kimi-private-value',deepseek:'test-deepseek-private-value'},requests=[];
  let pause,waiting,shouldWait=false;
  const fake=async(url,options)=>{
-  const p=url.startsWith('https://api.anthropic.com/')?'claude':'kimi';
-  assert.ok(url.startsWith(p==='claude'?'https://api.anthropic.com/':'https://api.moonshot.ai/'));
+  const origins={claude:'https://api.anthropic.com',kimi:'https://api.moonshot.ai',deepseek:'https://api.deepseek.com'};
+  const p=Object.keys(origins).find(id=>url.startsWith(origins[id]+'/'));assert.ok(p,'Only the fixed provider origin is used');
+  assert.equal(options.redirect,'error');
   assert.equal(options.headers[p==='claude'?'x-api-key':'Authorization'],p==='claude'?keys[p]:'Bearer '+keys[p]);
   if(url.endsWith('/models'))return Response.json({data:[{id:p+'-available-model'}]});
   const body=JSON.parse(options.body);requests.push({p,body});assert.equal(body.model,p+'-available-model');assert.ok(!options.body.includes(keys[p]));
   if(shouldWait){waiting=true;await new Promise(r=>pause=r);}
   const done=body.messages.some(m=>m.role==='tool'||Array.isArray(m.content)&&m.content.some(i=>i.type==='tool_result'));
   if(p==='claude')return Response.json({id:'msg_fixture',content:done?[{type:'text',text:'Claude read the project.'}]:[{type:'tool_use',id:'tool_c',name:'get_project',input:{}}],usage:{input_tokens:31,output_tokens:11}});
-  return Response.json({id:'kimi_fixture',choices:[{message:done?{role:'assistant',content:'Kimi read the project.'}:{role:'assistant',reasoning_content:'opaque test continuation',content:null,tool_calls:[{id:'tool_k',type:'function',function:{name:'get_project',arguments:'{}'}}]}}],usage:{prompt_tokens:42,completion_tokens:12}});
+  return Response.json({id:p+'_fixture',choices:[{message:done?{role:'assistant',content:p+' read the project.'}:{role:'assistant',reasoning_content:'opaque test continuation',content:null,tool_calls:[{id:'tool_k',type:'function',function:{name:'get_project',arguments:'{}'}}]}}],usage:{prompt_tokens:42,completion_tokens:12}});
  };
  const f=await fixture({publicAccess:true,providerConnectorRequest:fake,providerRequest:()=>{throw Error('Provider calls must not use the OpenAI/platform billing client');}});
  try{
-  for(const provider of ['claude','kimi']){
+  for(const provider of ['claude','deepseek','kimi']){
    const user='user_'+provider,p=await f.project(provider,'Provider test',user);
    const route='/api/account/ai-providers/'+provider;
    await f.api(route,{user,method:'PUT',body:{token:keys[provider],user_id:'user_owner',base_url:'http://127.0.0.1/'}});
@@ -32,6 +33,14 @@ const {createAIProviders,payloadFor,outputFor}=require('../server/ai-providers')
    assert.ok(!JSON.stringify(c).includes('opaque test continuation'));
    assert.equal((await f.api('/api/ai/settings',{user})).usage.boardly_charge,0);
    const state=await f.api('/api/account/ai-providers',{user});assert.equal(state.history.length,2);assert.ok(state.history.every(h=>h.status==='completed'));assert.ok(!JSON.stringify(state).includes(keys[provider]));
+   if(provider==='deepseek'){
+    assert.ok(requests.filter(r=>r.p===provider).at(-1).body.messages.some(m=>m.reasoning_content==='opaque test continuation'),'DeepSeek thinking survives the tool round trip');
+    const storage=new Database(path.join(f.root,'personal-ai.db'),{readonly:true});
+    const saved=storage.prepare('SELECT encrypted FROM ai_provider_connections WHERE user_id=? AND provider=?').get(user,provider);assert.ok(saved);assert.ok(!saved.encrypted.includes(keys[provider]));storage.close();
+    assert.equal((await f.request(route,{user,method:'PUT',body:{model:'not-returned-by-provider'}})).status,400);
+    await f.api(route,{user,method:'PUT',body:{model:provider+'-available-model'}});
+    assert.equal((await f.api('/api/account/ai-providers',{user})).connections.find(c=>c.provider===provider).has_key,true,'Model refresh preserves the encrypted key');
+   }
    if(provider==='kimi'){
     assert.ok(requests.filter(r=>r.p==='kimi').at(-1).body.messages.some(m=>m.reasoning_content==='opaque test continuation'));
     shouldWait=true;await f.api(`/api/chat/threads/${thread.id}/messages`,{user,method:'POST',body:{mode:'work',content:'Pause until revoked'}});
@@ -59,6 +68,6 @@ const {createAIProviders,payloadFor,outputFor}=require('../server/ai-providers')
   await assert.rejects(()=>providers.authorize('different-account'),{status:402});
  }finally{server.closeAllConnections();await new Promise(r=>server.close(r));db.close();}
  const screenshot={type:'function_call_output',call_id:'call_s',output:[{type:'input_image',image_url:'data:image/png;base64,AAAA'}]};
- for(const provider of ['claude','kimi','local']){const p=payloadFor({provider,model:'fixture'},{input:[screenshot],tools:[]});assert.ok(JSON.stringify(p).includes(provider==='claude'?'"type":"image"':'"type":"image_url"'));}
- console.log('PASS: real Claude/Kimi project tool cycles; customer-only keys; no platform fallback or markup; opaque continuation; in-flight revocation; private local HTTP; screenshot conversion');
+ for(const provider of ['claude','kimi','deepseek','local']){const p=payloadFor({provider,model:'fixture'},{input:[screenshot],tools:[]});assert.ok(JSON.stringify(p).includes(provider==='claude'?'"type":"image"':'"type":"image_url"'));}
+ console.log('PASS: real Claude/Kimi/DeepSeek project tool cycles; customer-only keys; no platform fallback or markup; opaque continuation; in-flight revocation; private local HTTP; screenshot conversion');
 })().catch(e=>{console.error(e);process.exitCode=1;});

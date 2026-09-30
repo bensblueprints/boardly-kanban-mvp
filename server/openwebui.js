@@ -17,12 +17,12 @@ function publicAddress(address) {
 // Resolve every request, reject mixed private/public answers, and pin the socket
 // lookup to the validated address. TLS still verifies the original hostname.
 function createOpenWebUIRequest({resolve=dns.lookup, request=https.request}={}) {
-  return async function openWebUIRequest(connection, path, body) {
+  return async function openWebUIRequest(connection, path, body, {timeoutMs}={}) {
     const base = baseURL(connection.base_url);
     const url = new URL(base + path);
     const hostname = url.hostname.replace(/^\[|\]$/g, '');
     let timer;
-    const timeout = body ? 180000 : 15000;
+    const timeout = timeoutMs || (body ? 180000 : 15000);
     const controller = new AbortController();
     try {
       const addresses = await Promise.race([
@@ -44,7 +44,7 @@ function createOpenWebUIRequest({resolve=dns.lookup, request=https.request}={}) 
           res.on('error', ()=>reject(fail(502, 'Open WebUI interrupted the response.')));
           res.on('end', ()=>{try{resolveResponse(new Response([204,205].includes(res.statusCode)?null:Buffer.concat(parts),{status:res.statusCode}));}catch{reject(fail(502, 'Open WebUI returned an invalid response.'));}});
         });
-        req.on('error', ()=>reject(fail(controller.signal.aborted?504:502, 'Open WebUI could not complete the connection. Check its address, TLS certificate and availability.')));
+        req.on('error', ()=>reject(fail(controller.signal.aborted?504:502, controller.signal.aborted?'Open WebUI did not respond before the request timed out. Check the selected model and server load.':'Open WebUI could not complete the connection. Check its address, TLS certificate and availability.')));
         req.end(body ? JSON.stringify(body) : undefined);
       });
     } finally { clearTimeout(timer); }

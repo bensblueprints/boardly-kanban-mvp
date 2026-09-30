@@ -30,6 +30,15 @@ export const connectorHelp = {
     check: "Your model appears as the active connection after activation.",
     fix: "A Kimi chat or Code subscription is separate from API access. Check your API account if a key is rejected.",
   },
+  deepseek: {
+    steps: [
+      "Open the DeepSeek API dashboard linked below and create an API key.",
+      "Paste it into the DeepSeek API key box. Click Verify connection to load the models available to your account.",
+      "Choose a model, click Verify & save model, then Use for Boardly agents.",
+    ],
+    check: "Verification fetches your model list without generating a paid AI response. Your selected model appears after activation.",
+    fix: "If verification fails, check your API key and model access in DeepSeek. Check your DeepSeek balance if a task cannot run.",
+  },
   local: {
     steps: [
       "Start your model app, such as Ollama or LM Studio, on your own computer and load a model.",
@@ -52,7 +61,7 @@ export const connectorHelp = {
   computeruse: {
     steps: [
       "Open your ComputerUse account and create an API key with the desktop access you need.",
-      "Paste the key in Account settings → ComputerUse. Your available computers will appear.",
+      "Paste the key in Organization settings → ComputerUse. Your available computers will appear.",
       "Open Company settings → ComputerUse. Choose its computers and turn on agent control only when you want the AI to use them.",
     ],
     check:
@@ -82,7 +91,7 @@ export const connectorHelp = {
     steps: [
       "Create a 1Password service account with access to a vault you want Boardly to use.",
       "Paste its token here. Choose only the login items and websites the AI is allowed to use.",
-      "Open the company or project settings and grant those logins to the work that needs them.",
+      "Open the company or board settings and grant those logins to the work that needs them.",
     ],
     check: "Approved items appear by name. Passwords stay private.",
     fix: "If an item is missing, check the service account’s vault access and the website saved on the item.",

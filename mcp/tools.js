@@ -90,7 +90,9 @@ function createBoardlyServer({ db, uploadsDir, management, authorize }) {
   }
 
   function tool(name, description, schema, handler) {
-    server.registerTool(name, { description, inputSchema: schema }, async (args) => {
+    const readOnlyHint=new Set(['list_project_files','list_project_folders','list_project_links','list_task_files','read_project_file','get_hierarchy','list_boards','get_board','get_card','find_cards','list_attachments','file_upload_status']).has(name);
+    const additive=new Set(['create_project_folder','add_project_file_link','add_project_link','link_task_file','start_file_upload','upload_file_chunk','finish_file_upload','add_project_file','create_company','create_company_board','create_project','create_board','create_list','create_card','create_label','assign_label','add_checklist','add_checklist_item','attach_link','add_comment']).has(name);
+    server.registerTool(name, { description, inputSchema: schema, annotations:{readOnlyHint,destructiveHint:!readOnlyHint&&!additive,idempotentHint:readOnlyHint,openWorldHint:false} }, async (args) => {
       try {
         const result=await handler(args);
         return ok(authorize?await authorize(name,args,result):result);

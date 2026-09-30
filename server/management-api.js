@@ -113,7 +113,7 @@ function createManagement({ app, parent, origin, routers, authorizeRequest }) {
       payload = Buffer.concat(parts); headers['content-type'] = 'multipart/form-data; boundary=' + boundary;
     } else if (body !== undefined) headers['content-type'] = 'application/json';
     const result = await internalRequest(app, { method: operation.method, url: path, headers, body: payload, prepare: authorizeRequest,
-      ...(operation.path==='/api/account/computeruse/vision/test'?{timeout:100000}:{}) });
+      ...(operation.path==='/api/account/computeruse/vision/test'?{timeout:100000}:/^\/api\/(?:account\/ai-providers\/:provider\/test|(?:companies|departments|projects)\/:id\/ai\/test)$/.test(operation.path)?{timeout:45000}:{}) });
     if (result.status >= 400) throw fail(result.status, `API ${result.status}: ${result.data?.error || 'Request failed'}`);
     return result;
   }
