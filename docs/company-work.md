@@ -2,6 +2,8 @@
 
 Open a company, choose **Chat with AI / Agent swarm**, then **Work**. Describe the desired departments, Boards, tasks and work to carry out. An empty company can start here without creating Boards manually.
 
+**Audio AI** also supports company Work directly: type or record a request and choose **Start work**. No project selection or prior briefing is required, including for an empty company. An existing briefing is included as reference. Results link to the saved company Work conversation and created Boards. Project and Department briefings retain their targeted project workflow.
+
 Company Work can inspect existing structure, create or reuse departments and Boards, add tasks, provision each Board's AI employee roster, and assign a requested task to its Manager. The Manager can call Engineer, Designer and Reviewer specialists using the existing employee delegation system. Company and Board AI settings still determine the provider/model used for each run. These are AI employee roles, not invitations or real-world hiring.
 
 Ask and Plan remain read-only. A setup-only instruction creates structure without enabling continuous backlog execution. The existing Department Work interface still supports selecting specific Boards for a swarm. Company Work uses a conversation and does not require manually selecting Boards.
@@ -20,3 +22,5 @@ The chat shows saved creation counts, links to the relevant Boards, and assignme
 ## Verification
 
 `node test/company-work.js` tests an empty company through setup and Manager assignment, duplicate retries, conflicting requests, cross-company denial, company AI selection, setup-only behavior, Ask/Plan and member/tenant isolation. `node test/company-work-browser.cjs` exercises the real React interface at desktop/mobile sizes, creation receipts and Board navigation against a deterministic provider fixture. Existing company AI, employee Manager and member-scope tests cover the shared execution paths. Provider fixtures establish tool integration, not a guarantee that every model will choose a correct business plan.
+
+`node test/company-audio-work.js` covers direct and briefing-based audio Work, empty/multiple-Board companies, idempotency and authorization. `node test/company-audio-browser.cjs` verifies first-request Work, lost-response retry, mobile layout, receipts and company conversation deep links.

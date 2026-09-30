@@ -16,9 +16,9 @@ import CompanyChat from './CompanyChat.jsx';
 const button='rounded-lg border border-zinc-700 px-3 py-2 text-sm hover:bg-zinc-800 disabled:opacity-50';
 const input='rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm';
 const navigate=path=>{location.hash=path;};
-function route(){const m=location.hash.match(/^#\/(company|collection|company-add|company-build)\/([\w-]+)/);return m?{kind:m[1],id:m[2],settings:location.hash.includes('/settings')?(location.hash.match(/\/settings(?:\/([^/?]+))?/)?.[1]||'general'):null}:{kind:'home'};}
+function route(){const m=location.hash.match(/^#\/(company|collection|company-add|company-build)\/([\w-]+)/);return m?{kind:m[1],id:m[2],chat:new URLSearchParams(location.hash.split('?')[1]||'').get('chat')||'',settings:location.hash.includes('/settings')?(location.hash.match(/\/settings(?:\/([^/?]+))?/)?.[1]||'general'):null}:{kind:'home'};}
 export default function CompanyWorkspace({onOpen,cloud=true}){
- const [showAI,setShowAI]=useState(false);
+ const [showAI,setShowAI]=useState(()=>Boolean(route().chat));
  const [showAudio,setShowAudio]=useState(false);
  const access=useAccess(),owner=access.workspaceOwner!==false;
  const [data,setData]=useState(null),[view,setView]=useState(route),[requestedTab,setTab]=useState('boards'),[error,setError]=useState(''),[form,setForm]=useState(null),[busy,setBusy]=useState(false);
@@ -27,7 +27,7 @@ export default function CompanyWorkspace({onOpen,cloud=true}){
   let active=true,pending=false;
   const refresh=async()=>{if(!active||pending)return;pending=true;try{const next=await api.get('/api/hierarchy');if(active){setData(next);setError('');}}catch(e){if(active)setError(e.message);}finally{pending=false;}};
   const visible=()=>{if(document.visibilityState==='visible')refresh();};
-  const changed=()=>{setView(route());setShowAI(false);setShowAudio(false);setForm(null);setTab('boards');setError('');refresh();};
+  const changed=()=>{setView(route());setShowAI(Boolean(route().chat));setShowAudio(false);setForm(null);setTab('boards');setError('');refresh();};
   refresh();const timer=setInterval(visible,3000);
   window.addEventListener('hashchange',changed);window.addEventListener('focus',refresh);document.addEventListener('visibilitychange',visible);
   return()=>{active=false;clearInterval(timer);window.removeEventListener('hashchange',changed);window.removeEventListener('focus',refresh);document.removeEventListener('visibilitychange',visible);};
@@ -68,7 +68,7 @@ export default function CompanyWorkspace({onOpen,cloud=true}){
   {view.kind==='company'&&company&&cloud&&owner&&<button className={button} disabled={busy} onClick={()=>act(()=>startCompanyPlan(company.id))}>Plan my next steps</button>}
   {canOpenAI?<AiActions chatLabel={view.kind==='home'?'Organization AI / Delegate work':'Chat with AI / Agent swarm'} onChat={()=>setShowAI(true)} onAudio={()=>setShowAudio(audioTarget)}/>:cloud&&audioTarget&&<button className={button+' border-indigo-400 text-indigo-100'} onClick={()=>setShowAudio(audioTarget)}>Audio briefing</button>}
   {showAudio&&<AudioBriefing key={showAudio.kind+showAudio.id} kind={showAudio.kind} id={showAudio.id} onClose={()=>setShowAudio(false)}/>}
-  {showAI&&<AgentHub key={view.kind+view.id} kind={view.kind==='home'?'organization':view.kind==='company'?'company':'board'} id={view.kind==='home'?0:Number(view.id)} onClose={()=>setShowAI(false)} onOpen={onOpen}/>}
+  {showAI&&<AgentHub key={view.kind+view.id+(view.chat||'')} initialThread={view.chat||''} kind={view.kind==='home'?'organization':view.kind==='company'?'company':'board'} id={view.kind==='home'?0:Number(view.id)} onClose={()=>setShowAI(false)} onOpen={onOpen}/>}
   {error&&<p role="alert" className="text-sm text-rose-300">{error}</p>}
   {form&&<form onSubmit={save} className="p-4 rounded-xl border border-indigo-500/40 bg-zinc-900 flex flex-wrap gap-3"><label className="flex-1 min-w-48"><span className="sr-only">{form.kind==='board'?'department':form.kind==='project'?'board':'company'} name</span><input className={input+' w-full'} placeholder={`${form.kind==='board'?'Department':form.kind==='project'?'Board':'Company'} name`} maxLength={200} autoFocus required value={form.name} onChange={e=>setForm({...form,name:e.target.value})}/></label><button disabled={busy} className={button+' bg-indigo-600'}>{form.id?'Save name':`Create ${form.kind==='board'?'department':form.kind==='project'?'board':'company'}`}</button><button type="button" className={button} onClick={()=>setForm(null)}>Cancel</button></form>}
   {view.kind==='home'&&cloud&&owner&&<AccountComputerUse home companies={data.companies} onCompany={id=>navigate(`#/company/${id}`)}/>}

@@ -120,9 +120,9 @@ function Conversation({ kind, id, name, projects, onClose }) {
     poll(); const interval = setInterval(poll, 2000);
     return () => { current = false; clearInterval(interval); };
   }, [thread, voice]);
-  async function refreshWork() {
-    if(!thread)return;
-    const [runs,status]=await Promise.all([api.get(base+'/work?thread_id='+encodeURIComponent(thread)),api.get('/api/chat/status')]);
+  async function refreshWork(tid=thread) {
+    if(!tid)return;
+    const [runs,status]=await Promise.all([api.get(base+'/work?thread_id='+encodeURIComponent(tid)),api.get('/api/chat/status')]);
     if(alive.current){setWorkRuns(runs);setOnline(status.online);}
   }
   useEffect(()=>{
@@ -146,14 +146,16 @@ function Conversation({ kind, id, name, projects, onClose }) {
   }
   async function startWork() {
     const reply=[...messages].reverse().find(m=>m.role==='assistant');
-    if(!reply||!workProject||!input.trim()||locked.current||busy||isRunning(job?.status))return;
+    if((kind!=='company'&&(!reply||!workProject))||!input.trim()||locked.current||busy||isRunning(job?.status))return;
     locked.current=true;setBusy(true);setWorkBusy(true);setError('');stopAudio();
-    const body={thread_id:thread,reply_id:reply.id,project_id:Number(workProject),content:input.trim()},signature=JSON.stringify(body);
-    if(workAttempt.current?.signature!==signature)workAttempt.current={signature,key:crypto.randomUUID()};
     try{
+      let tid=thread;
+      if(!tid){const created=await api.post(threadsUrl,{title:'Audio briefing'});tid=created.id;if(!alive.current)return;setThread(tid);}
+      const body={thread_id:tid,reply_id:reply?.id,...(kind==='company'?{}:{project_id:Number(workProject)}),content:input.trim()},signature=JSON.stringify(body);
+      if(workAttempt.current?.signature!==signature)workAttempt.current={signature,key:crypto.randomUUID()};
       await api.post(base+'/work',{...body,request_key:workAttempt.current.key});
       if(!alive.current)return;
-      setInput('');workAttempt.current=null;await refreshWork();
+      setInput('');workAttempt.current=null;await refreshWork(tid);
     }catch(e){if(alive.current)setError(e.message);}
     finally{locked.current=false;if(alive.current){setBusy(false);setWorkBusy(false);}}
   }
@@ -195,7 +197,7 @@ function Conversation({ kind, id, name, projects, onClose }) {
       {!messages.length && <div className="py-8 text-center text-zinc-400"><Headphones className="mx-auto mb-4 text-indigo-300" size={32} /><p className="text-zinc-100">Let’s talk about {name}.</p><p className="mt-2 text-sm">Start with a summary, then ask what to focus on.</p></div>}
       {messages.map(m => <article key={m.id} className={`rounded-xl p-3 ${m.role === 'assistant' ? 'bg-zinc-900 mr-4' : 'bg-indigo-500/15 ml-4'}`}><div className="flex gap-2 items-center justify-between mb-2"><p className="text-xs text-zinc-400">{m.role === 'assistant' ? 'AI' : 'You'} · {new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>{m.role === 'assistant' && <button className="text-xs text-indigo-300 flex gap-1 items-center" aria-label="Listen to this reply" disabled={!service?.available || preparing || recording} onClick={() => playReply(m.id)}><Volume2 size={15} />Listen</button>}</div><p className="text-sm whitespace-pre-wrap break-words leading-relaxed">{m.content.split('\n\nVoice briefing instructions:')[0]}</p></article>)}
       {running && <div className="flex flex-wrap gap-3 items-center text-sm text-indigo-200"><span role="status">{job.status === 'queued' ? 'Waiting for AI…' : 'AI is preparing your reply…'}</span><button className={button} onClick={async () => { pending.current = null; try { await api.post(kind === 'project' ? `/api/chat/jobs/${job.id}/cancel` : `/api/discussions/jobs/${job.id}/cancel`, {}); await refresh(thread); } catch (e) { if (alive.current) setError(e.message); } }}>Stop reply</button></div>}
-      {workRuns.map(run=><section key={run.id} aria-label={`Work in ${run.project_name}`} className="space-y-2"><p className="text-sm font-medium text-indigo-200">Work in {run.project_name}</p><RunActivity run={run} online={online}/><div className="flex flex-wrap gap-3 text-xs"><a className="underline text-indigo-300" href={`#/board/${run.project_id}?chat=${run.thread_id}`} onClick={onClose}>Open work chat</a>{['queued','running'].includes(run.status)&&<button type="button" className="underline text-zinc-300" onClick={async()=>{try{await api.post(`/api/chat/jobs/${run.id}/cancel`,{});await refreshWork();}catch(e){if(alive.current)setError(e.message);}}}>Stop work</button>}</div></section>)}
+      {workRuns.map(run=><section key={run.id} aria-label={`Work in ${run.project_name}`} className="space-y-2"><p className="text-sm font-medium text-indigo-200">Work in {run.project_name}</p><RunActivity run={run} online={run.scope_kind==='company'||online}/>{run.scope_kind==='company'&&run.draft&&<p className="text-sm whitespace-pre-wrap break-words">{run.draft}</p>}{run.structure_changes?.map((change,index)=><div key={index} aria-label="Company structure created" className="text-sm space-y-1"><p>Added {change.created.departments} departments, {change.created.boards} Boards and {change.created.tasks} tasks.</p>{change.departments.flatMap(d=>d.boards.map(b=><a key={b.id} className="block underline text-indigo-300" href={`#/board/${b.id}`} onClick={onClose}>{d.name} / {b.name}</a>))}</div>)}<div className="flex flex-wrap gap-3 text-xs"><a className="underline text-indigo-300" href={run.scope_kind==='company'?`#/company/${run.company_id}?chat=${run.thread_id}`:`#/board/${run.project_id}?chat=${run.thread_id}`} onClick={onClose}>Open work chat</a>{['queued','running'].includes(run.status)&&<button type="button" className="underline text-zinc-300" onClick={async()=>{try{await api.post(run.scope_kind==='company'?`/api/discussions/jobs/${run.id}/cancel`:`/api/chat/jobs/${run.id}/cancel`,{});await refreshWork();}catch(e){if(alive.current)setError(e.message);}}}>Stop work</button>}</div></section>)}
       <div ref={end} />
     </div>
     <form onSubmit={e => { e.preventDefault(); send(input); }} className="shrink-0 min-h-0 max-h-[60%] flex flex-col border-t border-zinc-800">
@@ -204,10 +206,10 @@ function Conversation({ kind, id, name, projects, onClose }) {
       {audioStatus && <div className="flex items-center gap-3 text-xs text-indigo-200" role="status">{audioStatus}{preparing && <button className="underline" onClick={stopAudio}>Cancel audio</button>}</div>}
       {error && <p role="alert" className="text-sm text-rose-300">{error}</p>}
         <textarea aria-label="Audio AI question" value={input} maxLength={6000} rows={2} placeholder="Ask a question or tell AI what to do…" disabled={recording||busy} onChange={e => setInput(e.target.value)} className="w-full resize-none rounded-xl border border-zinc-700 bg-zinc-900 p-3 text-sm outline-none focus:border-indigo-400" />
-        {projects.length>1?<label className="block text-xs text-zinc-400">Work in project<select aria-label="Work in project" value={workProject} disabled={busy} onChange={e=>setWorkProject(e.target.value)} className="block mt-1 w-full min-w-0 rounded-lg border border-zinc-700 bg-zinc-900 p-2 text-sm"><option value="">Choose a project for Start work</option>{projects.map(p=><option key={p.projectId} value={p.projectId}>{p.name}</option>)}</select></label>:<p className="text-xs text-zinc-400">{projects.length?`Start work in ${projects[0].name}.`:'Add a project before starting work.'}</p>}
-        <p className="text-xs text-zinc-500">Send question continues the discussion. Start work lets AI make changes in the selected project using your response and briefing.</p>
+        {kind==='company'?<p className="text-xs text-zinc-400">Start work across {name}. AI can create departments, Boards, tasks and teams from your request.</p>:projects.length>1?<label className="block text-xs text-zinc-400">Work in project<select aria-label="Work in project" value={workProject} disabled={busy} onChange={e=>setWorkProject(e.target.value)} className="block mt-1 w-full min-w-0 rounded-lg border border-zinc-700 bg-zinc-900 p-2 text-sm"><option value="">Choose a project for Start work</option>{projects.map(p=><option key={p.projectId} value={p.projectId}>{p.name}</option>)}</select></label>:<p className="text-xs text-zinc-400">{projects.length?`Start work in ${projects[0].name}.`:'Add a project before starting work.'}</p>}
+        <p className="text-xs text-zinc-500">{kind==='company'?'Send question discusses your idea. Start work creates or updates your company structure and carries out your request. No project or prior briefing is required.':'Send question continues the discussion. Start work lets AI make changes in the selected project using your response and briefing.'}</p>
       </div>
-        <div className="shrink-0 flex flex-wrap gap-2 items-center border-t border-zinc-800 bg-zinc-950 p-3"><button type="button" disabled={!ready || !service?.available || busy || running || microphoneOpening} onClick={() => recording ? recorder.current?.stop() : startRecording()} className={button + ` flex gap-2 items-center ${recording ? 'border-rose-400 text-rose-200' : ''}`}>{recording ? <Square size={16} /> : <Mic size={16} />}{recording ? 'Finish recording' : 'Record response'}</button><div className="ml-auto flex flex-wrap gap-2"><button disabled={!ready || !input.trim() || busy || running || recording || microphoneOpening} className={button}>{busy&&!workBusy ? 'Sending…' : 'Send question'}</button><button type="button" disabled={!ready||!workProject||!input.trim()||!messages.some(m=>m.role==='assistant')||busy||running||recording||microphoneOpening} onClick={startWork} className={button+' bg-indigo-600 border-indigo-500'}>{workBusy?'Starting…':'Start work'}</button></div></div>
+        <div className="shrink-0 flex flex-wrap gap-2 items-center border-t border-zinc-800 bg-zinc-950 p-3"><button type="button" disabled={!ready || !service?.available || busy || running || microphoneOpening} onClick={() => recording ? recorder.current?.stop() : startRecording()} className={button + ` flex gap-2 items-center ${recording ? 'border-rose-400 text-rose-200' : ''}`}>{recording ? <Square size={16} /> : <Mic size={16} />}{recording ? 'Finish recording' : 'Record response'}</button><div className="ml-auto flex flex-wrap gap-2"><button disabled={!ready || !input.trim() || busy || running || recording || microphoneOpening} className={button}>{busy&&!workBusy ? 'Sending…' : 'Send question'}</button><button type="button" disabled={!ready||(kind!=='company'&&(!workProject||!messages.some(m=>m.role==='assistant')))||!input.trim()||busy||running||recording||microphoneOpening} onClick={startWork} className={button+' bg-indigo-600 border-indigo-500'}>{workBusy?'Starting…':'Start work'}</button></div></div>
     </form>
   </div>;
 }

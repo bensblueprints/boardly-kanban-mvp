@@ -5,9 +5,9 @@ import AudioBriefing from './AudioBriefing.jsx';
 const button='rounded-lg border border-zinc-700 px-3 py-2 text-sm hover:bg-zinc-800 disabled:opacity-40';
 const field='w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm';
 const modes=[['ask','Ask','Answers and clarification'],['plan','Plan','Discuss steps without acting'],['work','Work','Delegate Board work']];
-export default function AgentHub({kind,id,onClose,onOpen}){
+export default function AgentHub({kind,id,onClose,onOpen,initialThread=''}){
  const [showAudio,setShowAudio]=useState(false);
- const [data,setData]=useState(null),[mode,setMode]=useState(''),[input,setInput]=useState(''),[selected,setSelected]=useState(''),[thread,setThread]=useState(null),[assignments,setAssignments]=useState({}),[busy,setBusy]=useState(false),[error,setError]=useState(''),[online,setOnline]=useState(false);
+ const [data,setData]=useState(null),[mode,setMode]=useState(''),[input,setInput]=useState(''),[selected,setSelected]=useState(initialThread),[thread,setThread]=useState(null),[assignments,setAssignments]=useState({}),[busy,setBusy]=useState(false),[error,setError]=useState(''),[online,setOnline]=useState(false);
  const [requestKey,setRequestKey]=useState(()=>crypto.randomUUID());
  const base=`/api/agents/${kind}/${id}`,organization=kind==='organization',company=kind==='company',conversationWork=organization||company;
  async function load(){const [d,s]=await Promise.all([api.get(base),api.get('/api/chat/status')]);setData(d);setOnline(s.online);if(selected)setThread(await api.get(`/api/discussions/threads/${selected}`));}
