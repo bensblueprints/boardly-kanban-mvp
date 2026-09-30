@@ -34,7 +34,7 @@ const {createAIProviders,payloadFor,outputFor}=require('../server/ai-providers')
    assert.ok(!JSON.stringify(c).includes('opaque test continuation'));
    assert.equal((await f.api('/api/ai/settings',{user})).usage.boardly_charge,0);
    const state=await f.api('/api/account/ai-providers',{user});assert.equal(state.history.length,2);assert.ok(state.history.every(h=>h.status==='completed'));assert.ok(!JSON.stringify(state).includes(keys[provider]));
-   if(provider==='abliteration'){assert.equal(requests.filter(r=>r.p===provider).at(-1).body.reasoning_effort,'low');assert.equal(requests.filter(r=>r.p===provider).at(-1).body.include_reasoning,false);}
+   if(provider==='abliteration'){assert.equal(requests.filter(r=>r.p===provider).at(-1).body.reasoning_effort,'low');assert.equal(requests.filter(r=>r.p===provider).at(-1).body.include_reasoning,undefined);}
    if(provider==='deepseek'){
     assert.ok(requests.filter(r=>r.p===provider).at(-1).body.messages.some(m=>m.reasoning_content==='opaque test continuation'),'DeepSeek thinking survives the tool round trip');
     const storage=new Database(path.join(f.root,'personal-ai.db'),{readonly:true});

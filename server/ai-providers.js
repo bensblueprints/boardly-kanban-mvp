@@ -45,7 +45,7 @@ function payloadFor(connection,payload){
  // Work recovers from public checkpoints that
  // deliberately exclude private reasoning. Use the same non-thinking mode as
  // connection probes so DeepSeek can resume without missing reasoning state.
- return {model:connection.model,messages:converted.messages,max_tokens:payload.max_output_tokens||4096,...(connection.provider==='deepseek'?{thinking:{type:'disabled'}}:{}),...(connection.provider==='abliteration'?{reasoning_effort:'low',include_reasoning:false}:{}),...(anthropic?{system:converted.system}:{}),...(payload.tools?.length?{tools:payload.tools.map(t=>anthropic?{name:t.name,description:t.description,input_schema:t.parameters}:{type:'function',function:{name:t.name,description:t.description,parameters:t.parameters}})}:{})};
+ return {model:connection.model,messages:converted.messages,max_tokens:payload.max_output_tokens||4096,...(connection.provider==='deepseek'?{thinking:{type:'disabled'}}:{}),...(connection.provider==='abliteration'?{reasoning_effort:'low'}:{}),...(anthropic?{system:converted.system}:{}),...(payload.tools?.length?{tools:payload.tools.map(t=>anthropic?{name:t.name,description:t.description,input_schema:t.parameters}:{type:'function',function:{name:t.name,description:t.description,parameters:t.parameters}})}:{})};
 }
 function outputFor(provider,result){
  const turn=crypto.randomUUID(),output=[];let message;
