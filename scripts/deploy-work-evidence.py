@@ -43,6 +43,8 @@ run(['docker', 'run', '--rm', '--network', 'none', '--entrypoint', 'node', candi
 run(['docker', 'run', '--rm', '--network', 'none', '--entrypoint', 'node', candidate, 'test/hosted-work-evidence.js'])
 if (stage / 'test/work-monitor.js').exists():
     run(['docker', 'run', '--rm', '--network', 'none', '--entrypoint', 'node', candidate, 'test/work-monitor.js'])
+if (stage / 'test/provider-failover.js').exists():
+    run(['docker', 'run', '--rm', '--network', 'none', '--entrypoint', 'node', candidate, 'test/provider-failover.js'])
 print('Built and smoke-tested Work evidence candidate.', flush=True)
 
 def recoverable_jobs():

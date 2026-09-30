@@ -176,17 +176,12 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
       const funded={...personal,authorize:async(actor,jobId)=>{
         const companyId=tenant.companyAI.job(jobId),chosen=await tenant.companyAI.authorize(companyId);
         if(chosen){const valid=chosen.selectionValid;chosen.selectionValid=()=>{valid();if(JSON.stringify(tenant.companyAI.job(jobId))!==JSON.stringify(companyId))throw Object.assign(Error('Board moved to another company. Resume with its current AI settings.'),{status:409});};return chosen;}
-        if(jobId&&personal.providers.fallbackForRun(ownerId,jobId))return personal.providers.fallbackAuthorize(ownerId);
+        if(jobId&&personal.providers.fallbackForRun(ownerId,jobId))return personal.providers.fallbackAuthorize(ownerId,jobId);
         if(ownerId===config.ownerId&&personal.account(ownerId).mode==='none')return{user_id:ownerId,actor_id:actor,mode:'subscription',model:personal.account(ownerId).model};
         if(personal.account(ownerId).mode==='chatgpt')return chatgpt.authorize(ownerId);
         return personal.authorize(ownerId);
       },respond:async(a,id,payload)=>{
-        if(a.selectionValid)return personal.providers.respond(a,id,payload);
-        const local=()=>personal.providers.fallbackAuthorize(ownerId);
-        const fallback=async()=>{const f=local();if(!f)throw Object.assign(Error('Local AI fallback is disabled or disconnected.'),{status:409});return {...await personal.providers.respond(f,id,payload),boardly_runtime:'local',boardly_model:f.model};};
-        if(personal.providers.fallbackForRun(ownerId,id))return fallback();
-        try{return await(a.mode==='subscription'?tenant.subscription.respond(a.actor_id,id,payload):a.mode==='chatgpt'?chatgpt.respond(a,id,payload):personal.respond(a,id,payload));}
-        catch(e){if(require('./runtime-policy').failureKind(e)==='allowance'&&personal.providers.startFallback(ownerId,id,'Paid AI allowance exhausted'))return fallback();throw e;}
+        return require('./provider-failover').respondWithFallback({providers:personal.providers,ownerId,authorization:a,jobId:id,payload,respond:()=>a.selectionValid?personal.providers.respond(a,id,payload):a.mode==='subscription'?tenant.subscription.respond(a.actor_id,id,payload):a.mode==='chatgpt'?chatgpt.respond(a,id,payload):personal.respond(a,id,payload)});
       }};
       tenant.companyOnboarding=require('./company-onboarding').createCompanyOnboarding({db:local.db,ownerId,context:(companyId,valid)=>require('./company-plan-context').companyPlanContext({companyId,valid,github:tenant.github,companyAI:tenant.companyAI}),generate:async(actor,id,payload)=>{const a=await funded.authorize(actor,id);return funded.respond(a,id,{...payload,model:a.model||personal.account(ownerId).model});},retain:()=>tenant.active++,release:()=>tenant.active--});
       tenant.gpu=require('./gpu-workflows').createGpuWorkflows({db:local.db,ssh:tenant.ssh,ownerId,actions:()=>tenant.gpuActions,generate:async(actor,id,payload)=>{const a=await funded.authorize(actor,id);return funded.respond(a,id,{...payload,model:a.model||personal.account(ownerId).model});},retain:()=>tenant.active++,release:()=>tenant.active--});
