@@ -30,6 +30,11 @@ export const connectorHelp = {
     check: "Your model appears as the active connection after activation.",
     fix: "A Kimi chat or Code subscription is separate from API access. Check your API account if a key is rejected.",
   },
+  abliteration: {
+    steps: ["Create an API key in your Abliteration console.", "Paste the key and verify the connection to fetch available models.", "Select and save a model, then test it or choose Use for Boardly agents."],
+    check: "Model discovery does not generate a paid reply. Test model verifies inference.",
+    fix: "Check model access, credits and project policies in Abliteration. A policy block is not bypassed by failover.",
+  },
   deepseek: {
     steps: [
       "Open the DeepSeek API dashboard linked below and create an API key.",

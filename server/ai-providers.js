@@ -1,6 +1,6 @@
 const crypto=require('node:crypto'),http=require('node:http'),express=require('express');
 const fail=(status,message)=>Object.assign(Error(message),{status});
-const definitions={claude:{label:'Claude',origin:'https://api.anthropic.com',protocol:'anthropic'},kimi:{label:'Kimi',origin:'https://api.moonshot.ai',protocol:'chat'},deepseek:{label:'DeepSeek',origin:'https://api.deepseek.com',protocol:'chat'},local:{label:'Local AI',protocol:'chat'},openwebui:{label:'Open WebUI',protocol:'chat'}};
+const definitions={abliteration:{label:'Abliteration AI',origin:'https://api.abliteration.ai',protocol:'chat'},claude:{label:'Claude',origin:'https://api.anthropic.com',protocol:'anthropic'},kimi:{label:'Kimi',origin:'https://api.moonshot.ai',protocol:'chat'},deepseek:{label:'DeepSeek',origin:'https://api.deepseek.com',protocol:'chat'},local:{label:'Local AI',protocol:'chat'},openwebui:{label:'Open WebUI',protocol:'chat'}};
 const DEEPSEEK_MAX_OUTPUT_TOKENS=393216;
 const text=v=>typeof v==='string'?v:'';
 function imagePart(p,anthropic=false){
@@ -45,7 +45,7 @@ function payloadFor(connection,payload){
  // Work recovers from public checkpoints that
  // deliberately exclude private reasoning. Use the same non-thinking mode as
  // connection probes so DeepSeek can resume without missing reasoning state.
- return {model:connection.model,messages:converted.messages,max_tokens:payload.max_output_tokens||4096,...(connection.provider==='deepseek'?{thinking:{type:'disabled'}}:{}),...(anthropic?{system:converted.system}:{}),...(payload.tools?.length?{tools:payload.tools.map(t=>anthropic?{name:t.name,description:t.description,input_schema:t.parameters}:{type:'function',function:{name:t.name,description:t.description,parameters:t.parameters}})}:{})};
+ return {model:connection.model,messages:converted.messages,max_tokens:payload.max_output_tokens||4096,...(connection.provider==='deepseek'?{thinking:{type:'disabled'}}:{}),...(connection.provider==='abliteration'?{reasoning_effort:'low',include_reasoning:false}:{}),...(anthropic?{system:converted.system}:{}),...(payload.tools?.length?{tools:payload.tools.map(t=>anthropic?{name:t.name,description:t.description,input_schema:t.parameters}:{type:'function',function:{name:t.name,description:t.description,parameters:t.parameters}})}:{})};
 }
 function outputFor(provider,result){
  const turn=crypto.randomUUID(),output=[];let message;
@@ -69,6 +69,7 @@ async function boundedJSON(response,maxBytes=6000000){
  let size=0,parts=[];for await(const b of response.body){size+=b.length;if(size>maxBytes)throw fail(502,'The AI response exceeded the supported size.');parts.push(b);}
  let value;try{value=JSON.parse(Buffer.concat(parts).toString('utf8'));}catch{if(response.ok)throw fail(502,'The AI provider returned invalid JSON.');}
  if(!response.ok){
+  if(/^policy_/.test(value?.error?.code||'')||value?.error?.type==='policy_error')throw Object.assign(fail(response.status,'The provider policy blocked or could not evaluate this request. Review the policy in the provider console.'),{code:'provider_policy',retryable:false});
   if(response.status===402||/insufficient_quota|credit balance is too low|insufficient.*balance|credits? exhausted|usage_limit_reached/i.test(JSON.stringify(value?.error||{})))throw Object.assign(fail(429,'The provider allowance is exhausted. Continuing with enabled Local AI when available.'),{code:'allowance_exhausted'});
   if([401,403].includes(response.status))throw fail(response.status,'The provider rejected this connection. Review its key and model permissions in connector settings.');
   if(response.status===429)throw fail(429,'The provider is temporarily rate limited. Retrying shortly.');

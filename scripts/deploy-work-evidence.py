@@ -45,6 +45,8 @@ if (stage / 'test/work-monitor.js').exists():
     run(['docker', 'run', '--rm', '--network', 'none', '--entrypoint', 'node', candidate, 'test/work-monitor.js'])
 if (stage / 'test/provider-failover.js').exists():
     run(['docker', 'run', '--rm', '--network', 'none', '--entrypoint', 'node', candidate, 'test/provider-failover.js'])
+if (stage / 'test/ai-providers.js').exists():
+    run(['docker', 'run', '--rm', '--network', 'none', '--entrypoint', 'node', candidate, 'test/ai-providers.js'])
 print('Built and smoke-tested Work evidence candidate.', flush=True)
 
 def recoverable_jobs():
