@@ -3,6 +3,8 @@ function implementationRequested(text){
  // Apply the repository gate to explicit implementation requests, not ordinary
  // planning, review, investigation, or board organization assignments.
  const goal=String(text||'').toLowerCase();
+ const swarmScope=goal.match(/work as the agent for ([\s\S]*?) in the [^\n]*? swarm\./)?.[1];
+ if(swarmScope&&/your assignment: apply the shared objective to this project\./.test(goal)&&(!/desktop|core engine|front end|back end|website|application|software development/.test(swarmScope)||/product & architecture/.test(swarmScope)))return false;
  if(/\b(?:only|just)\s+(?:plan|review|audit|inspect|organize|document)\b|\b(?:plan|design|write)\s+(?:a |the )?(?:specification|spec|architecture|plan)\b/.test(goal))return false;
  return /\b(?:build|implement|fix|modify|change|add|remove|refactor|repair)\b[\s\S]{0,180}\b(?:software|app|application|code|bug|feature|engine|endpoint|api|website|component|function)\b/.test(goal);
 }

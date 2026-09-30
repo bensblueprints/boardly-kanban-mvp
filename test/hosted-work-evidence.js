@@ -3,6 +3,7 @@ const {fixture}=require('./member-fixture'),{githubFixture}=require('./github-co
 const {implementationRequested}=require('../server/work-evidence');
 assert.equal(implementationRequested('Build the desktop software feature'),true);
 for(const text of ['Organize tasks for the app','Just review the software','Write the architecture plan for the app','Which repository is saved?'])assert.equal(implementationRequested(text),false,text);
+for(const [scope,expected] of [['Software Development / Desktop App & UI',true],['Software Development / Core Engine',true],['Software Development / Product & Architecture',false],['Marketing / Content & SEO',false]])assert.equal(implementationRequested(`Work as the agent for ${scope} in the Example swarm. Shared objective: Build the software feature\nYour assignment: Apply the shared objective to this project.`),expected,scope);
 async function scenario(kind){
  const remote=githubFixture();let calls=0,project,readResult;
  const f=await fixture({githubRequest:remote.request,providerRequest:async(url,opts)=>{

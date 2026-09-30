@@ -39,7 +39,6 @@ preserved = {name: inspect(name)['Id'] for name in ['boardly-chatgpt', 'boardly-
 candidate = 'boardly-cloud:work-evidence-' + sha[:7]
 build = run(['docker', 'build', '--label', 'org.opencontainers.image.revision=' + sha, '-t', candidate, '-f', str(stage / 'Dockerfile.work-evidence'), str(stage)])
 (stage / 'build.log').write_text(build)
-smoke = 'const {createAIProviders}=require("./server/ai-providers");const D=require("better-sqlite3"),db=new D(":memory:");const p=createAIProviders({db,key:Buffer.alloc(32),account:()=>({mode:"none"}),setMode:()=>{}});if(p.publicState("probe","deepseek").label!=="Work evidence")throw Error("Work evidence missing");db.close();console.log("Work evidence candidate loaded");'
 run(['docker', 'run', '--rm', '--network', 'none', '--entrypoint', 'node', candidate, 'test/github-read-range.js'])
 run(['docker', 'run', '--rm', '--network', 'none', '--entrypoint', 'node', candidate, 'test/hosted-work-evidence.js'])
 print('Built and smoke-tested Work evidence candidate.', flush=True)
