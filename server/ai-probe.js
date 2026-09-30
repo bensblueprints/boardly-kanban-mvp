@@ -10,7 +10,8 @@ async function probe({provider,model,valid,respond,id='ai-ping-'+crypto.randomUU
   if(!reply)throw Object.assign(Error('The model responded without a text reply. Try a chat-capable model.'),{status:502});
   return {ok:true,provider,model,reply,latency_ms:Math.round(performance.now()-start),tested_at:Date.now()};
  }catch(e){
-  return {ok:false,provider,model,error:e.status?e.message:'The model could not be reached. Check the connection and try again.',latency_ms:Math.round(performance.now()-start),tested_at:Date.now()};
+  const error=e.code==='allowance_exhausted'?'The selected provider has no remaining allowance. Check its balance or usage limit.':e.status===429?'The selected model is rate limited. Try again shortly.':e.status?e.message:'The model could not be reached. Check the connection and try again.';
+  return {ok:false,provider,model,error,latency_ms:Math.round(performance.now()-start),tested_at:Date.now()};
  }
 }
 module.exports={probe};
