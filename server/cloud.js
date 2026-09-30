@@ -276,7 +276,7 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
   app.use(require('./media-connectors').createMediaRoutes());
   app.use((req,res,next)=>/^\/api\/gpu(?:\/|$)/.test(req.path)?req.tenant.gpu.router(req,res,next):next());
   app.use(personal.providers.router);
-  app.use((req,res,next)=>req.tenant.companyAI.router(req,res,next));
+  app.use((req,res,next)=>req.tenant?req.tenant.companyAI.router(req,res,next):next());
   app.use(require('./project-computers').createComputerRoutes({memberships}));
   app.use((req,res,next)=>{
     if(!req.tenant||req.workspaceIsOwner||(req.boardlyConnection?.scope==='mcp'&&req.path==='/mcp'))return next();

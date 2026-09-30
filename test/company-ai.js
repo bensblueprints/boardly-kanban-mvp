@@ -14,6 +14,7 @@ const pause=ms=>new Promise(r=>setTimeout(r,ms));
  async function wait(fn){for(let i=0;i<200;i++){const value=await fn();if(value)return value;await pause(20);}throw Error('Timed out');}
  async function work(p){const t=await f.api(`/api/boards/${p.project.id}/chat/threads`,{method:'POST',body:{}});await f.api(`/api/chat/threads/${t.id}/messages`,{method:'POST',body:{mode:'work',content:'Read my Board.'}});return {thread:t,done:()=>wait(async()=>{const d=await f.api('/api/chat/threads/'+t.id);return d.job&&!['queued','running'].includes(d.job.status)?d:false;})};}
  try{
+  const page=await fetch(f.base+'/app');assert.equal(page.status,200,'Public app shell must not require a tenant');assert.match(await page.text(),/<!doctype html>/i);
   const a=target=await f.project('Company A','Board A'),b=await f.project('Company B','Board B');
   const base=id=>`/api/companies/${id}/ai`,save=(id,body)=>f.api(base(id),{method:'PUT',body});
   await f.api('/api/account/ai-providers/kimi',{method:'PUT',body:{token:'organization-key'}});
