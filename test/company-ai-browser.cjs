@@ -5,8 +5,9 @@ const { chromium } = require(process.env.BOARDLY_PLAYWRIGHT_MODULE || 'playwrigh
 
 (async () => {
   const key = 'deepseek-browser-fixture-key';
-  const modelRequests = [];
+  const modelRequests = [],pingRequests=[];let pingFails=false;
   const f = await fixture({providerConnectorRequest: async (url, options) => {
+    if(url.endsWith('/chat/completions')){const body=JSON.parse(options.body);pingRequests.push(body);if(pingFails)return Response.json({error:{message:'offline'}},{status:503});return Response.json({choices:[{message:{content:'OK'}}]});}
     assert.equal(url, 'https://api.deepseek.com/v1/models');
     assert.ok(options.headers.Authorization.startsWith('Bearer '));
     modelRequests.push(url);
@@ -45,6 +46,16 @@ const { chromium } = require(process.env.BOARDLY_PLAYWRIGHT_MODULE || 'playwrigh
     await page.getByRole('button',{name:'Verify connection',exact:true}).click();
     await page.getByText('Connection verified. Select a model above and save company AI.',{exact:true}).waitFor();
     await page.getByLabel('Company AI model',{exact:true}).selectOption('deepseek-fixture-reasoning');
+    await page.getByRole('button',{name:'Test model',exact:true}).click();
+    await page.getByText('Model is online and responding',{exact:false}).waitFor();
+    assert.equal(pingRequests.at(-1).model,'deepseek-fixture-reasoning');
+    assert.equal((await f.api(`/api/companies/${p.company.id}/ai`)).policy.source,'inherit','Test does not save the selected default');
+    await page.getByLabel('Company AI model',{exact:true}).selectOption('deepseek-fixture-fast');
+    await page.getByText('Model is online and responding',{exact:false}).waitFor({state:'hidden'});
+    pingFails=true;await page.getByRole('button',{name:'Test model',exact:true}).click();
+    await page.getByText('Model test failed',{exact:false}).waitFor();pingFails=false;
+    await page.getByLabel('Company AI model',{exact:true}).selectOption('deepseek-fixture-reasoning');
+    await page.getByRole('button',{name:'Test model',exact:true}).click();await page.getByText('Model is online and responding',{exact:false}).waitFor();
     await page.getByRole('button',{name:'Save company AI',exact:true}).click();
     await page.getByText('Company AI saved. New requests and delegated work use this selection.',{exact:true}).waitFor();
     assert.equal((await f.api(`/api/companies/${p.company.id}/ai`)).effective.model,'deepseek-fixture-reasoning');
@@ -70,7 +81,7 @@ const { chromium } = require(process.env.BOARDLY_PLAYWRIGHT_MODULE || 'playwrigh
     await page.getByLabel('AI message',{exact:true}).fill('Review company work');
     assert.equal(await page.getByRole('button',{name:'Delegate work',exact:true}).isEnabled(),true);
     assert.deepEqual(errors,[]);
-    console.log('PASS: Company AI selectors; private key entry; model discovery; save/reload; inheritance reset; Departments and Boards navigation; Organization delegation UI.');
+    console.log('PASS: Company AI selectors; model ping success/error and stale-result reset; private key entry; model discovery; save/reload; inheritance reset; Departments and Boards navigation; Organization delegation UI.');
   } finally {
     await browser?.close();
     await vite?.close();

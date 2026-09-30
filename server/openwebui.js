@@ -17,12 +17,12 @@ function publicAddress(address) {
 // Resolve every request, reject mixed private/public answers, and pin the socket
 // lookup to the validated address. TLS still verifies the original hostname.
 function createOpenWebUIRequest({resolve=dns.lookup, request=https.request}={}) {
-  return async function openWebUIRequest(connection, path, body) {
+  return async function openWebUIRequest(connection, path, body, {timeoutMs}={}) {
     const base = baseURL(connection.base_url);
     const url = new URL(base + path);
     const hostname = url.hostname.replace(/^\[|\]$/g, '');
     let timer;
-    const timeout = body ? 180000 : 15000;
+    const timeout = timeoutMs || (body ? 180000 : 15000);
     const controller = new AbortController();
     try {
       const addresses = await Promise.race([

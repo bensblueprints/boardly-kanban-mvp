@@ -78,17 +78,17 @@ function createAIProviders({db,key,tailnet,request=fetch,account,setMode,paidAcc
  const current=user=>db.prepare('SELECT provider FROM ai_provider_active WHERE user_id=?').get(user)?.provider;
  const storageUser=(user,companyId)=>companyId==null?user:user+'#company#'+companyId;
  function publicState(user,provider,companyId){const r=row(storageUser(user,companyId),provider),c=r?decode(r):{};return {provider,label:definitions[provider].label,saved:!!r,active:companyId==null&&account(user).mode==='provider'&&current(user)===provider,model:c.model||'',models:c.models||[],device_id:c.device_id||'',port:c.port||11434,has_key:!!c.token,...(provider==='openwebui'?{base_url:c.base_url||'',paid_required:true}:{}),...(provider==='local'?{fallback_enabled:!!db.prepare('SELECT enabled FROM ai_local_fallback WHERE user_id=?').get(user)?.enabled}:{})};}
- async function localRequest(user,c,path,body){
+ async function localRequest(user,c,path,body,timeoutMs){
   const socket=await tailnet.dial(user,c.device_id,c.port),agent=new http.Agent({keepAlive:false});agent.createConnection=()=>socket;
   return new Promise((resolve,reject)=>{
    const req=http.request({host:'boardly-local-ai',port:c.port,agent,path,method:body?'POST':'GET',headers:{'Content-Type':'application/json',...(c.token?{Authorization:'Bearer '+c.token}:{})}},res=>{
     let n=0,parts=[];res.on('data',b=>{n+=b.length;if(n>6000000)req.destroy(Error('Response too large'));else parts.push(b);});res.on('end',()=>{agent.destroy();resolve(new Response(Buffer.concat(parts),{status:res.statusCode}));});res.on('error',()=>req.destroy());
-   });req.on('error',()=>{agent.destroy();reject(fail(502,'The local AI server could not be reached. Check its listening address, Tailscale device and port.'));});req.setTimeout(900000,()=>req.destroy());req.end(body?JSON.stringify(body):undefined);
+   });req.on('error',()=>{agent.destroy();reject(fail(502,'The local AI server could not be reached. Check its listening address, Tailscale device and port.'));});if(timeoutMs){const timer=setTimeout(()=>req.destroy(),timeoutMs);req.once('close',()=>clearTimeout(timer));}req.setTimeout(timeoutMs||900000,()=>req.destroy());req.end(body?JSON.stringify(body):undefined);
   });
  }
- async function call(user,c,path,body){
-  try{return await boundedJSON(c.provider==='openwebui'?await openWebUIRequest(c,path.replace(/^\/v1\//,'/api/'),body?{...body,stream:false}:undefined):c.provider==='local'?await localRequest(user,c,path,body):await request(definitions[c.provider].origin+path,{method:body?'POST':'GET',headers:{'Content-Type':'application/json',...(c.provider==='claude'?{'x-api-key':c.token,'anthropic-version':'2023-06-01'}:{Authorization:'Bearer '+c.token})},...(body?{body:JSON.stringify(body)}:{}),redirect:'error',signal:AbortSignal.timeout(body?110000:15000)}));}
-  catch(e){throw e.status?e:fail(502,'The AI connection was interrupted. It was not automatically retried.');}
+ async function call(user,c,path,body,timeoutMs){
+  try{return await boundedJSON(c.provider==='openwebui'?await openWebUIRequest(c,path.replace(/^\/v1\//,'/api/'),body?{...body,stream:false}:undefined,{timeoutMs}):c.provider==='local'?await localRequest(user,c,path,body,timeoutMs):await request(definitions[c.provider].origin+path,{method:body?'POST':'GET',headers:{'Content-Type':'application/json',...(c.provider==='claude'?{'x-api-key':c.token,'anthropic-version':'2023-06-01'}:{Authorization:'Bearer '+c.token})},...(body?{body:JSON.stringify(body)}:{}),redirect:'error',signal:AbortSignal.timeout(timeoutMs||(body?110000:15000))}));}
+  catch(e){if(timeoutMs&&['TimeoutError','AbortError'].includes(e.name))throw fail(504,'The model did not reply within 30 seconds. It may still be loading; try again shortly.');throw e.status?e:fail(502,'The AI connection was interrupted. It was not automatically retried.');}
  }
  async function save(user,provider,data,valid,companyId){
   const storedUser=storageUser(user,companyId);
@@ -121,14 +121,22 @@ function createAIProviders({db,key,tailnet,request=fetch,account,setMode,paidAcc
   await requireAccess(a.user_id,a.provider);
   const permitted=()=>a.selectionValid?(a.selectionValid(),true):a.fallback?fallbackEnabled(a.user_id):account(a.user_id).mode==='provider'&&current(a.user_id)===a.provider;
   const r=row(storageUser(a.user_id,a.companyId),a.provider);if(!r||r.revision!==a.revision||!permitted())throw fail(409,'The AI connection changed. Start or resume with the current connection.');
-  const c={...decode(r),model:a.model},body=payloadFor(c,payload);if(Buffer.byteLength(JSON.stringify(body))>6000000)throw fail(400,'This conversation is too large for this connection.');
+  const c={...decode(r),model:a.model},body=payloadFor(c,payload);if(a.probe&&a.provider==='deepseek')body.thinking={type:'disabled'};if(Buffer.byteLength(JSON.stringify(body))>6000000)throw fail(400,'This conversation is too large for this connection.');
   const id=crypto.randomUUID();db.prepare("INSERT INTO ai_provider_calls VALUES(?,?,?,?,?,'pending',NULL,NULL,?)").run(id,a.user_id,jobId,a.provider,a.model,Date.now());
   try{
-   const result=await call(a.user_id,c,a.provider==='claude'?'/v1/messages':'/v1/chat/completions',body),output=outputFor(a.provider,result),u=result.usage||{};
+   const result=await call(a.user_id,c,a.provider==='claude'?'/v1/messages':'/v1/chat/completions',body,a.probe?30000:undefined),output=outputFor(a.provider,result),u=result.usage||{};
    const count=n=>Number.isSafeInteger(n)&&n>=0?n:null;
    db.prepare("UPDATE ai_provider_calls SET status='completed',input_tokens=?,output_tokens=? WHERE id=?").run(count(u.input_tokens??u.prompt_tokens),count(u.output_tokens??u.completion_tokens),id);
    await requireAccess(a.user_id,a.provider);if(row(storageUser(a.user_id,a.companyId),a.provider)?.revision!==a.revision||!permitted())throw fail(409,'The AI connection changed while the response was running.');return output;
   }catch(e){db.prepare("UPDATE ai_provider_calls SET status='interrupted' WHERE id=? AND status='pending'").run(id);throw e.status?e:fail(502,'The AI response was interrupted. Review activity before retrying.');}
+ }
+ const probing=new Set();
+ async function test(user,provider,model,valid,companyId){
+  valid();if(!definitions[provider]||typeof model!=='string')throw fail(400,'Choose a verified provider and model to test.');
+  if(probing.has(user))throw fail(409,'A model test is already running. Wait for its reply before testing again.');
+  probing.add(user);
+  try{return await require('./ai-probe').probe({provider,model,valid,respond:async(id,payload)=>{const a=await authorizeSelection(user,provider,model,companyId,valid);return respond({...a,probe:true},id,payload);}});}
+  finally{probing.delete(user);}
  }
  function fallbackEnabled(user){return !!row(user,'local')&&!!db.prepare('SELECT enabled FROM ai_local_fallback WHERE user_id=?').get(user)?.enabled;}
  function fallbackAuthorize(user){const r=row(user,'local');if(!fallbackEnabled(user))return null;const c=decode(r);return {user_id:user,mode:'provider',provider:'local',model:c.model,revision:r.revision,fallback:true};}
@@ -139,9 +147,10 @@ function createAIProviders({db,key,tailnet,request=fetch,account,setMode,paidAcc
  router.post('/api/account/ai-providers/local/fallback',express.json({limit:'1kb'}),handle(req=>setFallback(req.cloudUserId,req.body?.enabled)));
  router.get('/api/account/ai-providers',handle(async req=>({openwebui_available:await paidAccess(req.cloudUserId),connections:Object.keys(definitions).map(p=>publicState(req.cloudUserId,p)),history:db.prepare('SELECT provider,model,status,input_tokens,output_tokens,created_at FROM ai_provider_calls WHERE user_id=? ORDER BY created_at DESC LIMIT 30').all(req.cloudUserId)})));
  router.put('/api/account/ai-providers/:provider',express.json({limit:'8kb'}),handle((req,v)=>save(req.cloudUserId,req.params.provider,req.body||{},v)));
+ router.post('/api/account/ai-providers/:provider/test',express.json({limit:'2kb'}),handle((req,v)=>test(req.cloudUserId,req.params.provider,req.body?.model,v)));
  router.post('/api/account/ai-providers/:provider/activate',handle(req=>activate(req.cloudUserId,req.params.provider)));
  router.delete('/api/account/ai-providers/:provider',handle(req=>{const p=req.params.provider;if(!definitions[p])throw fail(404,'Provider not found.');db.prepare('DELETE FROM ai_provider_connections WHERE user_id=? AND provider=?').run(req.cloudUserId,p);return publicState(req.cloudUserId,p);}));
  const activeState=user=>{const p=current(user),r=p&&row(user,p);return {provider:p||null,model:r?decode(r).model:'',saved:!!r};};
- return {router,publicState,activeState,authorize,authorizeSelection,providers:Object.keys(definitions),respond,save,activate,fallbackAuthorize,fallbackForRun,startFallback,setFallback,fallbackEnabled};
+ return {router,publicState,activeState,authorize,authorizeSelection,providers:Object.keys(definitions),respond,save,activate,test,fallbackAuthorize,fallbackForRun,startFallback,setFallback,fallbackEnabled};
 }
 module.exports={createAIProviders,payloadFor,outputFor,messages};

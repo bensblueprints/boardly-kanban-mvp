@@ -1,3 +1,4 @@
+import ModelTest from './ModelTest.jsx';
 import React,{useEffect,useState} from 'react';
 import {BrainCircuit,ArrowDown,Building2} from 'lucide-react';
 import {api} from '../api.js';
@@ -26,6 +27,7 @@ export default function CompanyAI({companyId}){
     </>}
     <button disabled={busy||(source!=='inherit'&&(!selected?.saved||!model))} className={settingsButton+' bg-indigo-600'}>{busy?'Saving…':'Save company AI'}</button>
    </form>
+   <ModelTest url={base+'/test'} selection={{source,provider,model}} disabled={busy||(source!=='inherit'&&(!selected?.saved||!model))}/>
    {source==='company'&&<section className="border-t border-zinc-800 pt-5 space-y-4"><h3 className="font-semibold">Company connection</h3><AIProviderConnection key={companyId+provider} provider={provider} companyId={companyId} onSaved={async()=>{const d=await load();setModel(d.company_connections.find(c=>c.provider===provider)?.model||'');}}/></section>}
    <a href="#/settings/connectors" className="inline-block text-sm text-indigo-300">Manage Organization connections</a>
   </>}

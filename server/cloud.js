@@ -165,8 +165,12 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
       tenant.teamChat=require('./company-chat').createCompanyChat(local.db);
       tenant.chat=createProjectChat({db:local.db,connections,userId:ownerId,uploadsDir:tenant.uploadsDir,environment:tenant.environment,payments:tenant.payments,email:tenant.email,ssh:tenant.ssh,github:tenant.github,computeruse:tenant.computeruse,media:tenant.media,canWriteFiles:(actor,id)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).project(id)==='editor',canUseMedia:(actor,id)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).project(id)==='editor',canUseComputers:(actor,id)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).capabilities('project',id).includes('computers'),canUseGithub:(actor,id)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).capabilities('project',id).includes('github'),canUseSsh:(actor,id)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).capabilities('project',id).includes('ssh')});
       const canEdit=(actor,id)=>actor===ownerId||require('./member-access').accessForMember(local.db,memberships.grants(ownerId,actor)).project(id)==='editor';
-      tenant.subscription=require('./subscription-ai').createSubscriptionAI({db:local.db,ownerId,canEdit,connections,canGenerate:(actor,id)=>tenant.companyOnboarding?.live(actor,id)||tenant.gpu?.live(actor,id)});
-      tenant.companyAI=require('./company-ai').createCompanyAI({db:local.db,ownerId,personal});
+      tenant.subscription=require('./subscription-ai').createSubscriptionAI({db:local.db,ownerId,canEdit,connections,canGenerate:(actor,id)=>tenant.companyOnboarding?.live(actor,id)||tenant.gpu?.live(actor,id)||tenant.companyAI?.liveProbe(actor,id)});
+      tenant.companyAI=require('./company-ai').createCompanyAI({db:local.db,ownerId,personal,organizationRespond:async(id,payload)=>{
+        if(ownerId===config.ownerId&&personal.account(ownerId).mode==='none')return tenant.subscription.respond(ownerId,id,payload);
+        if(personal.account(ownerId).mode==='chatgpt'){const a=await chatgpt.authorize(ownerId);return chatgpt.respond(a,id,payload);}
+        const a=await personal.authorize(ownerId);return personal.respond(a,id,payload);
+      }});
       tenant.chat.organization.companyAI=tenant.companyAI;
       tenant.chat.organization.runtimeForProject=id=>tenant.companyAI.policy(tenant.companyAI.project(id)).source!=='inherit'?'api':ownerId===config.ownerId&&personal.account(ownerId).mode==='none'?'codex':'api';
       const funded={...personal,authorize:async(actor,jobId)=>{

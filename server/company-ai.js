@@ -3,7 +3,7 @@ const fail=(status,message)=>Object.assign(Error(message),{status});
 
 // Policy lives with the company. Keys stay in the encrypted provider store, in
 // a separate namespace for each organization/company pair.
-function createCompanyAI({db,ownerId,personal}){
+function createCompanyAI({db,ownerId,personal,organizationRespond}){
  const providers=personal.providers;
  db.exec(`CREATE TABLE IF NOT EXISTS company_ai_settings(company_id INTEGER PRIMARY KEY REFERENCES companies(id) ON DELETE CASCADE,source TEXT NOT NULL,provider TEXT,model TEXT,revision TEXT NOT NULL);`);
  const company=id=>{const c=db.prepare('SELECT id,name FROM companies WHERE id=?').get(id);if(!c)throw fail(404,'Company not found.');return c;};
@@ -45,14 +45,28 @@ function createCompanyAI({db,ownerId,personal}){
   db.prepare('INSERT INTO company_ai_settings VALUES(?,?,?,?,?) ON CONFLICT(company_id) DO UPDATE SET source=excluded.source,provider=excluded.provider,model=excluded.model,revision=excluded.revision').run(id,data.source,data.source==='inherit'?null:data.provider,data.source==='inherit'?null:data.model,crypto.randomUUID());
   return state(id);
  }
+ const pendingProbes=new Map();
+ async function test(id,data,valid){
+  valid();if(!['inherit','organization','company'].includes(data.source))throw fail(400,'Choose the AI connection source to test.');
+  if(data.source!=='inherit')return providers.test(ownerId,data.provider,data.model,valid,data.source==='company'?id:undefined);
+  const selected=effective(null),snapshot=JSON.stringify(selected);
+  const check=()=>{valid();if(JSON.stringify(effective(null))!==snapshot)throw fail(409,'Organization AI changed during the test. Test the current selection.');};
+  if(providers.providers.includes(selected.provider))return providers.test(ownerId,selected.provider,selected.model,check);
+  if(pendingProbes.size)throw fail(409,'A model test is already running. Wait for its reply before testing again.');
+  const jobId='ai-ping-'+crypto.randomUUID();pendingProbes.set(jobId,id);
+  try{return await require('./ai-probe').probe({id:jobId,provider:selected.provider,model:selected.model,valid:check,respond:(job,payload)=>organizationRespond(job,payload)});}
+  finally{pendingProbes.delete(jobId);}
+ }
+ const liveProbe=(actor,id)=>actor===ownerId&&pendingProbes.has(id)&&!!db.prepare('SELECT 1 FROM companies WHERE id=?').get(pendingProbes.get(id));
  const router=express.Router();
  const handle=fn=>async(req,res,next)=>{try{
   const valid=()=>{if(!req.workspaceIsOwner||(req.boardlyConnection&&!req.boardlyManagement))throw fail(403,'Only the Organization owner can manage company AI settings.');company(Number(req.params.id));};
   valid();res.set('Cache-Control','no-store');res.json(await fn(Number(req.params.id),req,valid));
  }catch(e){next(e);}};
  router.get('/api/companies/:id/ai',handle(id=>state(id)));
+ router.post('/api/companies/:id/ai/test',express.json({limit:'4kb'}),handle((id,req,valid)=>test(id,req.body||{},valid)));
  router.put('/api/companies/:id/ai',express.json({limit:'4kb'}),handle((id,req,valid)=>save(id,req.body||{},valid)));
  router.put('/api/companies/:id/ai/providers/:provider',express.json({limit:'8kb'}),handle((id,req,valid)=>providers.save(ownerId,req.params.provider,req.body||{},valid,id)));
- return {router,policy,effective,authorize,project,scope,job,request,state};
+ return {router,policy,effective,authorize,project,scope,job,request,state,liveProbe};
 }
 module.exports={createCompanyAI};

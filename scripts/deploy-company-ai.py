@@ -44,7 +44,7 @@ build = run(['docker', 'build', '--label', 'org.opencontainers.image.revision=' 
 smoke = 'require("./server/company-ai");require("./server/cloud");const {createAIProviders}=require("./server/ai-providers");const D=require("better-sqlite3"),db=new D(":memory:");const p=createAIProviders({db,key:Buffer.alloc(32),account:()=>({mode:"none"}),setMode:()=>{}});if(p.publicState("probe","deepseek").label!=="DeepSeek")throw Error("DeepSeek missing");db.close();console.log("company AI candidate loaded");'
 run(['docker', 'run', '--rm', '--network', 'none', '--entrypoint', 'node', candidate, '-e', smoke])
 print('Built and smoke-tested company AI candidate.', flush=True)
-for test in ['company-ai.js', 'ai-providers.js', 'chatgpt.js', 'swarms.js', 'runtime-recovery.js']:
+for test in ['model-probe.js', 'company-ai.js', 'ai-providers.js', 'chatgpt.js', 'openwebui.js', 'runtime-recovery.js']:
     output = run(['docker', 'run', '--rm', '--network', 'none', '--mount', 'type=bind,src=' + str(stage / 'qa-test') + ',dst=/app/test,readonly', '--entrypoint', 'node', candidate, 'test/' + test])
     (stage / (test + '.log')).write_text(output)
     print(output.strip(), flush=True)
@@ -103,6 +103,7 @@ try:
     up()
     app = healthy()
     assert app['Config']['Image'] == candidate
+    run(['docker', 'exec', 'boardly-clerk', 'node', '-e', 'fetch("http://127.0.0.1:"+process.env.PORT+"/app").then(async r=>{if(r.status!==200||!(await r.text()).toLowerCase().includes("<!doctype html>"))process.exit(1);}).catch(()=>process.exit(1));'])
     assert file_hashes('boardly-clerk', list(manifest['files'])) == manifest['files']
     assert all(inspect(name)['Id'] == value for name, value in preserved.items())
     result = {'sha': sha, 'image': candidate, 'healthy': True, 'backup': str(backup), 'checkpointed_jobs': jobs, 'other_services_preserved': True}

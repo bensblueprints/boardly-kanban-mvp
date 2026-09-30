@@ -1,3 +1,4 @@
+import ModelTest from './ModelTest.jsx';
 import React,{useEffect,useState} from 'react';
 import {api} from '../api.js';
 import {settingsButton,settingsInput,accountSettings} from './SettingsShell.jsx';
@@ -22,6 +23,7 @@ export default function AIProviderConnection({provider,platformOwner=false,compa
  <p className="text-sm text-zinc-400">API keys are encrypted and kept out of agent messages. Connection verification lists available models without generating a paid response.</p>
  <button disabled={busy||!data.available} className={settingsButton+' bg-indigo-600'}>{busy?'Checking connection…':data.saved?'Verify & save model':'Verify connection'}</button>
  </form>
+ {!companyId&&<ModelTest url={base+provider+'/test'} selection={{model:form.model}} disabled={busy||!data.saved||!form.model||!!form.token||(provider==='openwebui'&&form.base_url!==data.base_url)||(provider==='local'&&(form.device_id!==data.device_id||form.port!==data.port))}/>}
  {!companyId&&<div className="flex gap-3 flex-wrap"><button disabled={busy||!data.available||!data.saved||data.active||!!form.token||form.model!==data.model||(provider==='openwebui'&&form.base_url!==data.base_url)} className={settingsButton} onClick={()=>act(()=>api.post('/api/account/ai-providers/'+provider+'/activate'),'Selected for new Boardly AI requests.')}>Use for Boardly agents</button>{data.saved&&<button disabled={busy} className={settingsButton} onClick={()=>act(()=>api.del('/api/account/ai-providers/'+provider),'Disconnected. Requests using this provider are paused until you reconnect or choose another AI connection.')}>Disconnect</button>}</div>}
  {!companyId&&provider==='local'&&data.saved&&<label className="flex items-start gap-3 text-sm"><input type="checkbox" checked={!!data.fallback_enabled} disabled={busy} onChange={e=>act(()=>api.post('/api/account/ai-providers/local/fallback',{enabled:e.target.checked}),'Local fallback preference saved.')}/><span>Keep working with Local AI when paid AI allowance is exhausted. The same project permissions apply.</span></label>}
  <p className="text-sm text-zinc-400">{['local','openwebui'].includes(provider)?'Your model server handles inference. Running costs and any upstream provider charges belong to that server.':'API usage is billed by '+config.name+' directly to your provider account.'} Boardly does not add an AI usage markup. Set spending limits in your provider account.</p>
