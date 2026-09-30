@@ -28,6 +28,7 @@ function companyOverview(db, clean = (_,text)=>text) {
     const scope = projects.filter(p=>agent.project_id ? p.id===agent.project_id : agent.kind==='board' ? p.board_id===agent.board_id : p.company_id===agent.company_id);
     for (const key of ['title','progress','error']) if (agent[key]) agent[key]=scope.reduce((value,p)=>clean(p.id,value),agent[key]);
   }
-  return {companies,boards,projects,agents:[...agents,...discussions],updated_at:Date.now(),freshness_ms:15000};
+  let monitoring=null;if(db.prepare("SELECT 1 FROM sqlite_master WHERE name='work_monitor_settings'").get())monitoring=db.prepare('SELECT enabled,last_checked_at,last_error FROM work_monitor_settings WHERE id=1').get();
+  return {companies,boards,projects,agents:[...agents,...discussions],monitoring,updated_at:Date.now(),freshness_ms:15000};
 }
 module.exports={companyOverview};

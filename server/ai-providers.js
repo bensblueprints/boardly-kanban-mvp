@@ -1,6 +1,6 @@
 const crypto=require('node:crypto'),http=require('node:http'),express=require('express');
 const fail=(status,message)=>Object.assign(Error(message),{status});
-const definitions={claude:{label:'Claude',origin:'https://api.anthropic.com',protocol:'anthropic'},kimi:{label:'Kimi',origin:'https://api.moonshot.ai',protocol:'chat'},deepseek:{label:'DeepSeek',origin:'https://api.deepseek.com',protocol:'chat'},local:{label:'Local AI',protocol:'chat'},openwebui:{label:'Open WebUI',protocol:'chat'}};
+const definitions={abliteration:{label:'Abliteration AI',origin:'https://api.abliteration.ai',protocol:'chat'},claude:{label:'Claude',origin:'https://api.anthropic.com',protocol:'anthropic'},kimi:{label:'Kimi',origin:'https://api.moonshot.ai',protocol:'chat'},deepseek:{label:'DeepSeek',origin:'https://api.deepseek.com',protocol:'chat'},local:{label:'Local AI',protocol:'chat'},openwebui:{label:'Open WebUI',protocol:'chat'}};
 const DEEPSEEK_MAX_OUTPUT_TOKENS=393216;
 const text=v=>typeof v==='string'?v:'';
 function imagePart(p,anthropic=false){
@@ -45,7 +45,7 @@ function payloadFor(connection,payload){
  // Work recovers from public checkpoints that
  // deliberately exclude private reasoning. Use the same non-thinking mode as
  // connection probes so DeepSeek can resume without missing reasoning state.
- return {model:connection.model,messages:converted.messages,max_tokens:payload.max_output_tokens||4096,...(connection.provider==='deepseek'?{thinking:{type:'disabled'}}:{}),...(anthropic?{system:converted.system}:{}),...(payload.tools?.length?{tools:payload.tools.map(t=>anthropic?{name:t.name,description:t.description,input_schema:t.parameters}:{type:'function',function:{name:t.name,description:t.description,parameters:t.parameters}})}:{})};
+ return {model:connection.model,messages:converted.messages,max_tokens:payload.max_output_tokens||4096,...(connection.provider==='deepseek'?{thinking:{type:'disabled'}}:{}),...(connection.provider==='abliteration'?{reasoning_effort:'low'}:{}),...(anthropic?{system:converted.system}:{}),...(payload.tools?.length?{tools:payload.tools.map(t=>anthropic?{name:t.name,description:t.description,input_schema:t.parameters}:{type:'function',function:{name:t.name,description:t.description,parameters:t.parameters}})}:{})};
 }
 function outputFor(provider,result){
  const turn=crypto.randomUUID(),output=[];let message;
@@ -69,6 +69,7 @@ async function boundedJSON(response,maxBytes=6000000){
  let size=0,parts=[];for await(const b of response.body){size+=b.length;if(size>maxBytes)throw fail(502,'The AI response exceeded the supported size.');parts.push(b);}
  let value;try{value=JSON.parse(Buffer.concat(parts).toString('utf8'));}catch{if(response.ok)throw fail(502,'The AI provider returned invalid JSON.');}
  if(!response.ok){
+  if(/^policy_/.test(value?.error?.code||'')||value?.error?.type==='policy_error')throw Object.assign(fail(response.status,'The provider policy blocked or could not evaluate this request. Review the policy in the provider console.'),{code:'provider_policy',retryable:false});
   if(response.status===402||/insufficient_quota|credit balance is too low|insufficient.*balance|credits? exhausted|usage_limit_reached/i.test(JSON.stringify(value?.error||{})))throw Object.assign(fail(429,'The provider allowance is exhausted. Continuing with enabled Local AI when available.'),{code:'allowance_exhausted'});
   if([401,403].includes(response.status))throw fail(response.status,'The provider rejected this connection. Review its key and model permissions in connector settings.');
   if(response.status===429)throw fail(429,'The provider is temporarily rate limited. Retrying shortly.');
@@ -155,10 +156,11 @@ function createAIProviders({db,key,tailnet,request=fetch,account,setMode,paidAcc
   finally{probing.delete(user);}
  }
  function fallbackEnabled(user){return !!row(user,'local')&&!!db.prepare('SELECT enabled FROM ai_local_fallback WHERE user_id=?').get(user)?.enabled;}
- function fallbackAuthorize(user){const r=row(user,'local');if(!fallbackEnabled(user))return null;const c=decode(r);return {user_id:user,mode:'provider',provider:'local',model:c.model,revision:r.revision,fallback:true};}
+ function fallbackAuthorize(user,jobId){const r=row(user,'local');if(!fallbackEnabled(user))return null;const c=decode(r),saved=jobId?db.prepare('SELECT model FROM ai_fallback_runs WHERE user_id=? AND job_id=?').get(user,jobId)?.model:null;if(saved&&saved!==c.model&&!c.models?.includes(saved))throw fail(409,'The saved fallback model is no longer available.');return {user_id:user,mode:'provider',provider:'local',model:saved||c.model,revision:r.revision,fallback:true};}
  function setFallback(user,enabled){if(typeof enabled!=='boolean')throw fail(400,'Choose whether to enable local fallback');if(enabled&&!row(user,'local'))throw fail(400,'Connect and test Local AI first');db.prepare('INSERT INTO ai_local_fallback VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET enabled=excluded.enabled').run(user,Number(enabled));return publicState(user,'local');}
  function fallbackForRun(user,jobId){return !!db.prepare('SELECT 1 FROM ai_fallback_runs WHERE user_id=? AND job_id=?').get(user,jobId)&&fallbackEnabled(user);}
- function startFallback(user,jobId,reason){if(!fallbackEnabled(user))return false;db.prepare('INSERT OR IGNORE INTO ai_fallback_runs VALUES(?,?,?,?)').run(user,jobId,reason,Date.now());return true;}
+ if(!db.prepare('PRAGMA table_info(ai_fallback_runs)').all().some(c=>c.name==='model'))db.exec('ALTER TABLE ai_fallback_runs ADD COLUMN model TEXT');
+ function startFallback(user,jobId,reason,avoidModel=null){if(!fallbackEnabled(user))return false;const model=require('./provider-failover').alternateModel(decode(row(user,'local')),avoidModel);if(!model)return false;db.prepare('INSERT OR IGNORE INTO ai_fallback_runs(user_id,job_id,reason,created_at,model) VALUES(?,?,?,?,?)').run(user,jobId,reason,Date.now(),model);return true;}
  const router=express.Router(),handle=fn=>async(req,res,next)=>{try{const valid=()=>{if(!req.workspaceIsOwner||(req.boardlyConnection&&!req.boardlyManagement))throw fail(403,'Only the signed-in account owner can manage AI providers.');};valid();res.set('Cache-Control','no-store');res.json(await fn(req,valid));}catch(e){next(e);}};
  router.post('/api/account/ai-providers/local/fallback',express.json({limit:'1kb'}),handle(req=>setFallback(req.cloudUserId,req.body?.enabled)));
  router.get('/api/account/ai-providers',handle(async req=>({openwebui_available:await paidAccess(req.cloudUserId),connections:Object.keys(definitions).map(p=>publicState(req.cloudUserId,p)),history:db.prepare('SELECT provider,model,status,input_tokens,output_tokens,created_at FROM ai_provider_calls WHERE user_id=? ORDER BY created_at DESC LIMIT 30').all(req.cloudUserId)})));

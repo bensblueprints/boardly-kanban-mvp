@@ -176,17 +176,12 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
       const funded={...personal,authorize:async(actor,jobId)=>{
         const companyId=tenant.companyAI.job(jobId),chosen=await tenant.companyAI.authorize(companyId);
         if(chosen){const valid=chosen.selectionValid;chosen.selectionValid=()=>{valid();if(JSON.stringify(tenant.companyAI.job(jobId))!==JSON.stringify(companyId))throw Object.assign(Error('Board moved to another company. Resume with its current AI settings.'),{status:409});};return chosen;}
-        if(jobId&&personal.providers.fallbackForRun(ownerId,jobId))return personal.providers.fallbackAuthorize(ownerId);
+        if(jobId&&personal.providers.fallbackForRun(ownerId,jobId))return personal.providers.fallbackAuthorize(ownerId,jobId);
         if(ownerId===config.ownerId&&personal.account(ownerId).mode==='none')return{user_id:ownerId,actor_id:actor,mode:'subscription',model:personal.account(ownerId).model};
         if(personal.account(ownerId).mode==='chatgpt')return chatgpt.authorize(ownerId);
         return personal.authorize(ownerId);
       },respond:async(a,id,payload)=>{
-        if(a.selectionValid)return personal.providers.respond(a,id,payload);
-        const local=()=>personal.providers.fallbackAuthorize(ownerId);
-        const fallback=async()=>{const f=local();if(!f)throw Object.assign(Error('Local AI fallback is disabled or disconnected.'),{status:409});return {...await personal.providers.respond(f,id,payload),boardly_runtime:'local',boardly_model:f.model};};
-        if(personal.providers.fallbackForRun(ownerId,id))return fallback();
-        try{return await(a.mode==='subscription'?tenant.subscription.respond(a.actor_id,id,payload):a.mode==='chatgpt'?chatgpt.respond(a,id,payload):personal.respond(a,id,payload));}
-        catch(e){if(require('./runtime-policy').failureKind(e)==='allowance'&&personal.providers.startFallback(ownerId,id,'Paid AI allowance exhausted'))return fallback();throw e;}
+        return require('./provider-failover').respondWithFallback({providers:personal.providers,ownerId,authorization:a,jobId:id,payload,respond:()=>a.selectionValid?personal.providers.respond(a,id,payload):a.mode==='subscription'?tenant.subscription.respond(a.actor_id,id,payload):a.mode==='chatgpt'?chatgpt.respond(a,id,payload):personal.respond(a,id,payload)});
       }};
       tenant.companyOnboarding=require('./company-onboarding').createCompanyOnboarding({db:local.db,ownerId,context:(companyId,valid)=>require('./company-plan-context').companyPlanContext({companyId,valid,github:tenant.github,companyAI:tenant.companyAI}),generate:async(actor,id,payload)=>{const a=await funded.authorize(actor,id);return funded.respond(a,id,{...payload,model:a.model||personal.account(ownerId).model});},retain:()=>tenant.active++,release:()=>tenant.active--});
       tenant.gpu=require('./gpu-workflows').createGpuWorkflows({db:local.db,ssh:tenant.ssh,ownerId,actions:()=>tenant.gpuActions,generate:async(actor,id,payload)=>{const a=await funded.authorize(actor,id);return funded.respond(a,id,{...payload,model:a.model||personal.account(ownerId).model});},retain:()=>tenant.active++,release:()=>tenant.active--});
@@ -343,7 +338,7 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
   app.all('/mcp', (req, res) => res.status(405).json({ error: 'Use Streamable HTTP POST' }));
   app.use((req, res, next) => {
     if (!req.tenant) return next();
-    if (/^\/api\/(chat|worker|agents|swarms|discussions)(\/|$)/i.test(req.path) || /^\/api\/boards\/\d+\/(chat\/|agent$|employees(?:\/|$))/i.test(req.path)) return req.tenant.subscription.router(req,res,err=>err?next(err):req.tenant.chat(req, res, next));
+    if (/^\/api\/(chat|worker|agents|swarms|discussions|work-monitor)(\/|$)/i.test(req.path) || /^\/api\/boards\/\d+\/(chat\/|agent$|employees(?:\/|$))/i.test(req.path)) return req.tenant.subscription.router(req,res,err=>err?next(err):req.tenant.chat(req, res, next));
     if(/^\/api\/account\/huggingface(?:\/|$)/.test(req.path))return req.tenant.huggingface.router(req,res,next);
     if(/^\/api\/account\/github(?:\/|$)/.test(req.path))return req.tenant.github.router(req,res,next);
     if(/^\/api\/account\/ssh(?:\/|$)/.test(req.path))return req.tenant.ssh.router(req,res,next);
@@ -364,11 +359,11 @@ function createCloudApp(config = readCloudConfig(), { emailConnector, identityCl
   });
   let cloudClosed=false,recoveringCloud=false;
   const recoverCloud=async()=>{if(cloudClosed||recoveringCloud)return;recoveringCloud=true;try{for(const ownerId of connections.workspaceOwners()){
-    if(cloudClosed)break;if(tenants.has(ownerId)){tenants.get(ownerId).chat.employees.tick();continue;}
+    if(cloudClosed)break;if(tenants.has(ownerId)){const chat=tenants.get(ownerId).chat;chat.employees.tick();chat.monitor.tick();continue;}
     const file=path.join(workspacePath(config.dataDir,ownerId),'app.db');if(!fs.existsSync(file))continue;
-    const db=new(require('better-sqlite3'))(file,{readonly:true});let pending=false;try{pending=!!db.prepare("SELECT 1 FROM chat_jobs WHERE runtime='api' AND (status='queued' OR (mode='work' AND status='running')) LIMIT 1").get();}catch{}finally{db.close();}if(!pending){const check=new(require('better-sqlite3'))(file,{readonly:true});try{pending=!!check.prepare('SELECT 1 FROM employee_teams WHERE enabled=1 LIMIT 1').get();}catch{}try{pending=pending||!!check.prepare("SELECT 1 FROM gpu_workflow_runs WHERE status IN ('queued','running') LIMIT 1").get();}catch{}finally{check.close();}}if(!pending)continue;
+    const db=new(require('better-sqlite3'))(file,{readonly:true});let pending=false;try{pending=!!db.prepare("SELECT 1 FROM chat_jobs WHERE runtime='api' AND (status='queued' OR (mode='work' AND status='running')) LIMIT 1").get();}catch{}finally{db.close();}if(!pending){const check=new(require('better-sqlite3'))(file,{readonly:true});try{pending=!!check.prepare('SELECT 1 FROM employee_teams WHERE enabled=1 LIMIT 1').get();}catch{}try{pending=pending||!!check.prepare('SELECT 1 FROM work_monitor_settings WHERE enabled=1').get();}catch{}try{pending=pending||!!check.prepare("SELECT 1 FROM gpu_workflow_runs WHERE status IN ('queued','running') LIMIT 1").get();}catch{}finally{check.close();}}if(!pending)continue;
     let plan;if(personal.billing.ready()){const billed=await personal.billing.state(ownerId);plan={...billed.plan,extra_users:billed.extra_users,users:billed.plan.users===null?null:billed.plan.users+billed.extra_users};}else plan=await planService.sponsored(ownerId);
-    if(!cloudClosed&&plan)tenantFor(ownerId,plan).chat.employees.tick();
+    if(!cloudClosed&&plan){const chat=tenantFor(ownerId,plan).chat;chat.employees.tick();chat.monitor.tick();}
   }}catch{/* Retry recovery after transient provider/storage failures. */}finally{recoveringCloud=false;}};
   const recoveryTimer=setInterval(recoverCloud,15000);recoveryTimer.unref();queueMicrotask(recoverCloud);
   app.closeWorkspaces = () => {cloudClosed=true;clearInterval(recoveryTimer);

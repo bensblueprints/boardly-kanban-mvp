@@ -2,13 +2,14 @@ const assert=require('node:assert/strict'),crypto=require('node:crypto'),path=re
 const Database=require('better-sqlite3'),{fixture}=require('./member-fixture');
 const {createAIProviders,payloadFor,outputFor}=require('../server/ai-providers');
 (async()=>{
- const keys={claude:'test-claude-private-value',kimi:'test-kimi-private-value',deepseek:'test-deepseek-private-value'},requests=[];
- let pause,waiting,shouldWait=false;
+ const keys={abliteration:'test-abliteration-private-value',claude:'test-claude-private-value',kimi:'test-kimi-private-value',deepseek:'test-deepseek-private-value'},requests=[];
+ let pause,waiting,shouldWait=false,policyFailure=false;
  const fake=async(url,options)=>{
-  const origins={claude:'https://api.anthropic.com',kimi:'https://api.moonshot.ai',deepseek:'https://api.deepseek.com'};
+  const origins={abliteration:'https://api.abliteration.ai',claude:'https://api.anthropic.com',kimi:'https://api.moonshot.ai',deepseek:'https://api.deepseek.com'};
   const p=Object.keys(origins).find(id=>url.startsWith(origins[id]+'/'));assert.ok(p,'Only the fixed provider origin is used');
   assert.equal(options.redirect,'error');
   assert.equal(options.headers[p==='claude'?'x-api-key':'Authorization'],p==='claude'?keys[p]:'Bearer '+keys[p]);
+  if(policyFailure)return Response.json({error:{code:'policy_evaluation_unavailable',type:'policy_error'}},{status:503});
   if(url.endsWith('/models'))return Response.json({data:[{id:p+'-available-model'}]});
   const body=JSON.parse(options.body);requests.push({p,body});assert.equal(body.model,p+'-available-model');assert.ok(!options.body.includes(keys[p]));
   if(shouldWait){waiting=true;await new Promise(r=>pause=r);}
@@ -18,7 +19,7 @@ const {createAIProviders,payloadFor,outputFor}=require('../server/ai-providers')
  };
  const f=await fixture({publicAccess:true,providerConnectorRequest:fake,providerRequest:()=>{throw Error('Provider calls must not use the OpenAI/platform billing client');}});
  try{
-  for(const provider of ['claude','deepseek','kimi']){
+  for(const provider of ['claude','deepseek','abliteration','kimi']){
    const user='user_'+provider,p=await f.project(provider,'Provider test',user);
    const route='/api/account/ai-providers/'+provider;
    await f.api(route,{user,method:'PUT',body:{token:keys[provider],user_id:'user_owner',base_url:'http://127.0.0.1/'}});
@@ -33,6 +34,7 @@ const {createAIProviders,payloadFor,outputFor}=require('../server/ai-providers')
    assert.ok(!JSON.stringify(c).includes('opaque test continuation'));
    assert.equal((await f.api('/api/ai/settings',{user})).usage.boardly_charge,0);
    const state=await f.api('/api/account/ai-providers',{user});assert.equal(state.history.length,2);assert.ok(state.history.every(h=>h.status==='completed'));assert.ok(!JSON.stringify(state).includes(keys[provider]));
+   if(provider==='abliteration'){assert.equal(requests.filter(r=>r.p===provider).at(-1).body.reasoning_effort,'low');assert.equal(requests.filter(r=>r.p===provider).at(-1).body.include_reasoning,undefined);}
    if(provider==='deepseek'){
     assert.ok(requests.filter(r=>r.p===provider).at(-1).body.messages.some(m=>m.reasoning_content==='opaque test continuation'),'DeepSeek thinking survives the tool round trip');
     const storage=new Database(path.join(f.root,'personal-ai.db'),{readonly:true});
@@ -50,6 +52,10 @@ const {createAIProviders,payloadFor,outputFor}=require('../server/ai-providers')
    assert.equal((await f.api('/api/ai/settings',{user})).mode,'provider','Disconnected provider stays selected and cannot fall back to Codex');
    assert.equal((await f.request(`/api/chat/threads/${thread.id}/messages`,{user,method:'POST',body:{mode:'work',content:'No credential fallback'}})).status,402);
   }
+  policyFailure=true;
+  const blocked=await f.request('/api/account/ai-providers/abliteration',{method:'PUT',body:{token:keys.abliteration}});
+  assert.equal(blocked.status,503);assert.match(JSON.stringify(await blocked.json()),/policy/i);
+  policyFailure=false;
   const p=await f.project(),member=(await f.api(`/api/companies/${p.company.id}/members`,{method:'POST',body:{email:'member@example.com'}})).member.user_id;
   assert.equal((await f.request('/api/account/ai-providers',{user:member,workspace:'user_owner'})).status,403);
   const db=new Database(path.join(f.root,'personal-ai.db'),{readonly:true});assert.equal(db.prepare('SELECT COUNT(*) n FROM ai_usage').get().n,0);assert.ok(!JSON.stringify(db.prepare('SELECT * FROM ai_provider_calls').all()).includes(keys.claude));db.close();
@@ -69,5 +75,5 @@ const {createAIProviders,payloadFor,outputFor}=require('../server/ai-providers')
  }finally{server.closeAllConnections();await new Promise(r=>server.close(r));db.close();}
  const screenshot={type:'function_call_output',call_id:'call_s',output:[{type:'input_image',image_url:'data:image/png;base64,AAAA'}]};
  for(const provider of ['claude','kimi','deepseek','local']){const p=payloadFor({provider,model:'fixture'},{input:[screenshot],tools:[]});assert.ok(JSON.stringify(p).includes(provider==='claude'?'"type":"image"':'"type":"image_url"'));}
- console.log('PASS: real Claude/Kimi/DeepSeek project tool cycles; customer-only keys; no platform fallback or markup; opaque continuation; in-flight revocation; private local HTTP; screenshot conversion');
+ console.log('PASS: real Claude/Kimi/DeepSeek/Abliteration project tool cycles; customer-only keys; no platform fallback or markup; opaque continuation; in-flight revocation; private local HTTP; screenshot conversion');
 })().catch(e=>{console.error(e);process.exitCode=1;});

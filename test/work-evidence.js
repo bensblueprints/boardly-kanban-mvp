@@ -1,0 +1,12 @@
+const assert=require('node:assert/strict'),D=require('better-sqlite3');
+const {createWorkEvidence}=require('../server/work-evidence');
+const db=new D(':memory:');db.exec("CREATE TABLE chat_jobs(id TEXT PRIMARY KEY);INSERT INTO chat_jobs VALUES ('job')");
+const e=createWorkEvidence(db,'job'),call={type:'function_call',call_id:'commit',name:'github_commit_files',arguments:JSON.stringify({files:[{path:'src/app.js'},{path:'docs/plan.md'}]})};
+e.record(call,{error:'Permission denied'});assert.equal(e.snapshot().source_commits.length,0);
+e.restore([call,{type:'function_call_output',call_id:'commit',output:JSON.stringify({pushed:true,sha:'a'.repeat(40)})}]);
+e.record(call,{pushed:true,sha:'a'.repeat(40)});assert.equal(e.snapshot().source_commits.length,1);
+assert.deepEqual(e.snapshot().source_commits[0].paths,['src/app.js']);
+assert.equal(e.review(),1);
+const restored=createWorkEvidence(db,'job');assert.equal(restored.review(),2);assert.equal(restored.snapshot().source_commits.length,1);
+e.record({call_id:'ssh',name:'execute_ssh',arguments:'{}'},{code:1});assert.equal(e.snapshot().successful_commands,0);
+db.close();console.log('PASS: receipts survive resume/compaction, restore checkpoints once, and reject failed operations');

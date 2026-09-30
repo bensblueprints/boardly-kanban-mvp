@@ -63,6 +63,15 @@ export const connectorDefinitions = [
       "Verify your API key and choose a model. Your Kimi Code or chat subscription is separate from API billing.",
   },
   {
+    id: "abliteration",
+    label: "Abliteration AI",
+    icon: BrainCircuit,
+    scope: "Organization",
+    category: "AI",
+    description: "Connect Abliteration models to Boardly agents.",
+    guide: "Verify your API key, choose a model, and test a response. Provider policies remain in effect.",
+  },
+  {
     id: "deepseek",
     label: "DeepSeek",
     icon: BrainCircuit,
@@ -232,7 +241,7 @@ function statusRequest(id, scope, entityId) {
           scope === "account" ? "API key saved" : "Generation enabled",
         ),
     ];
-  if (["claude", "kimi", "deepseek", "local", "openwebui"].includes(id))
+  if (["claude", "kimi", "deepseek", "abliteration", "local", "openwebui"].includes(id))
     return [
       "/api/account/ai-providers",
       (d) => {
