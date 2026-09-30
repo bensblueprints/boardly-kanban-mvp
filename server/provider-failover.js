@@ -12,6 +12,7 @@ async function respondWithFallback({providers,ownerId,authorization:a,jobId,payl
  if(providers.fallbackForRun(ownerId,jobId))return fallback();
  try{return await respond();}
  catch(error){
+  if(/refus|content.?filter|safety|policy.?violation|disallowed/i.test([error?.code,error?.type,error?.message].filter(Boolean).join(' ')))throw error;
   const kind=failureKind(error);
   if(error?.retryable!==false&&['allowance','transient'].includes(kind)&&providers.startFallback(ownerId,jobId,kind==='allowance'?'AI allowance exhausted':'AI provider temporarily unavailable',a.provider==='local'?a.model:null))return fallback();
   throw error;
@@ -19,6 +20,6 @@ async function respondWithFallback({providers,ownerId,authorization:a,jobId,payl
 }
 function alternateModel(config,avoid){
  if(!avoid)return config.model;
- return (config.models||[]).filter(m=>typeof m==='string'&&m!==avoid&&/coder|qwen|glm|llama|deepseek/i.test(m)&&!/vision|embedding|embed|\bvl\b|\bvl\d/i.test(m)).sort((a,b)=>Number(/flash/i.test(b))-Number(/flash/i.test(a))||a.localeCompare(b))[0]||null;
+ return (config.models||[]).filter(m=>typeof m==='string'&&m!==avoid&&/coder|qwen|glm|llama|deepseek/i.test(m)&&!/vision|embed|vl(?=[:\d-]|$)/i.test(m)).sort((a,b)=>Number(/flash/i.test(b))-Number(/flash/i.test(a))||a.localeCompare(b))[0]||null;
 }
 module.exports={respondWithFallback,alternateModel};
