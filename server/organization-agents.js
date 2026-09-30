@@ -15,9 +15,11 @@ function createOrganizationAgents({db, clean, userId, hosted, githubContext, ssh
     error TEXT, worker_id TEXT, requested_by TEXT NOT NULL, runtime TEXT NOT NULL,
     created_at INTEGER NOT NULL, started_at INTEGER, updated_at INTEGER NOT NULL);`);
   const router = express.Router();
+  const service={router};
   // Repository commits have a separately bounded body parser in project-chat.
   router.use((req,res,next)=>/^\/api\/worker\/jobs\/[^/]+\/github\//.test(req.path)?next('router'):next());
   router.use(express.json({limit:'1mb'}));
+  router.use((req,res,next)=>{if(/^\/api\/agents\/organization\//.test(req.path)&&req.workspaceIsOwner===false)return res.status(403).json({error:'Only the Organization owner can use the Organization agent.'});next();});
   router.get('/api/agents/companies/dashboard',(req,res)=>res.json(require('./company-overview').companyOverview(db,clean)));
   router.get('/api/agents/company/:id/dashboard',(req,res)=>{
     const s=scope('company',req.params.id),ids=s.projects.map(p=>p.id);
@@ -34,6 +36,7 @@ function createOrganizationAgents({db, clean, userId, hosted, githubContext, ssh
     res.json(cleanValues({company:{id:s.id,name:s.name},boards,projects:s.projects.map(p=>({...p,board_id:db.prepare('SELECT parent_board_id FROM company_projects WHERE workspace_id=?').get(p.id).parent_board_id})),agents,discussions,blockers,updated_at:Date.now()},value=>scrub(s,value)));
   });
   function scope(kind,id) {
+    if(kind==='organization'&&Number(id)===0){require('./hierarchy').ensureProjects(db);return {id:0,name:'Organization',kind,companies:db.prepare('SELECT id,name FROM companies ORDER BY name').all(),projects:db.prepare('SELECT p.workspace_id AS id,p.name,b.name AS board_name,b.company_id,c.name AS company_name FROM company_projects p JOIN company_boards b ON b.id=p.parent_board_id LEFT JOIN companies c ON c.id=b.company_id ORDER BY c.name,b.name,p.name').all()};}
     if (!['company','board'].includes(kind) || !Number.isSafeInteger(Number(id))) throw fail(400,'Choose a company or board');
     require('./hierarchy').ensureProjects(db);
     const row = db.prepare(`SELECT id,name FROM ${kind==='company'?'companies':'company_boards'} WHERE id=?`).get(id);
@@ -49,13 +52,13 @@ function createOrganizationAgents({db, clean, userId, hosted, githubContext, ssh
       FROM chat_jobs j JOIN chat_threads t ON t.id=j.thread_id JOIN company_projects p ON p.workspace_id=t.board_id JOIN company_boards b ON b.id=p.parent_board_id WHERE j.swarm_id=? ORDER BY j.created_at,j.rowid`).all(id);
     return {...swarm,agents,max_agents:MAX_AGENTS};
   }
-  router.get('/api/agents/:kind(company|board)/:id', (req,res) => {
+  router.get('/api/agents/:kind(organization|company|board)/:id', (req,res) => {
     const s=scope(req.params.kind,req.params.id);
     const swarms=db.prepare('SELECT id FROM agent_swarms WHERE scope_type=? AND scope_id=? ORDER BY created_at DESC LIMIT 20').all(s.kind,s.id).map(x=>details(x.id));
     const threads=db.prepare('SELECT * FROM discussion_threads WHERE scope_type=? AND scope_id=? ORDER BY created_at DESC,rowid DESC').all(s.kind,s.id);
     res.json({scope:s,swarms,threads,max_agents:MAX_AGENTS,computers:s.projects.map(p=>({project_id:p.id,project_name:p.name,board_name:p.board_name,...computerContext?.(req.cloudUserId||userId,p.id)})),github:s.projects.map(p=>({project_id:p.id,project_name:p.name,board_name:p.board_name,...githubContext?.(req.cloudUserId||userId,p.id)}))});
   });
-  router.post('/api/agents/:kind(company|board)/:id/swarms', (req,res) => {
+  router.post('/api/agents/:kind(organization|company|board)/:id/swarms', (req,res) => {
     const s=scope(req.params.kind,req.params.id), data=req.body;
     if(data.mode!=='work')throw fail(400,'Choose Work mode to start agents');
     if(typeof data.request_key!=='string'||!/^[a-f0-9-]{36}$/.test(data.request_key))throw fail(400,'A launch request ID is required');
@@ -73,26 +76,46 @@ function createOrganizationAgents({db, clean, userId, hosted, githubContext, ssh
         const content=clean(p.id,`Work as the agent for ${p.board_name} / ${p.name} in the ${s.name} swarm. Shared objective: ${data.instruction.trim()}\nYour assignment: ${a.instruction.trim()||'Apply the shared objective to this project.'}\nWork only in this project. Read its tasks first, preserve existing context, verify results and update the relevant task. Other project agents run independently; do not start work on their projects.`);
         db.prepare('INSERT INTO chat_threads(id,board_id,title,created_at) VALUES (?,?,?,?)').run(tid,p.id,'Swarm: '+data.instruction.trim().slice(0,90),now);
         db.prepare('INSERT INTO chat_messages VALUES (?,?,?,?,?)').run(mid,tid,'user',content,now);
-        db.prepare("INSERT INTO chat_jobs(id,thread_id,message_id,status,created_at,updated_at,runtime,requested_by,mode,swarm_id) VALUES (?,?,?,'queued',?,?,?,?,'work',?)").run(jid,tid,mid,now,now,req.aiRuntime||'codex',actor,data.request_key);
+        db.prepare("INSERT INTO chat_jobs(id,thread_id,message_id,status,created_at,updated_at,runtime,requested_by,mode,swarm_id) VALUES (?,?,?,'queued',?,?,?,?,'work',?)").run(jid,tid,mid,now,now,service.runtimeForProject?.(p.id)||req.aiRuntime||'codex',actor,data.request_key);
       }
     }).immediate();
-    if(req.aiRuntime==='api')hosted().enqueue();res.status(202).json(details(data.request_key));
+    hosted()?.enqueue();res.status(202).json(details(data.request_key));
   });
   router.post('/api/swarms/:id/cancel',(req,res)=>{details(req.params.id);db.prepare("UPDATE chat_jobs SET status='cancelled',progress='Swarm stopped',updated_at=? WHERE swarm_id=? AND status IN ('queued','running')").run(Date.now(),req.params.id);res.json(details(req.params.id));});
-  router.post('/api/agents/:kind(company|board)/:id/threads',(req,res)=>{const s=scope(req.params.kind,req.params.id),id=crypto.randomUUID();db.prepare('INSERT INTO discussion_threads VALUES (?,?,?,?,?)').run(id,s.kind,s.id,scrub(s,String(req.body?.title||'New conversation').trim().slice(0,100))||'New conversation',Date.now());res.status(201).json(getThread(id));});
-  router.get('/api/discussions/threads/:id',(req,res)=>{const t=getThread(req.params.id);res.json({thread:t,runs:db.prepare('SELECT id,mode,prompt,draft,status,error,created_at,started_at,updated_at FROM discussion_jobs WHERE thread_id=? ORDER BY created_at,rowid').all(t.id)});});
+  router.post('/api/agents/:kind(organization|company|board)/:id/threads',(req,res)=>{const s=scope(req.params.kind,req.params.id),id=crypto.randomUUID();db.prepare('INSERT INTO discussion_threads VALUES (?,?,?,?,?)').run(id,s.kind,s.id,scrub(s,String(req.body?.title||'New conversation').trim().slice(0,100))||'New conversation',Date.now());res.status(201).json(getThread(id));});
+  router.get('/api/discussions/threads/:id',(req,res)=>{const t=getThread(req.params.id);res.json({thread:t,runs:db.prepare('SELECT id,mode,prompt,draft,status,error,created_at,started_at,updated_at FROM discussion_jobs WHERE thread_id=? ORDER BY created_at,rowid').all(t.id).map(j=>({...j,delegations:delegationStatus(j.id)}))});});
   router.post('/api/discussions/threads/:id/messages',(req,res)=>{
     const t=getThread(req.params.id),s=scope(t.scope_type,t.scope_id),{content,mode}=req.body;
-    if(!['ask','plan'].includes(mode))throw fail(400,'Choose Ask or Plan. Use the Work tab to launch project agents.');
+    if(!(s.kind==='organization'?['ask','plan','work']:['ask','plan']).includes(mode))throw fail(400,'Choose Ask or Plan. Use the Work tab to launch project agents.');
     if(typeof content!=='string'||!content.trim()||content.length>30000)throw fail(400,'Enter a message up to 30000 characters');
     if(db.prepare("SELECT id FROM discussion_jobs WHERE thread_id=? AND status IN ('queued','running')").get(t.id))throw fail(409,'Wait for this reply or stop it first');
     const id=crypto.randomUUID(),now=Date.now();
-    db.prepare("INSERT INTO discussion_jobs(id,thread_id,mode,prompt,status,requested_by,runtime,created_at,updated_at) VALUES (?,?,?,?,'queued',?,?,?,?)").run(id,t.id,mode,scrub(s,content.trim()),req.cloudUserId||userId,req.aiRuntime||'codex',now,now);
+    db.prepare("INSERT INTO discussion_jobs(id,thread_id,mode,prompt,status,requested_by,runtime,created_at,updated_at) VALUES (?,?,?,?,'queued',?,?,?,?)").run(id,t.id,mode,scrub(s,content.trim()),req.cloudUserId||userId,s.kind==='organization'?'api':req.aiRuntime||'codex',now,now);
     if(t.title==='New conversation')db.prepare('UPDATE discussion_threads SET title=? WHERE id=?').run(scrub(s,content.trim()).slice(0,100),t.id);
-    if(req.aiRuntime==='api')router.enqueueApi?.();res.status(202).json({id});
+    if(req.aiRuntime==='api'||s.kind==='organization')router.enqueueApi?.();res.status(202).json({id});
   });
   router.post('/api/discussions/jobs/:id/cancel',(req,res)=>{const j=db.prepare('SELECT * FROM discussion_jobs WHERE id=?').get(req.params.id);if(!j)throw fail(404,'Reply not found');getThread(j.thread_id);db.prepare("UPDATE discussion_jobs SET status='cancelled',updated_at=? WHERE id=? AND status IN ('queued','running')").run(Date.now(),j.id);res.json({ok:true});});
-  function context(j){const t=getThread(j.thread_id),s=scope(t.scope_type,t.scope_id);return {kind:'discussion',...j,context:cleanValues({scope:s,projects:snapshot(db,s.projects.map(p=>p.id),{github:githubContext&&((id)=>githubContext(j.requested_by||userId,id)),ssh:sshContext&&((id)=>sshContext(j.requested_by||userId,id)),computers:computerContext&&((id)=>computerContext(j.requested_by||userId,id))})},value=>scrub(s,value)),history:db.prepare("SELECT mode,prompt,draft,status FROM discussion_jobs WHERE thread_id=? AND created_at<=? ORDER BY created_at,rowid").all(t.id,j.created_at).slice(-20)};}
+  function delegate(j,args){
+    const parent=db.prepare('SELECT * FROM discussion_jobs WHERE id=?').get(j.id),t=parent&&getThread(parent.thread_id);
+    if(!parent||parent.status!=='running'||parent.mode!=='work'||t.scope_type!=='organization'||parent.requested_by!==userId)throw fail(403,'Only an active Organization Work run can delegate.');
+    if(typeof args.assignment_key!=='string'||!/^[a-zA-Z0-9_-]{1,80}$/.test(args.assignment_key))throw fail(400,'Use a stable assignment key for each board assignment.');
+    const p=scope('company',args.company_id).projects.find(p=>p.id===args.board_id);
+    if(!p||typeof args.instruction!=='string'||!args.instruction.trim()||args.instruction.length>10000)throw fail(400,'Choose a board inside the company and give its assignment.');
+    const key=crypto.createHash('sha256').update(j.id+':'+args.assignment_key).digest('hex');
+    const prior=db.prepare('SELECT * FROM organization_delegations WHERE id=?').get(key);
+    if(prior){if(prior.board_id!==p.id||prior.instruction!==args.instruction)throw fail(409,'Assignment key already used for different work.');return delegationStatus(j.id).find(x=>x.job_id===prior.job_id);}
+    if(db.prepare('SELECT count(*) n FROM organization_delegations WHERE parent_job_id=?').get(j.id).n>=50)throw fail(400,'This Organization run has reached its 50-assignment limit.');
+    const tid=crypto.randomUUID(),mid=crypto.randomUUID(),jid=crypto.randomUUID(),now=Date.now();
+    db.transaction(()=>{
+      db.prepare('INSERT INTO chat_threads(id,board_id,title,created_at) VALUES(?,?,?,?)').run(tid,p.id,'Organization: '+args.instruction.slice(0,80),now);
+      db.prepare('INSERT INTO chat_messages VALUES(?,?,?,?,?)').run(mid,tid,'user',clean(p.id,args.instruction),now);
+      db.prepare("INSERT INTO chat_jobs(id,thread_id,message_id,status,created_at,updated_at,runtime,requested_by,mode) VALUES(?,?,?,'queued',?,?,'api',?,'work')").run(jid,tid,mid,now,now,parent.requested_by);
+      db.prepare('INSERT INTO organization_delegations VALUES(?,?,?,?,?,?)').run(key,j.id,args.company_id,p.id,args.instruction,jid);
+    }).immediate();hosted()?.enqueue();return delegationStatus(j.id).find(x=>x.job_id===jid);
+  }
+  db.exec(`CREATE TABLE IF NOT EXISTS organization_delegations(id TEXT PRIMARY KEY,parent_job_id TEXT NOT NULL REFERENCES discussion_jobs(id) ON DELETE CASCADE,company_id INTEGER NOT NULL,board_id INTEGER NOT NULL,instruction TEXT NOT NULL,job_id TEXT NOT NULL REFERENCES chat_jobs(id) ON DELETE CASCADE);`);
+  function delegationStatus(id){return db.prepare('SELECT d.company_id,d.board_id,d.job_id,j.status,j.progress,j.error FROM organization_delegations d JOIN chat_jobs j ON j.id=d.job_id WHERE d.parent_job_id=?').all(id).map(d=>({...d,ai:service.companyAI?.effective(d.company_id)}));}
+  function context(j){const t=getThread(j.thread_id),s=scope(t.scope_type,t.scope_id);return {kind:'discussion',...j,context:cleanValues({scope:s,company_ai:s.kind==='organization'?s.companies.map(c=>({...c,...service.companyAI?.effective(c.id)})):undefined,delegations:delegationStatus(j.id),projects:snapshot(db,s.projects.map(p=>p.id),{github:githubContext&&((id)=>githubContext(j.requested_by||userId,id)),ssh:sshContext&&((id)=>sshContext(j.requested_by||userId,id)),computers:computerContext&&((id)=>computerContext(j.requested_by||userId,id))})},value=>scrub(s,value)),history:db.prepare("SELECT mode,prompt,draft,status FROM discussion_jobs WHERE thread_id=? AND created_at<=? ORDER BY created_at,rowid").all(t.id,j.created_at).slice(-20)};}
   function claim(workerId){return db.transaction(()=>{const j=db.prepare("SELECT * FROM discussion_jobs WHERE status='queued' AND runtime='codex' ORDER BY created_at,rowid LIMIT 1").get();if(!j)return null;const c=context(j);db.prepare("UPDATE discussion_jobs SET status='running',worker_id=?,started_at=?,updated_at=? WHERE id=?").run(workerId,Date.now(),Date.now(),j.id);return c;}).immediate();}
   router.post('/api/worker/discussions/:id',(req,res)=>{
     const j=db.prepare('SELECT * FROM discussion_jobs WHERE id=?').get(req.params.id);if(!j||j.worker_id!==req.boardlyConnection.id)return res.status(404).json({error:'Reply not found'});
@@ -101,6 +124,6 @@ function createOrganizationAgents({db, clean, userId, hosted, githubContext, ssh
     db.prepare('UPDATE discussion_jobs SET status=?,draft=?,error=?,updated_at=? WHERE id=?').run(status,scrub(s,typeof d.text==='string'?d.text.slice(0,200000):j.draft),d.error?safeText(d.error):null,Date.now(),j.id);res.json({status});
   });
   router.use((e,req,res,next)=>e.status?res.status(e.status).json({error:e.message}):next(e));
-  return {router,claim,context,scope};
+  return Object.assign(service,{claim,context,scope,delegate,delegationStatus});
 }
 module.exports={createOrganizationAgents};

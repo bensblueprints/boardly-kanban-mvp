@@ -61,7 +61,7 @@ export const connectorHelp = {
   computeruse: {
     steps: [
       "Open your ComputerUse account and create an API key with the desktop access you need.",
-      "Paste the key in Account settings → ComputerUse. Your available computers will appear.",
+      "Paste the key in Organization settings → ComputerUse. Your available computers will appear.",
       "Open Company settings → ComputerUse. Choose its computers and turn on agent control only when you want the AI to use them.",
     ],
     check:
@@ -91,7 +91,7 @@ export const connectorHelp = {
     steps: [
       "Create a 1Password service account with access to a vault you want Boardly to use.",
       "Paste its token here. Choose only the login items and websites the AI is allowed to use.",
-      "Open the company or project settings and grant those logins to the work that needs them.",
+      "Open the company or board settings and grant those logins to the work that needs them.",
     ],
     check: "Approved items appear by name. Passwords stay private.",
     fix: "If an item is missing, check the service account’s vault access and the website saved on the item.",

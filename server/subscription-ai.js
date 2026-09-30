@@ -10,7 +10,7 @@ function createSubscriptionAI({db,ownerId,canEdit,connections,canGenerate=()=>fa
   ); CREATE TABLE IF NOT EXISTS subscription_workers(id TEXT PRIMARY KEY,last_seen INTEGER NOT NULL);`);
   db.prepare("UPDATE subscription_requests SET status='interrupted',payload=NULL,result=NULL WHERE status IN ('queued','running')").run();
   let closed=false;
-  const live=row=>{if(row.actor_id===ownerId&&canGenerate(row.actor_id,row.job_id))return true;const j=db.prepare('SELECT j.status,j.requested_by,t.board_id FROM chat_jobs j JOIN chat_threads t ON t.id=j.thread_id WHERE j.id=?').get(row.job_id);return j?.status==='running'&&j.requested_by===row.actor_id&&canEdit(row.actor_id,j.board_id);};
+  const live=row=>{if(row.actor_id===ownerId&&db.prepare("SELECT 1 FROM discussion_jobs WHERE id=? AND requested_by=? AND status='running'").get(row.job_id,ownerId))return true;if(row.actor_id===ownerId&&canGenerate(row.actor_id,row.job_id))return true;const j=db.prepare('SELECT j.status,j.requested_by,t.board_id FROM chat_jobs j JOIN chat_threads t ON t.id=j.thread_id WHERE j.id=?').get(row.job_id);return j?.status==='running'&&j.requested_by===row.actor_id&&canEdit(row.actor_id,j.board_id);};
   const online=()=>connections.list(ownerId).some(c=>c.scope==='worker'&&!c.revoked_at&&c.expires_at>Date.now()&&db.prepare('SELECT 1 FROM subscription_workers WHERE id=? AND last_seen>?').get(c.id,Date.now()-45000));
   async function respond(actor,jobId,payload){
     if(!online())throw fail('The company owner’s subscription worker is offline. Ask the owner to reconnect it.');

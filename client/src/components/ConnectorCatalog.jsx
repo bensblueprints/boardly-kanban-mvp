@@ -45,7 +45,7 @@ export const connectorDefinitions = [
     id: "claude",
     label: "Claude & Claude Code",
     icon: BrainCircuit,
-    scope: "Account",
+    scope: "Organization",
     category: "AI",
     description:
       "Use your Claude API key for Boardly agents, or connect your Claude Code client.",
@@ -56,7 +56,7 @@ export const connectorDefinitions = [
     id: "kimi",
     label: "Kimi & Kimi Code",
     icon: BrainCircuit,
-    scope: "Account",
+    scope: "Organization",
     category: "AI",
     description: "Power Boardly agents with your Kimi API account.",
     guide:
@@ -66,7 +66,7 @@ export const connectorDefinitions = [
     id: "deepseek",
     label: "DeepSeek",
     icon: BrainCircuit,
-    scope: "Account",
+    scope: "Organization",
     category: "AI",
     description: "Power Boardly agents with your DeepSeek API account.",
     guide: "Verify your API key to load available models, select one and choose Use for Boardly agents.",
@@ -75,7 +75,7 @@ export const connectorDefinitions = [
     id: "huggingface",
     label: "Hugging Face",
     icon: BrainCircuit,
-    scope: "Account",
+    scope: "Organization",
     category: "AI",
     description: "Connect your Hugging Face account and organization membership.",
     guide: "Verify your personal access token and view your organizations. Automated invitations depend on your organization plan and SSO setup.",
@@ -84,7 +84,7 @@ export const connectorDefinitions = [
     id: "openwebui",
     label: "Open WebUI",
     icon: BrainCircuit,
-    scope: "Account",
+    scope: "Organization",
     category: "AI",
     description: "Use your own Open WebUI models for Boardly agents.",
     guide: "For paying customers: connect your HTTPS server, verify your API key and select a model with tool calling.",
@@ -93,7 +93,7 @@ export const connectorDefinitions = [
     id: "local",
     label: "Local AI",
     icon: BrainCircuit,
-    scope: "Account",
+    scope: "Organization",
     category: "AI",
     description:
       "Run Boardly agents with Ollama, LM Studio or your own model server.",
@@ -114,7 +114,7 @@ export const connectorDefinitions = [
     id: "ai",
     label: "Codex, ChatGPT & OpenAI",
     icon: BrainCircuit,
-    scope: "Account",
+    scope: "Organization",
     category: "AI",
     description:
       "Power your agents with a ChatGPT connection or OpenAI API key.",
@@ -155,7 +155,7 @@ export const connectorDefinitions = [
     id: "tailscale",
     label: "Tailscale",
     icon: Network,
-    scope: "Account",
+    scope: "Organization",
     category: "Network",
     description: "Reach private computers from Boardly cloud.",
     guide:
@@ -406,12 +406,12 @@ export default function ConnectorCatalog({
             {
               label: ["emails", "discord", "telegram"].includes(c.id)
                 ? "Choose a company"
-                : "Choose a project",
+                : "Choose a board",
               elsewhere: true,
             },
           ];
         const request = statusRequest(c.id, scope, entityId);
-        if (!request) return [c.id, { label: "Project configuration" }];
+        if (!request) return [c.id, { label: "Board configuration" }];
         try {
           const value = await api.get(request[0]);
           return [
@@ -467,7 +467,7 @@ export default function ConnectorCatalog({
         <h3 className="font-medium">Connect → assign → allow access</h3>
         <p className="text-sm text-zinc-400 mt-2 leading-relaxed">
           {scope === "account"
-            ? "Start with a connection below. Company settings choose what is shared across that company. Project settings hold exceptions and project-only resources."
+            ? "Start with a connection below. Company settings choose what is shared across that company. Board settings hold exceptions and board-only resources."
             : scope === "company"
               ? "Resources saved here are available to this company’s projects. Each project can set its own repository or computer assignment."
               : "Inherited company resources stay available here. A project repository or computer assignment overrides that company setting."}{" "}

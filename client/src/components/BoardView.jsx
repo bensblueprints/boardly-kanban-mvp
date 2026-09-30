@@ -411,7 +411,7 @@ export default function BoardView({ boardId, onBack, cloud = false }) {
         {cloud && can('computers') && <button onClick={() => setShowComputers(true)} className="text-sm text-zinc-300 px-2">Computer use</button>}
         {cloud && <button onClick={() => setAssetsTab('links')} className="text-sm text-zinc-300 px-2">Links</button>}
         <button onClick={()=>openSettings('connectors')} className="text-sm text-zinc-300 px-2 inline-flex gap-2 items-center"><Plug size={16}/>Connectors</button>
-        <button aria-label="Project settings" onClick={()=>openSettings('general')} className="text-sm text-zinc-300 px-2 inline-flex gap-2 items-center"><Settings2 size={16}/>Settings</button>{readOnly&&<span className="text-xs text-zinc-500">View-only access</span>}
+        <button aria-label="Board settings" onClick={()=>openSettings('general')} className="text-sm text-zinc-300 px-2 inline-flex gap-2 items-center"><Settings2 size={16}/>Settings</button>{readOnly&&<span className="text-xs text-zinc-500">View-only access</span>}
       </nav>}
       {cloud && showAudio && <AudioBriefing key={board.id} kind="project" id={board.id} onClose={() => {setShowAudio(false);load();}} />}
       {cloud && showComputers && <ProjectComputers key={board.id} board={board} onClose={() => setShowComputers(false)} />}
