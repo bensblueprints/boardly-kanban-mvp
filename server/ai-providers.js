@@ -1,6 +1,7 @@
 const crypto=require('node:crypto'),http=require('node:http'),express=require('express');
 const fail=(status,message)=>Object.assign(Error(message),{status});
 const definitions={claude:{label:'Claude',origin:'https://api.anthropic.com',protocol:'anthropic'},kimi:{label:'Kimi',origin:'https://api.moonshot.ai',protocol:'chat'},deepseek:{label:'DeepSeek',origin:'https://api.deepseek.com',protocol:'chat'},local:{label:'Local AI',protocol:'chat'},openwebui:{label:'Open WebUI',protocol:'chat'}};
+const DEEPSEEK_MAX_OUTPUT_TOKENS=393216;
 const text=v=>typeof v==='string'?v:'';
 function imagePart(p,anthropic=false){
  if(p.type==='input_image'){
@@ -41,7 +42,7 @@ function messages(input,anthropic=false){
 }
 function payloadFor(connection,payload){
  const anthropic=connection.provider==='claude',converted=messages(payload.input,anthropic);
- // Work has a bounded output budget and recovers from public checkpoints that
+ // Work recovers from public checkpoints that
  // deliberately exclude private reasoning. Use the same non-thinking mode as
  // connection probes so DeepSeek can resume without missing reasoning state.
  return {model:connection.model,messages:converted.messages,max_tokens:payload.max_output_tokens||4096,...(connection.provider==='deepseek'?{thinking:{type:'disabled'}}:{}),...(anthropic?{system:converted.system}:{}),...(payload.tools?.length?{tools:payload.tools.map(t=>anthropic?{name:t.name,description:t.description,input_schema:t.parameters}:{type:'function',function:{name:t.name,description:t.description,parameters:t.parameters}})}:{})};
@@ -49,7 +50,7 @@ function payloadFor(connection,payload){
 function outputFor(provider,result){
  const turn=crypto.randomUUID(),output=[];let message;
  const invalid=message=>Object.assign(fail(502,message),{retryable:false});
- if(result.stop_reason==='max_tokens'||result.choices?.[0]?.finish_reason==='length')throw invalid('The AI response reached its output limit before finishing. No actions from this incomplete response were executed. Use a smaller step or a larger output budget before resuming.');
+ if(result.stop_reason==='max_tokens'||result.choices?.[0]?.finish_reason==='length')throw Object.assign(invalid('The AI response reached its output limit before finishing. No actions from this incomplete response were executed.'),{code:'output_limit',next_action:'Split the next code change into smaller file edits, then resume. This is a response-size limit, not a funding or connection problem.'});
  if(provider==='claude'){
   if(!Array.isArray(result.content))throw invalid('Claude returned an invalid response.');
   message={role:'assistant',content:result.content};
@@ -64,8 +65,8 @@ function outputFor(provider,result){
  for(const item of output){item.boardly_provider_turn=turn;item.boardly_provider_message=message;}
  return {id:result.id||turn,output,usage:result.usage};
 }
-async function boundedJSON(response){
- let size=0,parts=[];for await(const b of response.body){size+=b.length;if(size>6000000)throw fail(502,'The AI response exceeded the supported size.');parts.push(b);}
+async function boundedJSON(response,maxBytes=6000000){
+ let size=0,parts=[];for await(const b of response.body){size+=b.length;if(size>maxBytes)throw fail(502,'The AI response exceeded the supported size.');parts.push(b);}
  let value;try{value=JSON.parse(Buffer.concat(parts).toString('utf8'));}catch{if(response.ok)throw fail(502,'The AI provider returned invalid JSON.');}
  if(!response.ok){
   if(response.status===402||/insufficient_quota|credit balance is too low|insufficient.*balance|credits? exhausted|usage_limit_reached/i.test(JSON.stringify(value?.error||{})))throw Object.assign(fail(429,'The provider allowance is exhausted. Continuing with enabled Local AI when available.'),{code:'allowance_exhausted'});
@@ -98,7 +99,7 @@ function createAIProviders({db,key,tailnet,request=fetch,account,setMode,paidAcc
   });
  }
  async function call(user,c,path,body,timeoutMs){
-  try{return await boundedJSON(c.provider==='openwebui'?await openWebUIRequest(c,path.replace(/^\/v1\//,'/api/'),body?{...body,stream:false}:undefined,{timeoutMs}):c.provider==='local'?await localRequest(user,c,path,body,timeoutMs):await request(definitions[c.provider].origin+path,{method:body?'POST':'GET',headers:{'Content-Type':'application/json',...(c.provider==='claude'?{'x-api-key':c.token,'anthropic-version':'2023-06-01'}:{Authorization:'Bearer '+c.token})},...(body?{body:JSON.stringify(body)}:{}),redirect:'error',signal:AbortSignal.timeout(timeoutMs||(body?110000:15000))}));}
+  try{return await boundedJSON(c.provider==='openwebui'?await openWebUIRequest(c,path.replace(/^\/v1\//,'/api/'),body?{...body,stream:false}:undefined,{timeoutMs}):c.provider==='local'?await localRequest(user,c,path,body,timeoutMs):await request(definitions[c.provider].origin+path,{method:body?'POST':'GET',headers:{'Content-Type':'application/json',...(c.provider==='claude'?{'x-api-key':c.token,'anthropic-version':'2023-06-01'}:{Authorization:'Bearer '+c.token})},...(body?{body:JSON.stringify(body)}:{}),redirect:'error',signal:AbortSignal.timeout(timeoutMs||(body?(c.provider==='deepseek'?7200000:110000):15000))}),c.provider==='deepseek'?32*1024*1024:6000000);}
   catch(e){if(timeoutMs&&['TimeoutError','AbortError'].includes(e.name))throw fail(504,'The model did not reply within 30 seconds. It may still be loading; try again shortly.');throw e.status?e:fail(502,'The AI connection was interrupted. It was not automatically retried.');}
  }
  async function save(user,provider,data,valid,companyId){
@@ -132,7 +133,7 @@ function createAIProviders({db,key,tailnet,request=fetch,account,setMode,paidAcc
   await requireAccess(a.user_id,a.provider);
   const permitted=()=>a.selectionValid?(a.selectionValid(),true):a.fallback?fallbackEnabled(a.user_id):account(a.user_id).mode==='provider'&&current(a.user_id)===a.provider;
   const r=row(storageUser(a.user_id,a.companyId),a.provider);if(!r||r.revision!==a.revision||!permitted())throw fail(409,'The AI connection changed. Start or resume with the current connection.');
-  const c={...decode(r),model:a.model},body=payloadFor(c,payload);if(Buffer.byteLength(JSON.stringify(body))>6000000)throw fail(400,'This conversation is too large for this connection.');
+  const c={...decode(r),model:a.model},body=payloadFor(c,a.provider==='deepseek'&&!a.probe?{...payload,max_output_tokens:DEEPSEEK_MAX_OUTPUT_TOKENS}:payload);if(Buffer.byteLength(JSON.stringify(body))>6000000)throw fail(400,'This conversation is too large for this connection.');
   const id=crypto.randomUUID();db.prepare("INSERT INTO ai_provider_calls VALUES(?,?,?,?,?,'pending',NULL,NULL,?)").run(id,a.user_id,jobId,a.provider,a.model,Date.now());
   try{
    const result=await call(a.user_id,c,a.provider==='claude'?'/v1/messages':'/v1/chat/completions',body,a.probe?30000:undefined),u=result.usage||{};
@@ -168,4 +169,4 @@ function createAIProviders({db,key,tailnet,request=fetch,account,setMode,paidAcc
  const activeState=user=>{const p=current(user),r=p&&row(user,p);return {provider:p||null,model:r?decode(r).model:'',saved:!!r};};
  return {router,publicState,activeState,authorize,authorizeSelection,providers:Object.keys(definitions),respond,save,activate,test,fallbackAuthorize,fallbackForRun,startFallback,setFallback,fallbackEnabled};
 }
-module.exports={createAIProviders,payloadFor,outputFor,messages};
+module.exports={DEEPSEEK_MAX_OUTPUT_TOKENS,createAIProviders,payloadFor,outputFor,messages};

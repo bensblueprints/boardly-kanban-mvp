@@ -28,19 +28,25 @@ const result=(id,output='saved result')=>({type:'function_call_output',call_id:i
 
  const db=new Database(':memory:');const seen=[];
  const providers=createAIProviders({db,key:crypto.randomBytes(32),account:()=>({mode:'none'}),setMode:()=>{},request:async(url,options)=>{
-   if(url.endsWith('/models'))return Response.json({data:[{id:'deepseek-v4-pro'}]});
+   if(url.endsWith('/models'))return Response.json({data:[{id:'deepseek-v4-pro'},{id:'deepseek-flash'}]});
    seen.push(JSON.parse(options.body));
    return Response.json({choices:[{finish_reason:'length',message:{content:'',reasoning_content:'private'}}],usage:{prompt_tokens:500,completion_tokens:4096}});
  }});
  try{
    for(const companyId of [4,24]){
      await providers.save('owner','deepseek',{token:'test-secret-no-real-credentials'},()=>{},companyId);
-     const auth=await providers.authorizeSelection('owner','deepseek','deepseek-v4-pro',companyId,()=>{});
+     const auth=await providers.authorizeSelection('owner','deepseek',companyId===4?'deepseek-v4-pro':'deepseek-flash',companyId,()=>{});
      await assert.rejects(providers.respond(auth,'company-'+companyId,{input:checkpoint}),e=>e.retryable===false);
    }
-   assert.equal(seen.length,2);assert.ok(seen.every(p=>p.thinking.type==='disabled'));
+   assert.equal(seen.length,2);assert.ok(seen.every(p=>p.max_tokens===393216),'Pro and Flash use maximum output across companies');assert.ok(seen.every(p=>p.thinking.type==='disabled'));
    const rows=db.prepare('SELECT status,input_tokens,output_tokens FROM ai_provider_calls').all();
    assert.ok(rows.every(r=>r.status==='interrupted'&&r.input_tokens===500&&r.output_tokens===4096),'Incomplete output retains billed usage');
  }finally{db.close();}
+ const {workResponse,recoveryAction}=require('../server/work-response');
+ let attempts=0;const original=[{role:'user',content:'Implement the task'}];
+ const answer=await workResponse({provider:'deepseek',payload:{input:original},respond:async p=>{assert.equal(p.max_output_tokens,393216);if(++attempts===1)throw Object.assign(Error('truncated'),{code:'output_limit'});assert.equal(p.input.length,2);return 'complete';}});
+ assert.equal(answer,'complete');assert.equal(attempts,2);assert.equal(original.length,1);
+ attempts=0;await assert.rejects(workResponse({provider:'deepseek',payload:{input:original},respond:async()=>{attempts++;throw Object.assign(Error('truncated'),{code:'output_limit'});}}));assert.equal(attempts,2,'Recovery is bounded');
+ assert.doesNotMatch(recoveryAction({status:502}),/funding|allowance/);
  console.log('PASS: DeepSeek company routing, checkpoint parallel-call replay, screenshot ordering, terminal output errors, and usage accounting');
 })().catch(e=>{console.error(e);process.exitCode=1;});
