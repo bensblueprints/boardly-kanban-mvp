@@ -31,6 +31,7 @@ def file_hashes(container, paths):
 
 base = inspect('boardly-clerk')
 assert base['Config']['Image'] == manifest['base_image']
+assert inspect(manifest['base_image'])['Id'] == base['Image'], 'Base image tag changed'
 assert file_hashes('boardly-clerk', list(manifest['baseline'])) == manifest['baseline']
 for name, digest in manifest['files'].items():
     assert hashlib.sha256((stage / name).read_bytes()).hexdigest() == digest, name
@@ -48,6 +49,9 @@ def recoverable_jobs():
         with sqlite3.connect(file.as_uri() + '?mode=ro', uri=True) as db:
             for table in ['chat_jobs', 'discussion_jobs']:
                 if not db.execute('SELECT 1 FROM sqlite_master WHERE name=?', (table,)).fetchone():
+                    continue
+                if table == 'discussion_jobs':
+                    assert not db.execute("SELECT 1 FROM discussion_jobs WHERE status IN ('queued','running','recovering') LIMIT 1").fetchone(), 'Active discussion; postpone deployment'
                     continue
                 for jid, status, runtime, mode in db.execute('SELECT id,status,runtime,mode FROM ' + table + " WHERE status IN ('queued','running','recovering')"):
                     assert table == 'chat_jobs' and runtime == 'api' and mode == 'work', 'Non-recoverable active job; postpone deployment'
@@ -67,9 +71,7 @@ assert inspect('boardly-clerk')['Id'] == base['Id'], 'Production changed during 
 assert all(inspect(name)['Id'] == value for name, value in preserved.items())
 backup = root / 'private-backups' / ('before-deepseek-' + sha[:7] + '-' + str(time.time_ns()))
 backup.mkdir(mode=0o700)
-for file in (root / 'data').rglob('*.db'):
-    if 'backups' in file.parts:
-        continue
+for file in [*(root / 'data').glob('*.db'), *(root / 'data/workspaces').glob('*/app.db')]:
     destination = backup / file.relative_to(root / 'data')
     destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     with sqlite3.connect(file.as_uri() + '?mode=ro', uri=True) as original, sqlite3.connect(destination) as saved:
